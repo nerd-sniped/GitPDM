@@ -1,0 +1,91 @@
+# GitPDM FreeCAD Addon - File Tree Structure
+
+```
+GitPDM/
+│
+├── Init.py                           # Base addon initialization (required)
+├── InitGui.py                        # GUI/Workbench registration (required)
+│
+├── freecad_gitpdm/                  # Main Python package
+│   ├── __init__.py                   # Package root
+│   ├── workbench.py                  # Workbench utilities (reserved)
+│   ├── commands.py                   # FreeCAD command definitions
+│   │
+│   ├── core/                         # Core functionality modules
+│   │   ├── __init__.py               # Core package init
+│   │   ├── log.py                    # Logging to FreeCAD console
+│   │   └── settings.py               # Settings persistence (FreeCAD params)
+│   │
+│   ├── ui/                           # User interface components
+│   │   ├── __init__.py               # UI package init
+│   │   └── panel.py                  # Main dock panel widget (Qt-based)
+│   │
+│   ├── git/                          # Git operations (Sprint 1+)
+│   │   └── __init__.py               # Placeholder for git logic
+│   │
+│   └── export/                       # Export functionality (Sprint 5+)
+│       └── __init__.py               # Placeholder for export logic
+│
+└── docs/
+    ├── README.md                     # User documentation and install guide
+    └── STRUCTURE.txt                 # This file
+```
+
+## Key Files Description
+
+### Init.py
+- Loaded when FreeCAD starts (non-GUI mode too)
+- Contains addon metadata (__version__, __author__, etc.)
+- Minimal - no heavy imports
+
+### InitGui.py
+- Loaded only in GUI mode
+- Defines GitPDMWorkbench class
+- Registers workbench with FreeCAD
+- Sets up toolbar and menu items
+
+### freecad_gitpdm/commands.py
+- Defines FreeCAD Command classes
+- GitPDMTogglePanelCommand: Opens/closes the dock panel
+- Commands are registered with FreeCADGui.addCommand()
+
+### freecad_gitpdm/ui/panel.py
+- GitPDMDockWidget class (inherits QDockWidget)
+- Builds the complete UI with all sections
+- Handles user interactions (browse, text changes)
+- Qt compatibility layer (PySide2/PySide6)
+
+### freecad_gitpdm/core/log.py
+- Logging functions: info(), warning(), error(), debug()
+- Logs to FreeCAD.Console (PrintLog, PrintWarning, PrintError)
+- Includes stub for sensitive data redaction
+
+### freecad_gitpdm/core/settings.py
+- Persistence using FreeCAD's parameter store
+- save_repo_path() / load_repo_path()
+- Generic save/load functions for string and bool settings
+- Parameter path: User parameter:BaseApp/Preferences/Mod/GitPDM
+
+## Installation Location
+
+Copy the entire `GitPDM/` folder to:
+- **Windows:** %APPDATA%\FreeCAD\Mod\GitPDM\
+- **Linux:** ~/.FreeCAD/Mod/GitPDM/
+- **macOS:** ~/Library/Application Support/FreeCAD/Mod/GitPDM/
+
+Then restart FreeCAD.
+
+## Sprint 0 Status: COMPLETE
+
+All deliverables implemented:
+✓ Repository/file tree structure
+✓ Addon loads in FreeCAD without errors
+✓ Workbench appears in selector
+✓ Toggle command works
+✓ Dock panel with all placeholder sections
+✓ Settings persistence (repo path)
+✓ Logging setup
+✓ Qt compatibility (PySide2/PySide6)
+✓ No external dependencies
+✓ PEP8 formatting, lines ≤ 80 chars
+✓ Documentation (README.md)
