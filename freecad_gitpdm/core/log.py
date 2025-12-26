@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 GitPDM Logging Module
-Sprint 0: Lightweight logging to FreeCAD console
+Sprint 1: Lightweight logging to FreeCAD console
 """
-
-import FreeCAD
 
 
 def _redact_sensitive(message):
@@ -30,8 +28,13 @@ def info(message):
     Args:
         message: Message to log
     """
-    safe_msg = _redact_sensitive(str(message))
-    FreeCAD.Console.PrintLog(f"[GitPDM] INFO: {safe_msg}\n")
+    try:
+        import FreeCAD
+        safe_msg = _redact_sensitive(str(message))
+        FreeCAD.Console.PrintLog(f"[GitPDM] INFO: {safe_msg}\n")
+    except ImportError:
+        # FreeCAD not available, fall back to print
+        print(f"[GitPDM] INFO: {message}")
 
 
 def warning(message):
@@ -41,8 +44,14 @@ def warning(message):
     Args:
         message: Warning message to log
     """
-    safe_msg = _redact_sensitive(str(message))
-    FreeCAD.Console.PrintWarning(f"[GitPDM] WARNING: {safe_msg}\n")
+    try:
+        import FreeCAD
+        safe_msg = _redact_sensitive(str(message))
+        FreeCAD.Console.PrintWarning(
+            f"[GitPDM] WARNING: {safe_msg}\n"
+        )
+    except ImportError:
+        print(f"[GitPDM] WARNING: {message}")
 
 
 def error(message):
@@ -52,8 +61,12 @@ def error(message):
     Args:
         message: Error message to log
     """
-    safe_msg = _redact_sensitive(str(message))
-    FreeCAD.Console.PrintError(f"[GitPDM] ERROR: {safe_msg}\n")
+    try:
+        import FreeCAD
+        safe_msg = _redact_sensitive(str(message))
+        FreeCAD.Console.PrintError(f"[GitPDM] ERROR: {safe_msg}\n")
+    except ImportError:
+        print(f"[GitPDM] ERROR: {message}")
 
 
 def debug(message):
@@ -63,7 +76,9 @@ def debug(message):
     Args:
         message: Debug message to log
     """
-    # FreeCAD doesn't have a separate debug level
-    # Use PrintLog for now
-    safe_msg = _redact_sensitive(str(message))
-    FreeCAD.Console.PrintLog(f"[GitPDM] DEBUG: {safe_msg}\n")
+    try:
+        import FreeCAD
+        safe_msg = _redact_sensitive(str(message))
+        FreeCAD.Console.PrintLog(f"[GitPDM] DEBUG: {safe_msg}\n")
+    except ImportError:
+        print(f"[GitPDM] DEBUG: {message}")

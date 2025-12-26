@@ -1,0 +1,308 @@
+# -*- coding: utf-8 -*-
+"""
+GitPDM Git Client Module
+Sprint 1: Minimal git wrapper using subprocess
+"""
+
+import subprocess
+import os
+from freecad_gitpdm.core import log
+
+
+def _find_git_executable():
+    """
+    Find git executable, checking common Windows locations.
+    
+    Returns:
+        str: Path to git.exe or 'git' if on PATH
+    """
+    # First try 'git' command (works if on PATH)
+    try:
+        result = subprocess.run(
+            ["git", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=2
+        )
+        if result.returncode == 0:
+            return "git"
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    
+    # Common Git installation paths on Windows
+    common_paths = [
+        r"C:\Program Files\Git\cmd\git.exe",
+        r"C:\Program Files (x86)\Git\cmd\git.exe",
+        os.path.expandvars(
+            r"%LOCALAPPDATA%\Programs\Git\cmd\git.exe"
+        ),
+        os.path.expandvars(
+            r"%LOCALAPPDATA%\GitHubDesktop\app-*\resources\app"
+            r"\git\cmd\git.exe"
+        ),
+    ]
+    
+    for path in common_paths:
+        # Handle wildcards in path
+        if "*" in path:
+            import glob
+            matches = glob.glob(path)
+            if matches:
+                path = matches[0]
+        
+        if os.path.isfile(path):
+            log.info(f"Found git at: {path}")
+            return path
+    
+    return None
+
+
+class GitClient:
+    """
+    Minimal git client using subprocess calls.
+    All operations are local (no network).
+    """
+
+    def __init__(self):
+        """Initialize GitClient"""
+        self._git_available = None
+        self._git_version = None
+        self._git_exe = None
+
+    def _get_git_command(self):
+        """
+        Get the git command to use.
+        
+        Returns:
+            str or list: Git command/path
+        """
+        if self._git_exe is None:
+            self._git_exe = _find_git_executable()
+        return self._git_exe if self._git_exe else "git"
+
+    def is_git_available(self):
+        """
+        Check whether git is available on PATH
+        
+        Returns:
+            bool: True if git command is available
+        """
+        if self._git_available is not None:
+            return self._git_available
+
+        git_cmd = self._get_git_command()
+        if git_cmd is None:
+            self._git_available = False
+            log.warning("Git not found on PATH or common locations")
+            return False
+
+        try:
+            result = subprocess.run(
+                [git_cmd, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            self._git_available = result.returncode == 0
+            if self._git_available:
+                self._git_version = result.stdout.strip()
+                log.info(f"Git available: {self._git_version}")
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            self._git_available = False
+            log.warning("Git not found on PATH or common locations")
+
+        return self._git_available
+
+    def git_version(self):
+        """
+        Get git version string
+        
+        Returns:
+            str | None: Version string (e.g. "git version 2.35.1")
+                or None if git not available
+        """
+        if not self.is_git_available():
+            return None
+        return self._git_version
+
+    def get_repo_root(self, path):
+        """
+        Get the root directory of a git repository.
+        Returns None if path is not inside a git repo.
+        
+        Args:
+            path: Directory path to check (string)
+            
+        Returns:
+            str | None: Repository root path or None if not a git repo
+        """
+        if not self.is_git_available():
+            log.warning("Git not available for repo root check")
+            return None
+
+        if not path or not os.path.isdir(path):
+            log.warning(f"Invalid path for repo check: {path}")
+            return None
+
+        git_cmd = self._get_git_command()
+
+        try:
+            result = subprocess.run(
+                [git_cmd, "-C", path, "rev-parse",
+                 "--show-toplevel"],
+                capture_output=True,
+                text=True,
+                timeout=15
+            )
+            if result.returncode == 0:
+                repo_root = result.stdout.strip()
+                # Normalize path (git returns forward slashes on Windows)
+                repo_root = os.path.normpath(repo_root)
+                log.debug(f"Found repo root: {repo_root}")
+                return repo_root
+            else:
+                log.warning(
+                    f"Git command failed (exit {result.returncode}): "
+                    f"{result.stderr.strip()}"
+                )
+        except subprocess.TimeoutExpired:
+            log.warning("Git command timed out")
+        except OSError as e:
+            log.warning(f"Git command error: {e}")
+
+        return None
+
+    def current_branch(self, repo_root):
+        """
+        Get the current branch name.
+        If HEAD is detached, returns "(detached)" with short SHA.
+        
+        Args:
+            repo_root: Repository root path (string)
+            
+        Returns:
+            str: Branch name, "(detached SHA)" or "(unknown)"
+        """
+        if not self.is_git_available():
+            return "(unknown)"
+
+        if not repo_root or not os.path.isdir(repo_root):
+            return "(unknown)"
+
+        git_cmd = self._get_git_command()
+
+        try:
+            result = subprocess.run(
+                [git_cmd, "-C", repo_root, "branch",
+                 "--show-current"],
+                capture_output=True,
+                text=True,
+                timeout=15
+            )
+            if result.returncode == 0:
+                branch = result.stdout.strip()
+                if branch:
+                    return branch
+        except subprocess.TimeoutExpired:
+            pass
+
+        # Detached HEAD - get short SHA
+        try:
+            result = subprocess.run(
+                [git_cmd, "-C", repo_root, "rev-parse",
+                 "--short", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=15
+            )
+            if result.returncode == 0:
+                sha = result.stdout.strip()
+                return f"(detached {sha})"
+        except subprocess.TimeoutExpired:
+            pass
+
+        return "(unknown)"
+
+    def status_summary(self, repo_root):
+        """
+        Get a summary of the working tree status.
+        
+        Args:
+            repo_root: Repository root path (string)
+            
+        Returns:
+            dict with keys:
+                - is_clean: bool
+                - modified: int
+                - added: int
+                - deleted: int
+                - renamed: int
+                - untracked: int
+                - raw_lines: list[str] (for debugging)
+        """
+        result = {
+            "is_clean": True,
+            "modified": 0,
+            "added": 0,
+            "deleted": 0,
+            "renamed": 0,
+            "untracked": 0,
+            "raw_lines": [],
+        }
+
+        if not self.is_git_available():
+            return result
+
+        if not repo_root or not os.path.isdir(repo_root):
+            return result
+
+        git_cmd = self._get_git_command()
+
+        try:
+            proc_result = subprocess.run(
+                [git_cmd, "-C", repo_root, "status",
+                 "--porcelain"],
+                capture_output=True,
+                text=True,
+                timeout=15
+            )
+            if proc_result.returncode != 0:
+                return result
+
+            lines = proc_result.stdout.strip().split("\n")
+            lines = [line for line in lines if line]
+            result["raw_lines"] = lines
+
+            if not lines:
+                result["is_clean"] = True
+                return result
+
+            result["is_clean"] = False
+
+            for line in lines:
+                if len(line) < 2:
+                    continue
+
+                status_code = line[:2]
+
+                # Parse status codes (porcelain v1 format)
+                if status_code[0] == 'M':
+                    result["modified"] += 1
+                elif status_code[0] == 'A':
+                    result["added"] += 1
+                elif status_code[0] == 'D':
+                    result["deleted"] += 1
+                elif status_code[0] == 'R':
+                    result["renamed"] += 1
+
+                if status_code[1] == '?':
+                    result["untracked"] += 1
+
+            return result
+
+        except subprocess.TimeoutExpired:
+            log.warning("Git status command timed out")
+            return result
+        except OSError as e:
+            log.warning(f"Failed to run git status: {e}")
+            return result

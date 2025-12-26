@@ -1,12 +1,24 @@
 # -*- coding: utf-8 -*-
 """
 GitPDM Commands Module
-Sprint 0: Register FreeCAD commands
+Sprint 1: Register FreeCAD commands
 """
 
 import FreeCAD
 import FreeCADGui
 from freecad_gitpdm.core import log
+
+# Qt compatibility layer - try PySide6 first, then PySide2
+try:
+    from PySide6 import QtCore, QtWidgets
+except ImportError:
+    try:
+        from PySide2 import QtCore, QtWidgets
+    except ImportError:
+        raise ImportError(
+            "Neither PySide6 nor PySide2 found. "
+            "FreeCAD installation may be incomplete."
+        )
 
 
 class GitPDMTogglePanelCommand:
@@ -19,7 +31,7 @@ class GitPDMTogglePanelCommand:
         Return command resources (icon, menu text, tooltip)
         """
         return {
-            "Pixmap": "",  # No icon for Sprint 0
+            "Pixmap": "",  # No icon for Sprint 1
             "MenuText": "Toggle GitPDM Panel",
             "ToolTip": "Show/hide the GitPDM dock panel",
         }
@@ -32,14 +44,14 @@ class GitPDMTogglePanelCommand:
 
         mw = FreeCADGui.getMainWindow()
         dock = mw.findChild(
-            panel.QtWidgets.QDockWidget, "GitPDM_DockWidget"
+            QtWidgets.QDockWidget, "GitPDM_DockWidget"
         )
 
         if dock is None:
             # Create the dock widget if it doesn't exist
             log.info("Creating GitPDM dock panel")
             dock = panel.GitPDMDockWidget()
-            mw.addDockWidget(panel.QtCore.Qt.RightDockWidgetArea, dock)
+            mw.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
             dock.show()
         else:
             # Toggle visibility

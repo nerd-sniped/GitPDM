@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 """
 GitPDM Settings Module
-Sprint 0: Persist settings using FreeCAD parameter store
+Sprint 1: Persist settings using FreeCAD parameter store
 """
 
-import FreeCAD
 from freecad_gitpdm.core import log
 
 # Parameter group path in FreeCAD's parameter tree
@@ -18,6 +17,7 @@ def get_param_group():
     Returns:
         ParameterGrp object for GitPDM settings
     """
+    import FreeCAD
     return FreeCAD.ParamGet(PARAM_GROUP_PATH)
 
 
