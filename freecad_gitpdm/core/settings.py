@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 GitPDM Settings Module
-Sprint 1: Persist settings using FreeCAD parameter store
+Sprint 2: Persist settings using FreeCAD parameter store
 """
 
 from freecad_gitpdm.core import log
@@ -122,3 +122,45 @@ def load_bool_setting(key, default=False):
     except Exception as e:
         log.error(f"Failed to load bool setting {key}: {e}")
         return default
+
+
+def save_remote_name(remote):
+    """
+    Save the remote name to persistent storage
+    
+    Args:
+        remote: Remote name string (e.g., "origin")
+    """
+    save_setting("RemoteName", remote)
+
+
+def load_remote_name():
+    """
+    Load the remote name from persistent storage
+    
+    Returns:
+        Remote name string (default "origin")
+    """
+    return load_setting("RemoteName", "origin")
+
+
+def save_last_fetch_at(timestamp):
+    """
+    Save the last fetch timestamp to persistent storage.
+    MVP: Single timestamp for current repo.
+    Future: Per-repo timestamps using repo root as key.
+    
+    Args:
+        timestamp: ISO 8601 timestamp string
+    """
+    save_setting("LastFetchAt", timestamp)
+
+
+def load_last_fetch_at():
+    """
+    Load the last fetch timestamp from persistent storage
+    
+    Returns:
+        ISO 8601 timestamp string (empty if not set)
+    """
+    return load_setting("LastFetchAt", "")

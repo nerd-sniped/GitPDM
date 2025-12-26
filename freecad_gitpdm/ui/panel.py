@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 GitPDM Panel UI Module
-Sprint 1: Main dockable panel with git operations
+Sprint 2: Main dockable panel with git operations + fetch support
 """
 
 # Qt compatibility layer - try PySide6 first, then PySide2
@@ -37,6 +37,11 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._job_runner = jobs.get_job_runner()
         self._job_runner.job_finished.connect(self._on_job_finished)
 
+        # State tracking
+        self._current_repo_root = None
+        self._is_fetching = False
+        self._upstream_ref = None
+
         # Create main widget and layout
         main_widget = QtWidgets.QWidget()
         main_layout = QtWidgets.QVBoxLayout()
@@ -54,13 +59,16 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # Add stretch at bottom to push everything up
         main_layout.addStretch()
 
+        # Load remote name
+        self._remote_name = settings.load_remote_name()
+
         # Load saved repo path
         self._load_saved_repo_path()
 
         # Perform initial git check
         self._check_git_available()
 
-        log.info("GitPDM dock panel initialized (Sprint 1)")
+        log.info("GitPDM dock panel initialized (Sprint 2)")
 
     def _build_git_check_section(self, layout):
         """
@@ -179,6 +187,37 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         )
         group_layout.addRow("Working tree:", self.working_tree_label)
 
+        # Upstream label (Sprint 2)
+        self.upstream_label = QtWidgets.QLabel("—")
+        self.upstream_label.setTextInteractionFlags(
+            QtCore.Qt.TextSelectableByMouse
+        )
+        group_layout.addRow("Upstream:", self.upstream_label)
+
+        # Ahead/Behind label (Sprint 2)
+        self.ahead_behind_label = QtWidgets.QLabel("—")
+        self.ahead_behind_label.setTextInteractionFlags(
+            QtCore.Qt.TextSelectableByMouse
+        )
+        group_layout.addRow("Ahead/Behind:",
+                           self.ahead_behind_label)
+
+        # Last fetch label (Sprint 2)
+        self.last_fetch_label = QtWidgets.QLabel("—")
+        self.last_fetch_label.setTextInteractionFlags(
+            QtCore.Qt.TextSelectableByMouse
+        )
+        group_layout.addRow("Last fetch:", self.last_fetch_label)
+
+        # Error/message area (Sprint 2)
+        self.status_message_label = QtWidgets.QLabel("")
+        self.status_message_label.setWordWrap(True)
+        self.status_message_label.setStyleSheet(
+            "color: red; font-size: 10px;"
+        )
+        self.status_message_label.hide()
+        group_layout.addRow("", self.status_message_label)
+
         layout.addWidget(group)
 
     def _build_changes_section(self, layout):
@@ -223,6 +262,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         row1_layout = QtWidgets.QHBoxLayout()
         self.fetch_btn = QtWidgets.QPushButton("Fetch")
         self.fetch_btn.setEnabled(False)
+        self.fetch_btn.clicked.connect(self._on_fetch_clicked)
         row1_layout.addWidget(self.fetch_btn)
 
         self.pull_btn = QtWidgets.QPushButton("Pull")
@@ -321,6 +361,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self.repo_root_label.setText("—")
             self.branch_label.setText("—")
             self.working_tree_label.setText("—")
+            self.upstream_label.setText("—")
+            self.ahead_behind_label.setText("—")
+            self._update_button_states()
             return
 
         # Show "Checking..." status
@@ -337,12 +380,14 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self.validate_label.setText("OK")
             self.validate_label.setStyleSheet("color: green;")
             self.repo_root_label.setText(repo_root)
-
-            # Save the valid path
-            settings.save_repo_path(path)
+            self._current_repo_root = repo_root
 
             # Fetch branch and status
             self._fetch_branch_and_status(repo_root)
+            
+            # Update button states
+            self._update_button_states()
+            
             log.info(f"Validated repo: {repo_root}")
         else:
             # Invalid repo
@@ -351,6 +396,10 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self.repo_root_label.setText("—")
             self.branch_label.setText("—")
             self.working_tree_label.setText("—")
+            self.upstream_label.setText("—")
+            self.ahead_behind_label.setText("—")
+            self._current_repo_root = None
+            self._update_button_states()
             # Do not overwrite saved path - just show typed text in UI
             log.warning(
                 f"Not a git repository: {path}"
@@ -370,6 +419,193 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # Get status synchronously (fast operation)
         status = self._git_client.status_summary(repo_root)
         self._display_working_tree_status(status)
+
+        # Get upstream and ahead/behind (Sprint 2)
+        self._update_upstream_info(repo_root)
+
+        # Display last fetch time
+        self._display_last_fetch()
+
+    def _update_upstream_info(self, repo_root):
+        """
+        Update upstream ref and ahead/behind counts
+        
+        Args:
+            repo_root: str - repository root path
+        """
+        # Check if remote exists
+        has_remote = self._git_client.has_remote(
+            repo_root, self._remote_name
+        )
+        
+        if not has_remote:
+            self.upstream_label.setText("(no remote)")
+            self.upstream_label.setStyleSheet("color: gray;")
+            self.ahead_behind_label.setText("(unknown)")
+            self.ahead_behind_label.setStyleSheet("color: gray;")
+            self._upstream_ref = None
+            return
+        
+        # Get default upstream ref
+        upstream_ref = self._git_client.default_upstream_ref(
+            repo_root, self._remote_name
+        )
+        self._upstream_ref = upstream_ref
+        
+        if not upstream_ref:
+            self.upstream_label.setText("(not set)")
+            self.upstream_label.setStyleSheet("color: gray;")
+            self.ahead_behind_label.setText("(unknown)")
+            self.ahead_behind_label.setStyleSheet("color: gray;")
+            return
+        
+        # Display upstream
+        self.upstream_label.setText(upstream_ref)
+        self.upstream_label.setStyleSheet("color: blue;")
+        
+        # Compute ahead/behind
+        ab_result = self._git_client.ahead_behind(repo_root, upstream_ref)
+        
+        if ab_result["ok"]:
+            ahead = ab_result["ahead"]
+            behind = ab_result["behind"]
+            ab_text = f"Ahead {ahead} / Behind {behind}"
+            
+            if ahead == 0 and behind == 0:
+                self.ahead_behind_label.setStyleSheet("color: green;")
+            elif behind > 0:
+                self.ahead_behind_label.setStyleSheet("color: orange;")
+            else:
+                self.ahead_behind_label.setStyleSheet("color: blue;")
+            
+            self.ahead_behind_label.setText(ab_text)
+        else:
+            self.ahead_behind_label.setText("(error)")
+            self.ahead_behind_label.setStyleSheet("color: red;")
+            if ab_result["error"]:
+                log.debug(
+                    f"Ahead/behind error: {ab_result['error']}"
+                )
+
+    def _display_last_fetch(self):
+        """Display the last fetch timestamp"""
+        last_fetch = settings.load_last_fetch_at()
+        if last_fetch:
+            # Parse ISO timestamp and format for display
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(last_fetch)
+                display_time = dt.strftime("%Y-%m-%d %H:%M:%S")
+                self.last_fetch_label.setText(display_time)
+                self.last_fetch_label.setStyleSheet("color: blue;")
+            except (ValueError, AttributeError):
+                self.last_fetch_label.setText(last_fetch)
+                self.last_fetch_label.setStyleSheet("color: blue;")
+        else:
+            self.last_fetch_label.setText("(never)")
+            self.last_fetch_label.setStyleSheet("color: gray;")
+
+    def _update_button_states(self):
+        """Update enabled/disabled state of action buttons"""
+        git_ok = self._git_client.is_git_available()
+        repo_ok = (
+            self._current_repo_root is not None 
+            and self._current_repo_root != ""
+        )
+        has_remote = False
+        
+        if repo_ok:
+            has_remote = self._git_client.has_remote(
+                self._current_repo_root, self._remote_name
+            )
+        
+        # Enable Fetch if: git available, repo valid, has remote,
+        # not currently fetching
+        fetch_enabled = (
+            git_ok and repo_ok and has_remote and not self._is_fetching
+        )
+        self.fetch_btn.setEnabled(fetch_enabled)
+        
+        # Keep other buttons disabled in Sprint 2
+        self.pull_btn.setEnabled(False)
+        self.commit_btn.setEnabled(False)
+        self.push_btn.setEnabled(False)
+        self.publish_btn.setEnabled(False)
+
+    def _show_status_message(self, message, is_error=True):
+        """
+        Show a status message in the status section
+        
+        Args:
+            message: str - message to display
+            is_error: bool - whether this is an error message
+        """
+        if message:
+            self.status_message_label.setText(message)
+            if is_error:
+                self.status_message_label.setStyleSheet(
+                    "color: red; font-size: 10px;"
+                )
+            else:
+                self.status_message_label.setStyleSheet(
+                    "color: blue; font-size: 10px;"
+                )
+            self.status_message_label.show()
+        else:
+            self.status_message_label.hide()
+
+    def _clear_status_message(self):
+        """Clear the status message"""
+        self.status_message_label.hide()
+
+    def _on_fetch_clicked(self):
+        """
+        Handle Fetch button click.
+        Run fetch in background via job runner.
+        """
+        if not self._current_repo_root:
+            log.warning("No repository to fetch")
+            return
+        
+        if self._is_fetching:
+            log.debug("Fetch already in progress, ignoring click")
+            return
+        
+        # Clear previous messages
+        self._clear_status_message()
+        
+        # Set fetching state
+        self._is_fetching = True
+        self.fetch_btn.setText("Fetching…")
+        self.fetch_btn.setEnabled(False)
+        
+        log.info(f"Starting fetch from {self._remote_name}")
+        
+        # Build command
+        git_cmd = self._git_client._get_git_command()
+        command = [
+            git_cmd, "-C", self._current_repo_root,
+            "fetch", self._remote_name
+        ]
+        
+        # Run via job runner
+        self._job_runner.run_job(
+            "fetch",
+            command,
+            callback=self._on_fetch_job_finished
+        )
+
+    def _on_fetch_job_finished(self, job):
+        """
+        Callback when fetch job finishes
+        
+        Args:
+            job: dict - job result from job runner
+        """
+        # This callback runs in addition to _on_job_finished signal
+        # We'll do most work in _on_job_finished to avoid duplication
+        pass
+
 
     def _display_working_tree_status(self, status):
         """
@@ -410,13 +646,73 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     def _on_job_finished(self, job):
         """
         Callback when a background job finishes.
-        Currently not used in Sprint 1 (synchronous operations),
-        but present for future Sprint 2+ enhancements.
+        Sprint 2: Handle fetch results
         
         Args:
             job: dict - job result descriptor
         """
-        log.debug(f"Job finished: {job.get('type')}")
+        job_type = job.get("type")
+        log.debug(f"Job finished: {job_type}")
+        
+        if job_type == "fetch":
+            self._handle_fetch_result(job)
+
+    def _handle_fetch_result(self, job):
+        """
+        Handle fetch job completion
+        
+        Args:
+            job: dict - job result from job runner
+        """
+        result = job.get("result", {})
+        success = result.get("success", False)
+        
+        # Reset fetching state
+        self._is_fetching = False
+        self.fetch_btn.setText("Fetch")
+        
+        if success:
+            # Fetch succeeded
+            from datetime import datetime, timezone
+            fetch_time = datetime.now(timezone.utc).isoformat()
+            settings.save_last_fetch_at(fetch_time)
+            
+            # Update UI
+            self._display_last_fetch()
+            
+            # Re-evaluate upstream and ahead/behind
+            if self._current_repo_root:
+                self._update_upstream_info(self._current_repo_root)
+            
+            self._show_status_message(
+                "Fetch completed successfully", is_error=False
+            )
+            log.info("Fetch completed successfully")
+            
+            # Clear success message after 3 seconds
+            QtCore.QTimer.singleShot(
+                3000, self._clear_status_message
+            )
+        else:
+            # Fetch failed
+            stderr = result.get("stderr", "")
+            exit_code = result.get("exit_code", -1)
+            
+            # Create user-friendly error message
+            if "could not resolve host" in stderr.lower():
+                error_msg = "Fetch failed: Network error"
+            elif "permission denied" in stderr.lower():
+                error_msg = "Fetch failed: Permission denied"
+            elif exit_code == -1:
+                error_msg = "Fetch failed: Process error"
+            else:
+                error_msg = f"Fetch failed (exit {exit_code})"
+            
+            self._show_status_message(error_msg, is_error=True)
+            log.warning(f"Fetch failed: {stderr}")
+        
+        # Update button states
+        self._update_button_states()
 
     def _load_saved_repo_path(self):
         """

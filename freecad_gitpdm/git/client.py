@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """
 GitPDM Git Client Module
-Sprint 1: Minimal git wrapper using subprocess
+Sprint 2: Minimal git wrapper using subprocess with fetch support
 """
 
 import subprocess
 import os
+from datetime import datetime, timezone
 from freecad_gitpdm.core import log
 
 
@@ -306,3 +307,245 @@ class GitClient:
         except OSError as e:
             log.warning(f"Failed to run git status: {e}")
             return result
+
+    def has_remote(self, repo_root, remote="origin"):
+        """
+        Check if a specific remote exists in the repository.
+        
+        Args:
+            repo_root: Repository root path (string)
+            remote: Remote name (default "origin")
+            
+        Returns:
+            bool: True if remote exists
+        """
+        if not self.is_git_available():
+            return False
+
+        if not repo_root or not os.path.isdir(repo_root):
+            return False
+
+        git_cmd = self._get_git_command()
+
+        try:
+            result = subprocess.run(
+                [git_cmd, "-C", repo_root, "remote"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0:
+                remotes = result.stdout.strip().split("\n")
+                return remote in remotes
+        except (subprocess.TimeoutExpired, OSError) as e:
+            log.warning(f"Failed to list remotes: {e}")
+
+        return False
+
+    def fetch(self, repo_root, remote="origin"):
+        """
+        Fetch from remote repository.
+        This contacts the network via git fetch.
+        
+        Args:
+            repo_root: Repository root path (string)
+            remote: Remote name (default "origin")
+            
+        Returns:
+            dict with keys:
+                - ok: bool
+                - stdout: str
+                - stderr: str
+                - fetched_at: str (ISO 8601 UTC timestamp)
+                - error: str | None
+        """
+        result = {
+            "ok": False,
+            "stdout": "",
+            "stderr": "",
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "error": None,
+        }
+
+        if not self.is_git_available():
+            result["error"] = "Git not available"
+            return result
+
+        if not repo_root or not os.path.isdir(repo_root):
+            result["error"] = "Invalid repository path"
+            return result
+
+        git_cmd = self._get_git_command()
+
+        try:
+            proc_result = subprocess.run(
+                [git_cmd, "-C", repo_root, "fetch", remote],
+                capture_output=True,
+                text=True,
+                timeout=120  # 2 minutes for fetch
+            )
+            result["ok"] = proc_result.returncode == 0
+            result["stdout"] = proc_result.stdout.strip()
+            result["stderr"] = proc_result.stderr.strip()
+
+            if result["ok"]:
+                log.info(f"Fetch completed: {remote}")
+            else:
+                result["error"] = (
+                    f"Git fetch failed (exit {proc_result.returncode})"
+                )
+                log.warning(result["error"])
+
+        except subprocess.TimeoutExpired:
+            result["error"] = "Fetch timed out after 120 seconds"
+            log.warning(result["error"])
+        except OSError as e:
+            result["error"] = f"Failed to run git fetch: {e}"
+            log.warning(result["error"])
+
+        return result
+
+    def default_upstream_ref(self, repo_root, remote="origin"):
+        """
+        Determine the default upstream branch reference.
+        Tries in order:
+        1. symbolic-ref refs/remotes/origin/HEAD
+        2. Check if origin/main exists
+        3. Check if origin/master exists
+        
+        Args:
+            repo_root: Repository root path (string)
+            remote: Remote name (default "origin")
+            
+        Returns:
+            str | None: Upstream ref like "origin/main" or None
+        """
+        if not self.is_git_available():
+            return None
+
+        if not repo_root or not os.path.isdir(repo_root):
+            return None
+
+        git_cmd = self._get_git_command()
+
+        # Try symbolic-ref first
+        try:
+            result = subprocess.run(
+                [git_cmd, "-C", repo_root, "symbolic-ref", "-q",
+                 f"refs/remotes/{remote}/HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0:
+                ref = result.stdout.strip()
+                # Convert refs/remotes/origin/main -> origin/main
+                if ref.startswith("refs/remotes/"):
+                    ref = ref[len("refs/remotes/") :]
+                    log.debug(f"Found upstream via symbolic-ref: {ref}")
+                    return ref
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+
+        # Try common default branches
+        for branch in ["main", "master"]:
+            try:
+                result = subprocess.run(
+                    [git_cmd, "-C", repo_root, "show-ref",
+                     "--verify", "--quiet",
+                     f"refs/remotes/{remote}/{branch}"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                if result.returncode == 0:
+                    upstream = f"{remote}/{branch}"
+                    log.debug(f"Found upstream branch: {upstream}")
+                    return upstream
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+
+        log.debug("No default upstream reference found")
+        return None
+
+    def ahead_behind(self, repo_root, upstream):
+        """
+        Compute how many commits ahead/behind the current branch is
+        compared to an upstream branch.
+        
+        Args:
+            repo_root: Repository root path (string)
+            upstream: Upstream ref like "origin/main"
+            
+        Returns:
+            dict with keys:
+                - ahead: int (commits ahead, or 0)
+                - behind: int (commits behind, or 0)
+                - ok: bool
+                - error: str | None
+        """
+        result = {
+            "ahead": 0,
+            "behind": 0,
+            "ok": False,
+            "error": None,
+        }
+
+        if not self.is_git_available():
+            result["error"] = "Git not available"
+            return result
+
+        if not repo_root or not os.path.isdir(repo_root):
+            result["error"] = "Invalid repository path"
+            return result
+
+        if not upstream:
+            result["error"] = "No upstream specified"
+            return result
+
+        git_cmd = self._get_git_command()
+
+        try:
+            proc_result = subprocess.run(
+                [git_cmd, "-C", repo_root, "rev-list",
+                 "--left-right", "--count",
+                 f"HEAD...{upstream}"],
+                capture_output=True,
+                text=True,
+                timeout=15
+            )
+            if proc_result.returncode == 0:
+                output = proc_result.stdout.strip()
+                parts = output.split()
+                if len(parts) == 2:
+                    try:
+                        result["ahead"] = int(parts[0])
+                        result["behind"] = int(parts[1])
+                        result["ok"] = True
+                        log.debug(
+                            f"Ahead/behind vs {upstream}: "
+                            f"{result['ahead']}/{result['behind']}"
+                        )
+                    except ValueError:
+                        result["error"] = (
+                            f"Failed to parse rev-list output: {output}"
+                        )
+                else:
+                    result["error"] = (
+                        f"Unexpected rev-list output: {output}"
+                    )
+            else:
+                result["error"] = (
+                    f"Git rev-list failed: "
+                    f"{proc_result.stderr.strip()}"
+                )
+
+        except subprocess.TimeoutExpired:
+            result["error"] = "Git rev-list timed out"
+        except OSError as e:
+            result["error"] = f"Failed to run git rev-list: {e}"
+
+        if result["error"]:
+            log.debug(result["error"])
+
+        return result
