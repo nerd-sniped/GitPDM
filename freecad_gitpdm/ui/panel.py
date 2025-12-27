@@ -21,6 +21,54 @@ from freecad_gitpdm.git import client
 from freecad_gitpdm.ui import dialogs
 
 
+class _DocumentObserver:
+    """Observer to detect document saves and trigger status refresh."""
+    
+    def __init__(self, panel):
+        self._panel = panel
+        self._refresh_timer = QtCore.QTimer()
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.setInterval(500)
+        self._refresh_timer.timeout.connect(self._do_refresh)
+        log.debug("DocumentObserver created")
+    
+    def slotFinishSaveDocument(self, doc, filename):
+        """Called after a document is saved."""
+        log.debug(f"Document saved: {filename}")
+        
+        if not self._panel._current_repo_root:
+            log.debug("No repo configured, skipping refresh")
+            return
+        
+        try:
+            import os
+            filename = os.path.normpath(filename)
+            repo_root = os.path.normpath(self._panel._current_repo_root)
+            
+            log.debug(f"Checking if {filename} is in {repo_root}")
+            
+            if filename.startswith(repo_root):
+                log.info(f"Document saved in repo, scheduling refresh")
+                self._refresh_timer.stop()
+                self._refresh_timer.start()
+            else:
+                log.debug(f"Document outside repo, no refresh")
+        except Exception as e:
+            log.error(f"Error in save handler: {e}")
+    
+    def _do_refresh(self):
+        """Execute deferred refresh after save."""
+        try:
+            if self._panel._current_repo_root:
+                log.info("Auto-refreshing status after save")
+                self._panel._refresh_status_views(
+                    self._panel._current_repo_root
+                )
+                log.debug("Refresh complete")
+        except Exception as e:
+            log.error(f"Refresh after save failed: {e}")
+
+
 class GitPDMDockWidget(QtWidgets.QDockWidget):
     """
     Main GitPDM dock widget panel
@@ -53,6 +101,14 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._busy_timer.setInterval(5000)
         self._busy_timer.timeout.connect(self._on_busy_timer_tick)
         self._busy_label = ""
+        self._button_update_timer = QtCore.QTimer(self)
+        self._button_update_timer.setSingleShot(True)
+        self._button_update_timer.setInterval(300)
+        self._button_update_timer.timeout.connect(
+            self._do_deferred_button_update
+        )
+        self._cached_has_remote = False
+        self._doc_observer = None
 
         # Create main widget and layout
         main_widget = QtWidgets.QWidget()
@@ -74,13 +130,51 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # Load remote name
         self._remote_name = settings.load_remote_name()
 
-        # Load saved repo path
-        self._load_saved_repo_path()
-
-        # Perform initial git check
-        self._check_git_available()
-
-        log.info("GitPDM dock panel initialized (Sprint 2)")
+        # Defer heavy initialization to avoid blocking UI and window flash
+        QtCore.QTimer.singleShot(100, self._deferred_initialization)
+        
+        log.info("GitPDM dock panel created")
+    
+    def _deferred_initialization(self):
+        """Run heavy initialization after panel is shown."""
+        try:
+            # Check git availability
+            self._check_git_available()
+            
+            # Load saved repo path and validate
+            self._load_saved_repo_path()
+            
+            # Register document observer to auto-refresh on save
+            self._register_document_observer()
+            
+            log.info("GitPDM dock panel initialized")
+        except Exception as e:
+            log.error(f"Deferred initialization failed: {e}")
+    
+    def _register_document_observer(self):
+        """Register observer to detect document saves."""
+        try:
+            import FreeCAD
+            if self._doc_observer is None:
+                self._doc_observer = _DocumentObserver(self)
+                FreeCAD.addDocumentObserver(self._doc_observer)
+                log.info("Document observer registered for auto-refresh")
+            else:
+                log.debug("Document observer already registered")
+        except Exception as e:
+            log.error(f"Failed to register document observer: {e}")
+    
+    def closeEvent(self, event):
+        """Handle dock widget close - cleanup observers."""
+        if self._doc_observer is not None:
+            try:
+                import FreeCAD
+                FreeCAD.removeDocumentObserver(self._doc_observer)
+                log.debug("Document observer unregistered")
+            except Exception as e:
+                log.warning(f"Failed to unregister observer: {e}")
+        
+        super().closeEvent(event)
 
     def _build_git_check_section(self, layout):
         """
@@ -324,15 +418,59 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         group_layout.addWidget(self.commit_message)
 
         row2_layout = QtWidgets.QHBoxLayout()
-        self.commit_btn = QtWidgets.QPushButton("Commit")
-        self.commit_btn.setEnabled(False)
-        self.commit_btn.clicked.connect(self._on_commit_clicked)
-        row2_layout.addWidget(self.commit_btn)
-
-        self.push_btn = QtWidgets.QPushButton("Push")
-        self.push_btn.setEnabled(False)
-        self.push_btn.clicked.connect(self._on_push_clicked)
-        row2_layout.addWidget(self.push_btn)
+        
+        # Combined Commit & Push button (regular push button)
+        self.commit_push_btn = QtWidgets.QPushButton("Commit & Push")
+        self.commit_push_btn.setEnabled(False)
+        self.commit_push_btn.clicked.connect(
+            self._on_commit_push_clicked
+        )
+        
+        # Dropdown menu for workflow selection
+        self.workflow_menu = QtWidgets.QMenu(self)
+        self.workflow_action_both = self.workflow_menu.addAction(
+            "Commit & Push"
+        )
+        self.workflow_action_both.setCheckable(True)
+        self.workflow_action_both.setChecked(True)
+        self.workflow_action_both.triggered.connect(
+            self._on_workflow_changed
+        )
+        self.workflow_action_commit = self.workflow_menu.addAction(
+            "Commit Only"
+        )
+        self.workflow_action_commit.setCheckable(True)
+        self.workflow_action_commit.triggered.connect(
+            self._on_workflow_changed
+        )
+        self.workflow_action_push = self.workflow_menu.addAction(
+            "Push Only"
+        )
+        self.workflow_action_push.setCheckable(True)
+        self.workflow_action_push.triggered.connect(
+            self._on_workflow_changed
+        )
+        
+        self._workflow_mode = 'both'
+        
+        # Dropdown menu button (plain QPushButton to avoid duplicate indicators)
+        workflow_menu_btn = QtWidgets.QPushButton("▼")
+        workflow_menu_btn.setAutoDefault(False)
+        workflow_menu_btn.setDefault(False)
+        workflow_menu_btn.setFlat(True)
+        workflow_menu_btn.setFixedWidth(24)
+        workflow_menu_btn.setToolTip("Select workflow: Commit & Push, Commit Only, or Push Only")
+        workflow_menu_btn.clicked.connect(
+            lambda: self.workflow_menu.exec_(
+                workflow_menu_btn.mapToGlobal(
+                    QtCore.QPoint(0, workflow_menu_btn.height())
+                )
+            )
+        )
+        
+        row2_layout.addWidget(self.commit_push_btn)
+        row2_layout.addWidget(workflow_menu_btn)
+        row2_layout.addStretch()
 
         group_layout.addLayout(row2_layout)
 
@@ -491,11 +629,11 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._ahead_count = 0
         self._behind_count = 0
         
-        has_remote = self._git_client.has_remote(
+        self._cached_has_remote = self._git_client.has_remote(
             repo_root, self._remote_name
         )
         
-        if not has_remote:
+        if not self._cached_has_remote:
             self.upstream_label.setText("(no remote)")
             self.upstream_label.setStyleSheet("color: gray;")
             self.ahead_behind_label.setText("(unknown)")
@@ -569,13 +707,43 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self.last_fetch_label.setStyleSheet("color: gray;")
 
     def _update_button_states(self):
-        """Update enabled/disabled state of action buttons."""
+        """Update enabled/disabled state of action buttons (full checks)."""
         git_ok = self._git_client.is_git_available()
         repo_ok = (
             self._current_repo_root is not None
             and self._current_repo_root != ""
         )
-        has_remote = False
+        upstream_ok = self._upstream_ref is not None
+        changes_present = len(self._file_statuses) > 0
+        busy = (
+            self._is_fetching
+            or self._is_pulling
+            or self._is_committing
+            or self._is_pushing
+            or self._job_runner.is_busy()
+        )
+
+        if repo_ok:
+            self._cached_has_remote = self._git_client.has_remote(
+                self._current_repo_root, self._remote_name
+            )
+
+        self._update_button_states_fast()
+
+    def _do_deferred_button_update(self):
+        """Debounced callback: do fast button state update."""
+        self._update_button_states_fast()
+
+    def _update_button_states_fast(self):
+        """
+        Update button states using cached/local info only (no git calls).
+        Called frequently during typing/UI changes.
+        """
+        git_ok = self._git_client.is_git_available()
+        repo_ok = (
+            self._current_repo_root is not None
+            and self._current_repo_root != ""
+        )
         upstream_ok = self._upstream_ref is not None
         changes_present = len(self._file_statuses) > 0
         commit_msg_ok = False
@@ -587,24 +755,21 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             or self._job_runner.is_busy()
         )
 
-        if repo_ok:
-            has_remote = self._git_client.has_remote(
-                self._current_repo_root, self._remote_name
-            )
-
         if hasattr(self, "commit_message"):
             commit_msg_ok = bool(
                 self.commit_message.toPlainText().strip()
             )
 
         fetch_enabled = (
-            git_ok and repo_ok and has_remote and not self._is_fetching
+            git_ok and repo_ok and self._cached_has_remote
+            and not self._is_fetching
             and not self._is_pulling and not busy
         )
         self.fetch_btn.setEnabled(fetch_enabled)
 
         pull_enabled = (
-            git_ok and repo_ok and has_remote and upstream_ok
+            git_ok and repo_ok and self._cached_has_remote
+            and upstream_ok
             and self._behind_count > 0 and not self._is_fetching
             and not self._is_pulling and not busy
         )
@@ -614,13 +779,32 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             git_ok and repo_ok and changes_present and commit_msg_ok
             and not busy
         )
-        self.commit_btn.setEnabled(commit_enabled)
+        # No separate commit button anymore; enabling handled by commit_push_btn
 
-        push_enabled = (
-            git_ok and repo_ok and has_remote and not busy
+        commit_push_enabled = (
+            git_ok and repo_ok and self._cached_has_remote and not busy
             and ((self._ahead_count > 0) or not upstream_ok)
         )
-        self.push_btn.setEnabled(push_enabled)
+        if self._workflow_mode == 'both':
+            commit_push_enabled = (
+                git_ok and repo_ok and changes_present and commit_msg_ok
+                and not busy
+            ) or (
+                git_ok and repo_ok and self._cached_has_remote and not busy
+                and ((self._ahead_count > 0) or not upstream_ok)
+            )
+        elif self._workflow_mode == 'commit':
+            commit_push_enabled = (
+                git_ok and repo_ok and changes_present and commit_msg_ok
+                and not busy
+            )
+        elif self._workflow_mode == 'push':
+            commit_push_enabled = (
+                git_ok and repo_ok and self._cached_has_remote and not busy
+                and ((self._ahead_count > 0) or not upstream_ok)
+            )
+        
+        self.commit_push_btn.setEnabled(commit_push_enabled)
 
         if hasattr(self, "stage_all_checkbox"):
             self.stage_all_checkbox.setEnabled(
@@ -956,6 +1140,15 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 self._update_operation_status(status_text)
         QtCore.QTimer.singleShot(delay_ms, _to_ready)
 
+    def _do_refresh(self, path):
+        """Execute the refresh operation (runs after brief delay)."""
+        try:
+            self._validate_repo_path(path)
+        finally:
+            self._stop_busy_feedback()
+            self._show_status_message("Refresh complete", is_error=False)
+            QtCore.QTimer.singleShot(2000, self._clear_status_message)
+
     def _display_working_tree_status(self, status):
         """
         Display working tree status in UI
@@ -1002,8 +1195,221 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             text = f"{prefix} {entry.path}"
             self.changes_list.addItem(text)
 
+    def _on_workflow_changed(self):
+        """Handle workflow selection change."""
+        sender = self.sender()
+        
+        if sender == self.workflow_action_both:
+            self._workflow_mode = 'both'
+        elif sender == self.workflow_action_commit:
+            self._workflow_mode = 'commit'
+        elif sender == self.workflow_action_push:
+            self._workflow_mode = 'push'
+        
+        # Update checkmarks
+        self.workflow_action_both.setChecked(
+            self._workflow_mode == 'both'
+        )
+        self.workflow_action_commit.setChecked(
+            self._workflow_mode == 'commit'
+        )
+        self.workflow_action_push.setChecked(
+            self._workflow_mode == 'push'
+        )
+        
+        # Update button label and states for the new mode
+        self._update_commit_push_button_default_label()
+        self._update_button_states()
+
+    def _update_commit_push_button_default_label(self):
+        """Set the combined button label based on workflow mode."""
+        if self._workflow_mode == 'commit':
+            self.commit_push_btn.setText("Commit")
+        elif self._workflow_mode == 'push':
+            self.commit_push_btn.setText("Push")
+        else:
+            self.commit_push_btn.setText("Commit & Push")
+
     def _on_commit_message_changed(self):
-        """Called when commit message text changes."""
+        """Called when commit message text changes (debounced)."""
+        self._button_update_timer.stop()
+        self._button_update_timer.start()
+
+    def _on_commit_push_clicked(self):
+        """Handle Commit & Push button click (routes to appropriate flow)."""
+        if self._workflow_mode == 'both':
+            self._start_commit_push_sequence()
+        elif self._workflow_mode == 'commit':
+            self._on_commit_clicked()
+        elif self._workflow_mode == 'push':
+            self._on_push_clicked()
+    
+    def _start_commit_push_sequence(self):
+        """Start combined commit & push workflow."""
+        if not self._current_repo_root:
+            log.warning("No repository to commit+push")
+            return
+
+        if (
+            self._is_committing
+            or self._is_pushing
+            or self._job_runner.is_busy()
+        ):
+            log.debug("Job running, commit+push ignored")
+            return
+
+        message = self.commit_message.toPlainText().strip()
+        if not message:
+            self._show_status_message(
+                "Commit message required", is_error=True
+            )
+            return
+
+        self._clear_status_message()
+        self._is_committing = True
+        self.commit_push_btn.setText("Committing…")
+        self._pending_commit_message = message
+        self._update_button_states()
+        self._start_busy_feedback("Committing…")
+
+        log.info("Starting commit & push sequence")
+
+        git_cmd = self._git_client._get_git_command()
+        args = [git_cmd, "-C", self._current_repo_root, "add", "-A"]
+
+        self._job_runner.run_job(
+            "commit_push_stage",
+            args,
+            callback=self._on_commit_push_stage_completed,
+        )
+
+    def _on_commit_push_stage_completed(self, job):
+        """Callback after staging in commit & push sequence."""
+        result = job.get("result", {})
+        if not result.get("success"):
+            log.warning(
+                f"Stage failed: {result.get('stderr', '')}"
+            )
+            self._handle_commit_push_failed("Stage failed")
+            return
+
+        log.debug("Stage completed, running commit")
+
+        if not self._current_repo_root:
+            self._handle_commit_push_failed("Repository lost")
+            return
+
+        message = self._pending_commit_message
+        if not message:
+            self._handle_commit_push_failed("No commit message")
+            return
+
+        git_cmd = self._git_client._get_git_command()
+        args = [
+            git_cmd, "-C", self._current_repo_root, "commit", "-m", message
+        ]
+
+        self._job_runner.run_job(
+            "commit_push_commit",
+            args,
+            callback=self._on_commit_push_commit_completed,
+        )
+
+    def _on_commit_push_commit_completed(self, job):
+        """Callback after commit in commit & push sequence."""
+        result = job.get("result", {})
+        success = result.get("success", False)
+        stderr = result.get("stderr", "")
+
+        if not success:
+            code = self._git_client._classify_commit_error(stderr)
+            if code == "NOTHING_TO_COMMIT":
+                self._show_status_message(
+                    "No changes to commit", is_error=False
+                )
+            elif code == "MISSING_IDENTITY":
+                self._show_commit_identity_error_dialog()
+            else:
+                self._show_status_message(
+                    f"Commit failed: {stderr[:80]}", is_error=True
+                )
+            log.warning(f"Commit failed: {code}")
+            self._handle_commit_push_failed(
+                "Commit failed, skipping push"
+            )
+            return
+
+        log.info("Commit succeeded, now pushing")
+        self.commit_push_btn.setText("Pushing…")
+        self._is_committing = False
+        self._is_pushing = True
+        self._show_status_message("Pushing…", is_error=False)
+
+        git_cmd = self._git_client._get_git_command()
+
+        has_upstream = self._git_client.has_upstream(
+            self._current_repo_root
+        )
+
+        if has_upstream:
+            args = [git_cmd, "-C", self._current_repo_root, "push"]
+        else:
+            args = [
+                git_cmd, "-C", self._current_repo_root, "push", "-u",
+                self._remote_name, "HEAD"
+            ]
+
+        self._job_runner.run_job(
+            "commit_push_push",
+            args,
+            callback=self._on_commit_push_push_completed,
+        )
+
+    def _on_commit_push_push_completed(self, job):
+        """Callback after push in commit & push sequence."""
+        result = job.get("result", {})
+        success = result.get("success", False)
+        stderr = result.get("stderr", "")
+
+        self._is_pushing = False
+        self._update_commit_push_button_default_label()
+        self._stop_busy_feedback()
+
+        if not success:
+            code = self._git_client._classify_push_error(stderr)
+            self._show_push_error_dialog(code, stderr)
+            log.warning(f"Push failed: {code}")
+            self._update_button_states()
+            return
+
+        log.info("Commit & push completed successfully")
+
+        self.commit_message.clear()
+
+        if self._current_repo_root:
+            branch = self._git_client.current_branch(
+                self._current_repo_root
+            )
+            self.branch_label.setText(branch)
+
+            self._refresh_status_views(self._current_repo_root)
+
+            self._update_upstream_info(self._current_repo_root)
+
+        self._show_status_message("Commit & push completed", is_error=False)
+
+        QtCore.QTimer.singleShot(2000, self._clear_status_message)
+
+        self._update_button_states()
+
+    def _handle_commit_push_failed(self, message):
+        """Handle commit & push failure."""
+        self._is_committing = False
+        self._is_pushing = False
+        self.commit_push_btn.setText("Commit & Push")
+        self._pending_commit_message = ""
+        self._stop_busy_feedback()
+        self._show_status_message(message, is_error=True)
         self._update_button_states()
 
     def _on_commit_clicked(self):
@@ -1032,7 +1438,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         self._clear_status_message()
         self._is_committing = True
-        self.commit_btn.setText("Committing…")
+        self.commit_push_btn.setText("Committing…")
         self._pending_commit_message = message
         self._update_button_states()
         self._start_busy_feedback("Committing…")
@@ -1085,7 +1491,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         stderr = result.get("stderr", "")
 
         self._is_committing = False
-        self.commit_btn.setText("Commit")
+        self._update_commit_push_button_default_label()
         self._pending_commit_message = ""
         self._stop_busy_feedback()
 
@@ -1126,7 +1532,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     def _handle_commit_failed(self, message):
         """Handle commit failure."""
         self._is_committing = False
-        self.commit_btn.setText("Commit")
+        self._update_commit_push_button_default_label()
         self._show_status_message(message, is_error=True)
         self._stop_busy_feedback()
         self._update_button_states()
@@ -1166,7 +1572,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         self._clear_status_message()
         self._is_pushing = True
-        self.push_btn.setText("Pushing…")
+        self.commit_push_btn.setText("Pushing…")
         self._update_button_states()
         self._start_busy_feedback("Pushing…")
 
@@ -1199,7 +1605,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         stderr = result.get("stderr", "")
 
         self._is_pushing = False
-        self.push_btn.setText("Push")
+        self._update_commit_push_button_default_label()
 
         if not success:
             code = self._git_client._classify_push_error(stderr)
@@ -1257,10 +1663,16 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         Re-validate current repo path and refresh status.
         """
         current_path = self.repo_path_field.text()
-        if current_path:
-            self._validate_repo_path(current_path)
-        else:
+        if not current_path:
             log.warning("No repository path set")
+            return
+        
+        # Show busy feedback immediately
+        self._start_busy_feedback("Refreshing…")
+        self._update_operation_status("Refreshing…")
+        
+        # Defer the actual work to keep UI responsive
+        QtCore.QTimer.singleShot(50, lambda: self._do_refresh(current_path))
 
     def _on_job_finished(self, job):
         """
