@@ -49,6 +49,10 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._behind_count = 0
         self._file_statuses = []
         self._pending_commit_message = ""
+        self._busy_timer = QtCore.QTimer(self)
+        self._busy_timer.setInterval(5000)
+        self._busy_timer.timeout.connect(self._on_busy_timer_tick)
+        self._busy_label = ""
 
         # Create main widget and layout
         main_widget = QtWidgets.QWidget()
@@ -335,6 +339,13 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.publish_btn = QtWidgets.QPushButton("Publish Branch")
         self.publish_btn.setEnabled(False)
         group_layout.addWidget(self.publish_btn)
+
+        # Busy indicator (indeterminate)
+        self.busy_bar = QtWidgets.QProgressBar()
+        self.busy_bar.setRange(0, 0)
+        self.busy_bar.setFixedHeight(8)
+        self.busy_bar.hide()
+        group_layout.addWidget(self.busy_bar)
 
         layout.addWidget(group)
 
@@ -665,6 +676,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._is_fetching = True
         self.fetch_btn.setText("Fetching…")
         self.fetch_btn.setEnabled(False)
+        self._start_busy_feedback("Fetching…")
         
         log.info(f"Starting fetch from {self._remote_name}")
         
@@ -746,6 +758,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.pull_btn.setEnabled(False)
         self.fetch_btn.setEnabled(False)
         self._update_operation_status("Pulling…")
+        self._start_busy_feedback("Pulling…")
         
         # Step 1: Fetch from origin
         git_cmd = self._git_client._get_git_command()
@@ -821,11 +834,13 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self._show_pull_error_dialog(error_code, stderr)
             self._is_pulling = False
             self._update_operation_status("Error")
+            self._stop_busy_feedback()
             self._update_button_states()
             return
         
         log.info("Pull completed successfully")
         self._update_operation_status("Synced")
+        self._stop_busy_feedback()
         
         if self._current_repo_root:
             branch = self._git_client.current_branch(
@@ -864,6 +879,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._is_pulling = False
         self._update_operation_status("Error")
         self._show_status_message(message, is_error=True)
+        self._stop_busy_feedback()
         self._update_button_states()
 
     def _show_pull_error_dialog(self, error_code, stderr):
@@ -901,6 +917,44 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self.operation_status_label.setStyleSheet(
                 "color: red; font-size: 9px;"
             )
+
+    def _start_busy_feedback(self, label):
+        """Show progress indicator and periodic status updates."""
+        self._busy_label = label
+        if hasattr(self, "busy_bar"):
+            self.busy_bar.show()
+        self._update_operation_status(label)
+        self._busy_timer.start()
+        self._show_status_message(label, is_error=False)
+
+    def _stop_busy_feedback(self):
+        """Hide progress indicator and stop timer."""
+        self._busy_timer.stop()
+        self._busy_label = ""
+        if hasattr(self, "busy_bar"):
+            self.busy_bar.hide()
+        self._set_ready_later()
+
+    def _on_busy_timer_tick(self):
+        """Periodic pulse while a long operation is running."""
+        if self._busy_label:
+            self._show_status_message(
+                f"Working… {self._busy_label}",
+                is_error=False,
+            )
+
+    def _set_ready_later(self, delay_ms=1500, status_text="Ready"):
+        """Return UI to Ready after a short delay if idle."""
+        def _to_ready():
+            if not (
+                self._is_fetching
+                or self._is_pulling
+                or self._is_committing
+                or self._is_pushing
+                or self._job_runner.is_busy()
+            ):
+                self._update_operation_status(status_text)
+        QtCore.QTimer.singleShot(delay_ms, _to_ready)
 
     def _display_working_tree_status(self, status):
         """
@@ -981,6 +1035,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.commit_btn.setText("Committing…")
         self._pending_commit_message = message
         self._update_button_states()
+        self._start_busy_feedback("Committing…")
 
         log.info("Starting commit sequence")
 
@@ -1032,6 +1087,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._is_committing = False
         self.commit_btn.setText("Commit")
         self._pending_commit_message = ""
+        self._stop_busy_feedback()
 
         if not success:
             code = self._git_client._classify_commit_error(stderr)
@@ -1065,12 +1121,14 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         )
 
         QtCore.QTimer.singleShot(2000, self._clear_status_message)
+        self._update_button_states()
 
     def _handle_commit_failed(self, message):
         """Handle commit failure."""
         self._is_committing = False
         self.commit_btn.setText("Commit")
         self._show_status_message(message, is_error=True)
+        self._stop_busy_feedback()
         self._update_button_states()
 
     def _show_commit_identity_error_dialog(self):
@@ -1110,6 +1168,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._is_pushing = True
         self.push_btn.setText("Pushing…")
         self._update_button_states()
+        self._start_busy_feedback("Pushing…")
 
         log.info("Starting push")
 
@@ -1146,6 +1205,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             code = self._git_client._classify_push_error(stderr)
             self._show_push_error_dialog(code, stderr)
             log.warning(f"Push failed: {code}")
+            self._stop_busy_feedback()
             self._update_button_states()
             return
 
@@ -1161,6 +1221,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._show_status_message("Push completed", is_error=False)
 
         QtCore.QTimer.singleShot(2000, self._clear_status_message)
+
+        self._stop_busy_feedback()
 
         self._update_button_states()
 
@@ -1227,6 +1289,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # Reset fetching state
         self._is_fetching = False
         self.fetch_btn.setText("Fetch")
+        self._stop_busy_feedback()
         
         if success:
             # Fetch succeeded
