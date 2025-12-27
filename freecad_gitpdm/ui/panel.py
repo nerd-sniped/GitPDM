@@ -19,7 +19,7 @@ except ImportError:
 from freecad_gitpdm.core import log, settings, jobs
 from freecad_gitpdm.git import client
 from freecad_gitpdm.ui import dialogs
-from freecad_gitpdm.export import exporter
+from freecad_gitpdm.export import exporter, mapper
 from freecad_gitpdm.core import paths as core_paths
 from freecad_gitpdm.core import publish
 
@@ -54,6 +54,8 @@ class _DocumentObserver:
                 log.info(f"Document saved in repo, scheduling refresh")
                 self._refresh_timer.stop()
                 self._refresh_timer.start()
+                # Also schedule automatic preview generation for saved FCStd
+                self._panel._schedule_auto_preview_generation(filename)
             else:
                 log.debug(f"Document outside repo, no refresh")
         except Exception as e:
@@ -116,26 +118,38 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._doc_observer = None
         self._browser_dock = None
         self._browser_content = None
+        self._group_git_check = None
+        self._group_repo_selector = None
+        self._group_status = None
+        self._group_changes = None
+        self._group_actions = None
+        self._actions_extra_container = None
+        self._repo_browser_container = None
+        self._is_compact = False
 
-        # Shared label styles
+        # Font sizes for labels
         self._meta_font_size = 9
         self._strong_font_size = 11
 
         # Create main widget and layout
         main_widget = QtWidgets.QWidget()
         main_layout = QtWidgets.QVBoxLayout()
-        main_layout.setContentsMargins(6, 6, 6, 6)
+        main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(6)
         main_widget.setLayout(main_layout)
         self.setWidget(main_widget)
 
         # Build UI sections
+        self._build_view_toggle(main_layout)
         self._build_git_check_section(main_layout)
         self._build_repo_selector(main_layout)
         self._build_status_section(main_layout)
         self._build_changes_section(main_layout)
         self._build_buttons_section(main_layout)
         self._build_repo_browser_section(main_layout)
+
+        # Default to collapsed view
+        self._set_compact_mode(True)
 
         # Add stretch at bottom to push everything up
         main_layout.addStretch()
@@ -159,6 +173,46 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             f"font-size: {self._strong_font_size}px; "
             f"color: {color};"
         )
+
+    def _build_view_toggle(self, layout):
+        """Add a compact/expanded toggle to shrink the dock UI."""
+        row = QtWidgets.QHBoxLayout()
+        row.setContentsMargins(6, 4, 6, 0)
+        row.setSpacing(6)
+
+        label = QtWidgets.QLabel("View")
+        self._set_meta_label(label, "gray")
+        row.addWidget(label)
+
+        self.compact_toggle_btn = QtWidgets.QPushButton("Collapse")
+        self.compact_toggle_btn.setFlat(True)
+        self.compact_toggle_btn.setMaximumWidth(80)
+        self.compact_toggle_btn.clicked.connect(self._on_compact_clicked)
+        row.addWidget(self.compact_toggle_btn)
+
+        row.addStretch()
+        layout.addLayout(row)
+
+    def _on_compact_clicked(self):
+        """Toggle between compact and expanded mode."""
+        self._set_compact_mode(not self._is_compact)
+
+    def _set_compact_mode(self, compact):
+        self._is_compact = bool(compact)
+        if hasattr(self, "compact_toggle_btn"):
+            self.compact_toggle_btn.setText(
+                "Expand" if compact else "Collapse"
+            )
+        show_full = not compact
+        for w in [
+            getattr(self, "_group_git_check", None),
+            getattr(self, "_group_repo_selector", None),
+            getattr(self, "_group_changes", None),
+            getattr(self, "_actions_extra_container", None),
+            getattr(self, "_repo_browser_container", None),
+        ]:
+            if w is not None:
+                w.setVisible(show_full)
     
     def _deferred_initialization(self):
         """Run heavy initialization after panel is shown."""
@@ -201,6 +255,58 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         
         super().closeEvent(event)
 
+    def _schedule_auto_preview_generation(self, filename):
+        """Best-effort automatic preview export after a save/close."""
+        try:
+            import os
+            if not filename or not filename.lower().endswith(".fcstd"):
+                return
+            if not self._current_repo_root:
+                return
+            # Avoid work if file is outside repo
+            if not os.path.normpath(filename).startswith(
+                os.path.normpath(self._current_repo_root)
+            ):
+                return
+
+            def _do_export():
+                try:
+                    import FreeCAD
+                    active = getattr(FreeCAD, "ActiveDocument", None)
+                    active_path = getattr(active, "FileName", "") if active else ""
+                    if not active_path:
+                        log.debug("No active document for auto preview")
+                        return
+                    if os.path.normpath(active_path) != os.path.normpath(filename):
+                        log.debug("Saved doc is not active; skipping auto preview")
+                        return
+
+                    result = exporter.export_active_document(
+                        self._current_repo_root
+                    )
+                except Exception as e_export:
+                    log.warning(f"Auto preview export failed: {e_export}")
+                    return
+
+                if not result or not result.ok:
+                    log.warning(
+                        f"Auto preview export failed: {getattr(result, 'message', '')}"
+                    )
+                    return
+
+                from datetime import datetime, timezone
+                settings.save_last_preview_at(
+                    datetime.now(timezone.utc).isoformat()
+                )
+                if result.rel_dir:
+                    settings.save_last_preview_dir(result.rel_dir)
+                self._update_preview_status_labels()
+
+            # Defer to allow FreeCAD to finish its own save cycle
+            QtCore.QTimer.singleShot(0, _do_export)
+        except Exception as e:
+            log.warning(f"Failed to schedule auto preview: {e}")
+
     def _build_git_check_section(self, layout):
         """
         Build the git availability check section
@@ -223,6 +329,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         group_layout.addRow("Git", self.git_label)
 
         layout.addWidget(group)
+        self._group_git_check = group
 
     def _check_git_available(self):
         """Check if git is available on system"""
@@ -324,6 +431,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         group_layout.addLayout(validation_layout)
 
         layout.addWidget(group)
+        self._group_repo_selector = group
 
     def _build_status_section(self, layout):
         """
@@ -411,6 +519,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         group_layout.addWidget(self.status_message_label)
 
         layout.addWidget(group)
+        self._group_status = group
 
     def _build_changes_section(self, layout):
         """
@@ -451,6 +560,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         group_layout.addLayout(stage_layout)
 
         layout.addWidget(group)
+        self._group_changes = group
 
     def _build_buttons_section(self, layout):
         """
@@ -479,9 +589,16 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         group_layout.addLayout(row1_layout)
 
+        # Extra actions are grouped for easy hide/show in compact mode
+        self._actions_extra_container = QtWidgets.QWidget()
+        extra_layout = QtWidgets.QVBoxLayout()
+        extra_layout.setContentsMargins(0, 0, 0, 0)
+        extra_layout.setSpacing(4)
+        self._actions_extra_container.setLayout(extra_layout)
+
         msg_label = QtWidgets.QLabel("Commit message:")
         msg_label.setStyleSheet("font-weight: bold;")
-        group_layout.addWidget(msg_label)
+        extra_layout.addWidget(msg_label)
 
         self.commit_message = QtWidgets.QPlainTextEdit()
         self.commit_message.setPlaceholderText(
@@ -491,7 +608,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.commit_message.textChanged.connect(
             self._on_commit_message_changed
         )
-        group_layout.addWidget(self.commit_message)
+        extra_layout.addWidget(self.commit_message)
 
         row2_layout = QtWidgets.QHBoxLayout()
         row2_layout.setSpacing(4)
@@ -549,18 +666,18 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         row2_layout.addWidget(workflow_menu_btn)
         row2_layout.addStretch()
 
-        group_layout.addLayout(row2_layout)
+        extra_layout.addLayout(row2_layout)
 
         self.publish_btn = QtWidgets.QPushButton("Publish Branch")
         self.publish_btn.setEnabled(False)
         self.publish_btn.clicked.connect(self._on_publish_clicked)
-        group_layout.addWidget(self.publish_btn)
+        extra_layout.addWidget(self.publish_btn)
 
         self.stage_all_checkbox = QtWidgets.QCheckBox(
             "Stage all changes during Publish"
         )
         self.stage_all_checkbox.setChecked(True)
-        group_layout.addWidget(self.stage_all_checkbox)
+        extra_layout.addWidget(self.stage_all_checkbox)
 
         # Sprint 6: Generate Previews workflow
         previews_group = QtWidgets.QGroupBox("Previews")
@@ -615,23 +732,31 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         status_row.addWidget(self.open_preview_folder_btn)
         pg_layout.addLayout(status_row)
 
-        group_layout.addWidget(previews_group)
+        extra_layout.addWidget(previews_group)
 
         # Busy indicator (indeterminate)
         self.busy_bar = QtWidgets.QProgressBar()
         self.busy_bar.setRange(0, 0)
         self.busy_bar.setFixedHeight(8)
         self.busy_bar.hide()
+
+        # Add extras container and busy bar
+        group_layout.addWidget(self._actions_extra_container)
         group_layout.addWidget(self.busy_bar)
 
         layout.addWidget(group)
+        self._group_actions = group
 
     def _build_repo_browser_section(self, layout):
         """Build launcher row for the dockable repository browser."""
         self._ensure_browser_host()
 
+        container = QtWidgets.QWidget()
         row = QtWidgets.QHBoxLayout()
         row.setContentsMargins(6, 4, 6, 4)
+        row.setSpacing(4)
+        container.setLayout(row)
+
         label = QtWidgets.QLabel("Repository Browser")
         self._set_meta_label(label, "gray")
         row.addWidget(label)
@@ -646,7 +771,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         )
         row.addWidget(self.browser_window_btn)
 
-        layout.addLayout(row)
+        layout.addWidget(container)
+        self._repo_browser_container = container
 
     def _on_browse_clicked(self):
         """
@@ -835,7 +961,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         
         # Display upstream
         self.upstream_label.setText(upstream_ref)
-        self._set_meta_label(self.upstream_label, "blue")
+        self._set_meta_label(self.upstream_label, "#4db6ac")
         
         # Compute ahead/behind
         ab_result = self._git_client.ahead_behind(repo_root, upstream_ref)
@@ -859,7 +985,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 )
             else:
                 self._set_strong_label(
-                    self.ahead_behind_label, "blue"
+                    self.ahead_behind_label, "#4db6ac"
                 )
             
             self.ahead_behind_label.setText(ab_text)
@@ -883,10 +1009,10 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 dt = datetime.fromisoformat(last_fetch)
                 display_time = dt.strftime("%Y-%m-%d %H:%M:%S")
                 self.last_fetch_label.setText(display_time)
-                self._set_meta_label(self.last_fetch_label, "blue")
+                self._set_meta_label(self.last_fetch_label, "#4db6ac")
             except (ValueError, AttributeError):
                 self.last_fetch_label.setText(last_fetch)
-                self._set_meta_label(self.last_fetch_label, "blue")
+                self._set_meta_label(self.last_fetch_label, "#4db6ac")
         else:
             self.last_fetch_label.setText("(never)")
             self._set_meta_label(self.last_fetch_label, "gray")
@@ -1031,7 +1157,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 )
             else:
                 self.status_message_label.setStyleSheet(
-                    "color: blue; font-size: 10px;"
+                    "color: #4db6ac; font-size: 10px;"
                 )
             self.status_message_label.show()
         else:
@@ -1086,7 +1212,20 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.repo_list.itemDoubleClicked.connect(
             self._on_repo_item_double_clicked
         )
+        self.repo_list.currentItemChanged.connect(
+            self._on_repo_item_selected
+        )
         layout.addWidget(self.repo_list)
+
+        self.repo_preview_label = QtWidgets.QLabel("Select a file to preview")
+        self.repo_preview_label.setAlignment(
+            QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter
+        )
+        self.repo_preview_label.setMinimumHeight(180)
+        self.repo_preview_label.setStyleSheet(
+            "color: gray; border: 1px dashed #ccc;"
+        )
+        layout.addWidget(self.repo_preview_label)
 
         # Initial disabled state
         self.repo_search.setEnabled(False)
@@ -1460,20 +1599,15 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # Parse NUL-separated entries
         tokens = [t for t in stdout.split("\0") if t]
 
-        # Filter to CAD files using configured extensions
-        exts = settings.load_cad_extensions()
-
-        cad_set = []
+        # Filter strictly to FreeCAD native files; the browser only opens .FCStd
+        fcstd_set = []
         for p in tokens:
             name = p.rsplit("/", 1)[-1]
             name = name.rsplit("\\", 1)[-1]
-            if "." not in name:
-                continue
-            ext = "." + name.split(".")[-1].lower()
-            if ext in exts:
-                cad_set.append(p)
+            if name.lower().endswith(".fcstd"):
+                fcstd_set.append(p)
 
-        self._all_cad_files = cad_set
+        self._all_cad_files = fcstd_set
         self._apply_repo_filter_and_populate()
 
         self.repo_search.setEnabled(True)
@@ -1481,16 +1615,16 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.repo_list.setEnabled(True)
 
         if not self._all_cad_files:
-            self.repo_info_label.setText("No CAD files found.")
+            self.repo_info_label.setText("No FCStd files found.")
             self.repo_info_label.setStyleSheet(
                 "color: gray; font-style: italic;"
             )
         else:
             self.repo_info_label.setText(
-                f"Found {len(self._all_cad_files)} CAD files."
+                f"Found {len(self._all_cad_files)} FCStd files."
             )
             self.repo_info_label.setStyleSheet(
-                "color: blue; font-style: italic;"
+                "color: #4db6ac; font-style: italic;"
             )
 
     def _on_repo_search_changed(self, _text):
@@ -1502,6 +1636,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         """Apply filter and update list widget."""
         self._ensure_browser_host()
         self.repo_list.clear()
+        self._clear_repo_preview()
         q = self.repo_search.text().strip().lower()
         if not self._all_cad_files:
             return
@@ -1514,6 +1649,14 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._ensure_browser_host()
         rel = item.text()
         self._open_repo_file(rel)
+
+    def _on_repo_item_selected(self, current, _previous):
+        """Show preview for the selected repository item."""
+        if not current:
+            self._clear_repo_preview()
+            return
+        rel = current.text()
+        self._show_repo_preview(rel)
 
     def _on_repo_list_context_menu(self, pos):
         """Show context menu for repo list items."""
@@ -1573,6 +1716,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             )
             msg.exec()
             return
+
+        # Show preview (if available) even before opening
+        self._show_repo_preview(rel)
 
         # Check for unsaved documents (MVP best-effort)
         try:
@@ -2345,7 +2491,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self.preview_status_label.setText(
                 f"Last generated: {display}"
             )
-            self._set_meta_label(self.preview_status_label, "blue")
+            self._set_meta_label(self.preview_status_label, "#4db6ac")
         else:
             self.preview_status_label.setText(
                 "Last generated: (never)"
@@ -2665,6 +2811,54 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         
         # Refresh status views
         self._refresh_status_views(self._current_repo_root)
+
+    def _show_repo_preview(self, rel):
+        """Load and display preview.png for the given repo-relative file."""
+        try:
+            if not hasattr(self, "repo_preview_label"):
+                return
+            if not self._current_repo_root:
+                self._clear_repo_preview()
+                return
+            rel = (rel or "").strip()
+            if not rel:
+                self._clear_repo_preview()
+                return
+
+            preview_dir = mapper.to_preview_dir_rel(rel)
+            png_rel = preview_dir + "preview.png"
+            abs_png = core_paths.safe_join_repo(
+                self._current_repo_root, png_rel
+            )
+            if not abs_png or not abs_png.exists():
+                self.repo_preview_label.setText("No preview found")
+                self.repo_preview_label.setPixmap(QtGui.QPixmap())
+                return
+
+            pix = QtGui.QPixmap(str(abs_png))
+            if pix.isNull():
+                self.repo_preview_label.setText("Preview could not be loaded")
+                self.repo_preview_label.setPixmap(QtGui.QPixmap())
+                return
+
+            target = self.repo_preview_label.size() - QtCore.QSize(8, 8)
+            scaled = pix.scaled(
+                max(16, target.width()),
+                max(16, target.height()),
+                QtCore.Qt.KeepAspectRatio,
+                QtCore.Qt.SmoothTransformation,
+            )
+            self.repo_preview_label.setPixmap(scaled)
+            self.repo_preview_label.setText("")
+        except Exception as e:
+            log.warning(f"Failed to load preview: {e}")
+            self.repo_preview_label.setText("Preview error")
+            self.repo_preview_label.setPixmap(QtGui.QPixmap())
+
+    def _clear_repo_preview(self):
+        if hasattr(self, "repo_preview_label"):
+            self.repo_preview_label.setPixmap(QtGui.QPixmap())
+            self.repo_preview_label.setText("Select a file to preview")
         QtCore.QTimer.singleShot(3000, self._clear_status_message)
     
     def _handle_publish_error(self, result):
