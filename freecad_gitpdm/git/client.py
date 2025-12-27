@@ -6,8 +6,43 @@ Sprint 2: Minimal git wrapper using subprocess with fetch support
 
 import subprocess
 import os
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import List, Optional
 from freecad_gitpdm.core import log
+
+
+# Status kinds for porcelain parsing
+STATUS_MODIFIED = "MODIFIED"
+STATUS_ADDED = "ADDED"
+STATUS_DELETED = "DELETED"
+STATUS_RENAMED = "RENAMED"
+STATUS_COPIED = "COPIED"
+STATUS_UNTRACKED = "UNTRACKED"
+STATUS_CONFLICT = "CONFLICT"
+STATUS_UNKNOWN = "UNKNOWN"
+
+
+@dataclass
+class FileStatus:
+    """Structured representation of a porcelain status entry."""
+
+    path: str
+    x: str
+    y: str
+    kind: str
+    is_staged: bool
+    is_untracked: bool
+
+
+@dataclass
+class CmdResult:
+    """Simple command result wrapper."""
+
+    ok: bool
+    stdout: str
+    stderr: str
+    error_code: Optional[str] = None
 
 
 def _find_git_executable():
@@ -224,6 +259,121 @@ class GitClient:
 
         return "(unknown)"
 
+    def _classify_status_kind(self, x_code, y_code):
+        """Classify porcelain XY codes into a status kind."""
+        if x_code == "?" and y_code == "?":
+            return STATUS_UNTRACKED
+
+        if "U" in (x_code, y_code):
+            return STATUS_CONFLICT
+
+        if (x_code == "A" and y_code == "D") or (
+            x_code == "D" and y_code == "A"
+        ):
+            return STATUS_CONFLICT
+
+        if "R" in (x_code, y_code):
+            return STATUS_RENAMED
+
+        if "C" in (x_code, y_code):
+            return STATUS_COPIED
+
+        if "D" in (x_code, y_code):
+            return STATUS_DELETED
+
+        if "A" in (x_code, y_code):
+            return STATUS_ADDED
+
+        if "M" in (x_code, y_code) or "T" in (x_code, y_code):
+            return STATUS_MODIFIED
+
+        return STATUS_UNKNOWN
+
+    def status_porcelain(self, repo_root):
+        """
+        Return detailed working tree status using porcelain -z.
+
+        Args:
+            repo_root: Repository root path (string)
+
+        Returns:
+            list[FileStatus]: parsed file status entries
+        """
+        entries: List[FileStatus] = []
+
+        if not self.is_git_available():
+            return entries
+
+        if not repo_root or not os.path.isdir(repo_root):
+            return entries
+
+        git_cmd = self._get_git_command()
+
+        try:
+            proc_result = subprocess.run(
+                [git_cmd, "-C", repo_root, "status",
+                 "--porcelain=v1", "-z"],
+                capture_output=True,
+                text=True,
+                timeout=20
+            )
+        except subprocess.TimeoutExpired:
+            log.warning("Git status command timed out")
+            return entries
+        except OSError as e:
+            log.warning(f"Failed to run git status: {e}")
+            return entries
+
+        if proc_result.returncode != 0:
+            stderr = proc_result.stderr.strip()
+            log.debug(
+                f"Git status returned {proc_result.returncode}: {stderr}"
+            )
+            return entries
+
+        raw = proc_result.stdout
+        if not raw:
+            return entries
+
+        tokens = [t for t in raw.split("\0") if t]
+        idx = 0
+
+        while idx < len(tokens):
+            token = tokens[idx]
+            idx += 1
+
+            if len(token) < 3:
+                continue
+
+            x_code = token[0]
+            y_code = token[1]
+            path_part = token[3:] if len(token) > 3 else ""
+
+            rename_target = None
+            if (x_code in ("R", "C") or y_code in ("R", "C")) and (
+                idx < len(tokens)
+            ):
+                rename_target = tokens[idx]
+                idx += 1
+
+            display_path = path_part
+            if rename_target:
+                display_path = f"{path_part} -> {rename_target}"
+
+            kind = self._classify_status_kind(x_code, y_code)
+
+            entry = FileStatus(
+                path=display_path,
+                x=x_code,
+                y=y_code,
+                kind=kind,
+                is_staged=x_code not in (" ", "?"),
+                is_untracked=(x_code == "?" and y_code == "?"),
+            )
+            entries.append(entry)
+
+        return entries
+
     def status_summary(self, repo_root):
         """
         Get a summary of the working tree status.
@@ -251,62 +401,29 @@ class GitClient:
             "raw_lines": [],
         }
 
-        if not self.is_git_available():
+        statuses = self.status_porcelain(repo_root)
+
+        if not statuses:
             return result
 
-        if not repo_root or not os.path.isdir(repo_root):
-            return result
+        result["is_clean"] = False
 
-        git_cmd = self._get_git_command()
+        for entry in statuses:
+            if entry.kind == STATUS_MODIFIED:
+                result["modified"] += 1
+            elif entry.kind == STATUS_ADDED:
+                result["added"] += 1
+            elif entry.kind == STATUS_DELETED:
+                result["deleted"] += 1
+            elif entry.kind == STATUS_RENAMED:
+                result["renamed"] += 1
+            elif entry.kind == STATUS_UNTRACKED:
+                result["untracked"] += 1
 
-        try:
-            proc_result = subprocess.run(
-                [git_cmd, "-C", repo_root, "status",
-                 "--porcelain"],
-                capture_output=True,
-                text=True,
-                timeout=15
-            )
-            if proc_result.returncode != 0:
-                return result
+            line_repr = f"{entry.x}{entry.y} {entry.path}"
+            result["raw_lines"].append(line_repr)
 
-            lines = proc_result.stdout.strip().split("\n")
-            lines = [line for line in lines if line]
-            result["raw_lines"] = lines
-
-            if not lines:
-                result["is_clean"] = True
-                return result
-
-            result["is_clean"] = False
-
-            for line in lines:
-                if len(line) < 2:
-                    continue
-
-                status_code = line[:2]
-
-                # Parse status codes (porcelain v1 format)
-                if status_code[0] == 'M':
-                    result["modified"] += 1
-                elif status_code[0] == 'A':
-                    result["added"] += 1
-                elif status_code[0] == 'D':
-                    result["deleted"] += 1
-                elif status_code[0] == 'R':
-                    result["renamed"] += 1
-
-                if status_code[1] == '?':
-                    result["untracked"] += 1
-
-            return result
-
-        except subprocess.TimeoutExpired:
-            log.warning("Git status command timed out")
-            return result
-        except OSError as e:
-            log.warning(f"Failed to run git status: {e}")
-            return result
+        return result
 
     def has_remote(self, repo_root, remote="origin"):
         """
@@ -550,17 +667,136 @@ class GitClient:
 
         return result
 
-    def has_uncommitted_changes(self, repo_root):
-        """
-        Check whether the repository has uncommitted changes.
-        Uses 'git status --porcelain' length to detect changes.
-        
-        Args:
-            repo_root: Repository root path (string)
-            
-        Returns:
-            bool: True if there are uncommitted changes
-        """
+    def _run_command(self, args, timeout=60):
+        """Run a git command and wrap result."""
+        cmd_result = CmdResult(
+            ok=False,
+            stdout="",
+            stderr="",
+            error_code=None,
+        )
+
+        try:
+            proc = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            cmd_result.stdout = proc.stdout.strip()
+            cmd_result.stderr = proc.stderr.strip()
+            cmd_result.ok = proc.returncode == 0
+        except subprocess.TimeoutExpired:
+            cmd_result.stderr = "Command timed out"
+            cmd_result.error_code = "TIMEOUT"
+        except OSError as e:
+            cmd_result.stderr = str(e)
+            cmd_result.error_code = "OS_ERROR"
+
+        return cmd_result
+
+    def _classify_commit_error(self, stderr_text):
+        """Map commit stderr output to a friendly code."""
+        lower = stderr_text.lower()
+
+        if "nothing to commit" in lower:
+            return "NOTHING_TO_COMMIT"
+        if "no changes added to commit" in lower:
+            return "NOTHING_TO_COMMIT"
+        if "user.name" in lower or "user.email" in lower:
+            return "MISSING_IDENTITY"
+        if "please tell me who you are" in lower:
+            return "MISSING_IDENTITY"
+
+        return "UNKNOWN_ERROR"
+
+    def _classify_push_error(self, stderr_text):
+        """Map push stderr output to a friendly code."""
+        lower = stderr_text.lower()
+
+        if "authentication failed" in lower:
+            return "AUTH_OR_PERMISSION"
+        if "permission denied" in lower:
+            return "AUTH_OR_PERMISSION"
+        if "could not read from remote repository" in lower:
+            return "AUTH_OR_PERMISSION"
+
+        if "no configured push destination" in lower:
+            return "NO_UPSTREAM"
+        if "no upstream" in lower:
+            return "NO_UPSTREAM"
+        if "set the remote as upstream" in lower:
+            return "NO_UPSTREAM"
+
+        if "does not appear to be a git repository" in lower:
+            return "NO_REMOTE"
+        if "no such remote" in lower:
+            return "NO_REMOTE"
+
+        if "rejected" in lower or "failed to push" in lower:
+            return "REJECTED"
+
+        return "UNKNOWN_ERROR"
+
+    def stage_all(self, repo_root):
+        """Stage all changes (git add -A)."""
+        if not self.is_git_available():
+            return CmdResult(False, "", "Git not available", "NO_GIT")
+
+        if not repo_root or not os.path.isdir(repo_root):
+            return CmdResult(False, "", "Invalid repository", "INVALID_REPO")
+
+        git_cmd = self._get_git_command()
+        return self._run_command(
+            [git_cmd, "-C", repo_root, "add", "-A"],
+            timeout=60,
+        )
+
+    def stage_paths(self, repo_root, paths):
+        """Stage only specified paths."""
+        if not paths:
+            return CmdResult(True, "", "", None)
+
+        if not self.is_git_available():
+            return CmdResult(False, "", "Git not available", "NO_GIT")
+
+        if not repo_root or not os.path.isdir(repo_root):
+            return CmdResult(False, "", "Invalid repository", "INVALID_REPO")
+
+        git_cmd = self._get_git_command()
+        args = [git_cmd, "-C", repo_root, "add", "--"]
+        args.extend(paths)
+        return self._run_command(args, timeout=60)
+
+    def commit(self, repo_root, message):
+        """Create a commit with the provided message."""
+        if not message:
+            return CmdResult(False, "", "Empty commit message", "EMPTY_MESSAGE")
+
+        if not self.is_git_available():
+            return CmdResult(False, "", "Git not available", "NO_GIT")
+
+        if not repo_root or not os.path.isdir(repo_root):
+            return CmdResult(False, "", "Invalid repository", "INVALID_REPO")
+
+        git_cmd = self._get_git_command()
+        cmd_result = self._run_command(
+            [git_cmd, "-C", repo_root, "commit", "-m", message],
+            timeout=120,
+        )
+
+        if cmd_result.ok:
+            truncated = message[:60].replace("\n", " ")
+            log.debug(f"Commit created: {truncated}")
+        else:
+            cmd_result.error_code = self._classify_commit_error(
+                cmd_result.stderr
+            )
+
+        return cmd_result
+
+    def has_upstream(self, repo_root):
+        """Return True if current branch has an upstream set."""
         if not self.is_git_available():
             return False
 
@@ -571,21 +807,42 @@ class GitClient:
 
         try:
             result = subprocess.run(
-                [git_cmd, "-C", repo_root, "status",
-                 "--porcelain"],
+                [git_cmd, "-C", repo_root, "rev-parse",
+                 "--abbrev-ref", "--symbolic-full-name", "@{u}"],
                 capture_output=True,
                 text=True,
-                timeout=15
+                timeout=15,
             )
-            if result.returncode != 0:
-                return False
-
-            # If output is non-empty, there are changes
-            return len(result.stdout.strip()) > 0
-
-        except (subprocess.TimeoutExpired, OSError) as e:
-            log.warning(f"Failed to check uncommitted changes: {e}")
+            return result.returncode == 0
+        except (subprocess.TimeoutExpired, OSError):
             return False
+
+    def push(self, repo_root, remote="origin"):
+        """Push current branch, setting upstream if needed."""
+        if not self.is_git_available():
+            return CmdResult(False, "", "Git not available", "NO_GIT")
+
+        if not repo_root or not os.path.isdir(repo_root):
+            return CmdResult(False, "", "Invalid repository", "INVALID_REPO")
+
+        git_cmd = self._get_git_command()
+
+        if self.has_upstream(repo_root):
+            args = [git_cmd, "-C", repo_root, "push"]
+        else:
+            args = [git_cmd, "-C", repo_root, "push", "-u", remote, "HEAD"]
+
+        result = self._run_command(args, timeout=180)
+
+        if not result.ok:
+            result.error_code = self._classify_push_error(result.stderr)
+
+        return result
+
+    def has_uncommitted_changes(self, repo_root):
+        """Return True if porcelain status reports any entries."""
+        statuses = self.status_porcelain(repo_root)
+        return len(statuses) > 0
 
     def pull_ff_only(self, repo_root, remote="origin",
                      upstream=None):

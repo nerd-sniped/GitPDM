@@ -42,8 +42,13 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._current_repo_root = None
         self._is_fetching = False
         self._is_pulling = False
+        self._is_committing = False
+        self._is_pushing = False
         self._upstream_ref = None
+        self._ahead_count = 0
         self._behind_count = 0
+        self._file_statuses = []
+        self._pending_commit_message = ""
 
         # Create main widget and layout
         main_widget = QtWidgets.QWidget()
@@ -250,19 +255,29 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         group_layout = QtWidgets.QVBoxLayout()
         group.setLayout(group_layout)
 
-        # Info label
         info_label = QtWidgets.QLabel(
-            "Modified, staged, and untracked files will appear here."
+            "Working tree changes detected by git status." 
+            " Use Stage all to include them in commits."
         )
         info_label.setWordWrap(True)
         info_label.setStyleSheet("color: gray; font-style: italic;")
         group_layout.addWidget(info_label)
 
-        # Changes list widget (placeholder)
         self.changes_list = QtWidgets.QListWidget()
-        self.changes_list.setMaximumHeight(150)
-        self.changes_list.setEnabled(False)  # Disabled in Sprint 0
+        self.changes_list.setMaximumHeight(180)
+        self.changes_list.setEnabled(False)
         group_layout.addWidget(self.changes_list)
+
+        stage_layout = QtWidgets.QHBoxLayout()
+        self.stage_all_checkbox = QtWidgets.QCheckBox("Stage all changes")
+        self.stage_all_checkbox.setChecked(True)
+        self.stage_all_checkbox.setEnabled(False)
+        self.stage_all_checkbox.stateChanged.connect(
+            self._update_button_states
+        )
+        stage_layout.addWidget(self.stage_all_checkbox)
+        stage_layout.addStretch()
+        group_layout.addLayout(stage_layout)
 
         layout.addWidget(group)
 
@@ -277,7 +292,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         group_layout = QtWidgets.QVBoxLayout()
         group.setLayout(group_layout)
 
-        # First row: Fetch, Pull
         row1_layout = QtWidgets.QHBoxLayout()
         self.fetch_btn = QtWidgets.QPushButton("Fetch")
         self.fetch_btn.setEnabled(False)
@@ -291,19 +305,33 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         group_layout.addLayout(row1_layout)
 
-        # Second row: Commit, Push
+        msg_label = QtWidgets.QLabel("Commit message:")
+        msg_label.setStyleSheet("font-weight: bold;")
+        group_layout.addWidget(msg_label)
+
+        self.commit_message = QtWidgets.QPlainTextEdit()
+        self.commit_message.setPlaceholderText(
+            "Describe your changes before committing"
+        )
+        self.commit_message.setMaximumHeight(90)
+        self.commit_message.textChanged.connect(
+            self._on_commit_message_changed
+        )
+        group_layout.addWidget(self.commit_message)
+
         row2_layout = QtWidgets.QHBoxLayout()
         self.commit_btn = QtWidgets.QPushButton("Commit")
         self.commit_btn.setEnabled(False)
+        self.commit_btn.clicked.connect(self._on_commit_clicked)
         row2_layout.addWidget(self.commit_btn)
 
         self.push_btn = QtWidgets.QPushButton("Push")
         self.push_btn.setEnabled(False)
+        self.push_btn.clicked.connect(self._on_push_clicked)
         row2_layout.addWidget(self.push_btn)
 
         group_layout.addLayout(row2_layout)
 
-        # Third row: Publish
         self.publish_btn = QtWidgets.QPushButton("Publish Branch")
         self.publish_btn.setEnabled(False)
         group_layout.addWidget(self.publish_btn)
@@ -432,15 +460,11 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         Args:
             repo_root: str - repository root path
         """
-        # Get branch synchronously (fast operation)
         branch = self._git_client.current_branch(repo_root)
         self.branch_label.setText(branch)
 
-        # Get status synchronously (fast operation)
-        status = self._git_client.status_summary(repo_root)
-        self._display_working_tree_status(status)
+        self._refresh_status_views(repo_root)
 
-        # Get upstream and ahead/behind (Sprint 2)
         self._update_upstream_info(repo_root)
 
         # Display last fetch time
@@ -453,10 +477,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         Args:
             repo_root: str - repository root path
         """
-        # Reset behind count
+        self._ahead_count = 0
         self._behind_count = 0
         
-        # Check if remote exists
         has_remote = self._git_client.has_remote(
             repo_root, self._remote_name
         )
@@ -493,7 +516,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             ahead = ab_result["ahead"]
             behind = ab_result["behind"]
             
-            # Store behind count for button enable logic
+            self._ahead_count = ahead
             self._behind_count = behind
             
             ab_text = f"Ahead {ahead} / Behind {behind}"
@@ -514,6 +537,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                     f"Ahead/behind error: {ab_result['error']}"
                 )
 
+        self._update_button_states()
+
     def _display_last_fetch(self):
         """Display the last fetch timestamp"""
         last_fetch = settings.load_last_fetch_at()
@@ -533,40 +558,65 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self.last_fetch_label.setStyleSheet("color: gray;")
 
     def _update_button_states(self):
-        """Update enabled/disabled state of action buttons"""
+        """Update enabled/disabled state of action buttons."""
         git_ok = self._git_client.is_git_available()
         repo_ok = (
-            self._current_repo_root is not None 
+            self._current_repo_root is not None
             and self._current_repo_root != ""
         )
         has_remote = False
         upstream_ok = self._upstream_ref is not None
-        
+        changes_present = len(self._file_statuses) > 0
+        commit_msg_ok = False
+        busy = (
+            self._is_fetching
+            or self._is_pulling
+            or self._is_committing
+            or self._is_pushing
+            or self._job_runner.is_busy()
+        )
+
         if repo_ok:
             has_remote = self._git_client.has_remote(
                 self._current_repo_root, self._remote_name
             )
-        
-        # Enable Fetch if: git available, repo valid, has remote,
-        # not currently fetching or pulling
+
+        if hasattr(self, "commit_message"):
+            commit_msg_ok = bool(
+                self.commit_message.toPlainText().strip()
+            )
+
         fetch_enabled = (
-            git_ok and repo_ok and has_remote and 
-            not self._is_fetching and not self._is_pulling
+            git_ok and repo_ok and has_remote and not self._is_fetching
+            and not self._is_pulling and not busy
         )
         self.fetch_btn.setEnabled(fetch_enabled)
-        
-        # Enable Pull if: git available, repo valid, has remote,
-        # upstream known, behind > 0, not fetching/pulling
+
         pull_enabled = (
-            git_ok and repo_ok and has_remote and upstream_ok and
-            self._behind_count > 0 and not self._is_fetching and 
-            not self._is_pulling
+            git_ok and repo_ok and has_remote and upstream_ok
+            and self._behind_count > 0 and not self._is_fetching
+            and not self._is_pulling and not busy
         )
         self.pull_btn.setEnabled(pull_enabled)
-        
-        # Keep other buttons disabled in Sprint 3
-        self.commit_btn.setEnabled(False)
-        self.push_btn.setEnabled(False)
+
+        commit_enabled = (
+            git_ok and repo_ok and changes_present and commit_msg_ok
+            and not busy
+        )
+        self.commit_btn.setEnabled(commit_enabled)
+
+        push_enabled = (
+            git_ok and repo_ok and has_remote and not busy
+            and ((self._ahead_count > 0) or not upstream_ok)
+        )
+        self.push_btn.setEnabled(push_enabled)
+
+        if hasattr(self, "stage_all_checkbox"):
+            self.stage_all_checkbox.setEnabled(
+                repo_ok and changes_present
+            )
+
+        self.changes_list.setEnabled(repo_ok)
         self.publish_btn.setEnabled(False)
 
     def _show_status_message(self, message, is_error=True):
@@ -774,26 +824,19 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self._update_button_states()
             return
         
-        # Pull succeeded - refresh status
         log.info("Pull completed successfully")
         self._update_operation_status("Synced")
         
-        # Refresh branch and status
         if self._current_repo_root:
             branch = self._git_client.current_branch(
                 self._current_repo_root
             )
             self.branch_label.setText(branch)
             
-            status = self._git_client.status_summary(
-                self._current_repo_root
-            )
-            self._display_working_tree_status(status)
+            self._refresh_status_views(self._current_repo_root)
             
-            # Refresh ahead/behind
             self._update_upstream_info(self._current_repo_root)
             
-            # Update last pull time
             from datetime import datetime, timezone
             pull_time = datetime.now(timezone.utc).isoformat()
             settings.save_last_pull_at(pull_time)
@@ -883,6 +926,268 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             status_str = "Dirty (" + " ".join(parts) + ")"
             self.working_tree_label.setText(status_str)
             self.working_tree_label.setStyleSheet("color: orange;")
+
+    def _refresh_status_views(self, repo_root):
+        """Refresh working tree status and changes list."""
+        status = self._git_client.status_summary(repo_root)
+        self._display_working_tree_status(status)
+
+        self._file_statuses = self._git_client.status_porcelain(repo_root)
+        self._populate_changes_list()
+        self._update_button_states()
+
+    def _populate_changes_list(self):
+        """Update changes list widget with current file statuses."""
+        self.changes_list.clear()
+
+        if not self._file_statuses:
+            return
+
+        for entry in self._file_statuses:
+            prefix = f"{entry.x}{entry.y}"
+            text = f"{prefix} {entry.path}"
+            self.changes_list.addItem(text)
+
+    def _on_commit_message_changed(self):
+        """Called when commit message text changes."""
+        self._update_button_states()
+
+    def _on_commit_clicked(self):
+        """Handle Commit button click."""
+        if not self._current_repo_root:
+            log.warning("No repository to commit")
+            return
+
+        if self._is_committing or self._job_runner.is_busy():
+            log.debug("Job running, commit ignored")
+            return
+
+        message = self.commit_message.toPlainText().strip()
+        if not message:
+            self._show_status_message(
+                "Commit message required", is_error=True
+            )
+            return
+
+        if self._behind_count > 0:
+            behind_msg = (
+                f"You're {self._behind_count} commits behind upstream. "
+                "Consider Pull before pushing."
+            )
+            self._show_status_message(behind_msg, is_error=False)
+
+        self._clear_status_message()
+        self._is_committing = True
+        self.commit_btn.setText("Committing…")
+        self._pending_commit_message = message
+        self._update_button_states()
+
+        log.info("Starting commit sequence")
+
+        git_cmd = self._git_client._get_git_command()
+        args = [git_cmd, "-C", self._current_repo_root, "add", "-A"]
+
+        self._job_runner.run_job(
+            "commit_stage",
+            args,
+            callback=self._on_commit_stage_completed,
+        )
+
+    def _on_commit_stage_completed(self, job):
+        """Callback after staging completes."""
+        result = job.get("result", {})
+        if not result.get("success"):
+            log.warning(
+                f"Stage failed: {result.get('stderr', '')}"
+            )
+            self._handle_commit_failed("Stage failed")
+            return
+
+        log.debug("Stage completed, running commit")
+
+        if not self._current_repo_root:
+            self._handle_commit_failed("Repository lost")
+            return
+
+        message = self._pending_commit_message
+        if not message:
+            self._handle_commit_failed("No commit message")
+            return
+
+        git_cmd = self._git_client._get_git_command()
+        args = [git_cmd, "-C", self._current_repo_root, "commit", "-m", message]
+
+        self._job_runner.run_job(
+            "commit_main",
+            args,
+            callback=self._on_commit_main_completed,
+        )
+
+    def _on_commit_main_completed(self, job):
+        """Callback after commit completes."""
+        result = job.get("result", {})
+        success = result.get("success", False)
+        stderr = result.get("stderr", "")
+
+        self._is_committing = False
+        self.commit_btn.setText("Commit")
+        self._pending_commit_message = ""
+
+        if not success:
+            code = self._git_client._classify_commit_error(stderr)
+            if code == "NOTHING_TO_COMMIT":
+                self._show_status_message(
+                    "No changes to commit", is_error=False
+                )
+            elif code == "MISSING_IDENTITY":
+                self._show_commit_identity_error_dialog()
+            else:
+                self._show_status_message(
+                    f"Commit failed: {stderr[:80]}", is_error=True
+                )
+            log.warning(f"Commit failed: {code}")
+            self._update_button_states()
+            return
+
+        log.info("Commit created successfully")
+        self.commit_message.clear()
+
+        if self._current_repo_root:
+            branch = self._git_client.current_branch(
+                self._current_repo_root
+            )
+            self.branch_label.setText(branch)
+            self._refresh_status_views(self._current_repo_root)
+            self._update_upstream_info(self._current_repo_root)
+
+        self._show_status_message(
+            "Commit created", is_error=False
+        )
+
+        QtCore.QTimer.singleShot(2000, self._clear_status_message)
+
+    def _handle_commit_failed(self, message):
+        """Handle commit failure."""
+        self._is_committing = False
+        self.commit_btn.setText("Commit")
+        self._show_status_message(message, is_error=True)
+        self._update_button_states()
+
+    def _show_commit_identity_error_dialog(self):
+        """Show error about missing git identity."""
+        msg_box = QtWidgets.QMessageBox(self)
+        msg_box.setIcon(QtWidgets.QMessageBox.Warning)
+        msg_box.setWindowTitle("Git Identity Not Configured")
+        msg_box.setText(
+            "Git needs your name and email before committing."
+        )
+        details = (
+            "Configure in GitHub Desktop or run:\n\n"
+            "git config --global user.name \"Your Name\"\n"
+            "git config --global user.email \"you@example.com\""
+        )
+        msg_box.setInformativeText(details)
+        msg_box.setStandardButtons(QtWidgets.QMessageBox.Ok)
+        msg_box.exec()
+
+    def _on_push_clicked(self):
+        """Handle Push button click."""
+        if not self._current_repo_root:
+            log.warning("No repository to push")
+            return
+
+        if self._is_pushing or self._job_runner.is_busy():
+            log.debug("Job running, push ignored")
+            return
+
+        if self._behind_count > 0:
+            should_continue = self._show_push_behind_warning()
+            if not should_continue:
+                log.info("User cancelled push due to being behind")
+                return
+
+        self._clear_status_message()
+        self._is_pushing = True
+        self.push_btn.setText("Pushing…")
+        self._update_button_states()
+
+        log.info("Starting push")
+
+        git_cmd = self._git_client._get_git_command()
+
+        has_upstream = self._git_client.has_upstream(
+            self._current_repo_root
+        )
+
+        if has_upstream:
+            args = [git_cmd, "-C", self._current_repo_root, "push"]
+        else:
+            args = [
+                git_cmd, "-C", self._current_repo_root, "push", "-u",
+                self._remote_name, "HEAD"
+            ]
+
+        self._job_runner.run_job(
+            "push_main",
+            args,
+            callback=self._on_push_main_completed,
+        )
+
+    def _on_push_main_completed(self, job):
+        """Callback when push completes."""
+        result = job.get("result", {})
+        success = result.get("success", False)
+        stderr = result.get("stderr", "")
+
+        self._is_pushing = False
+        self.push_btn.setText("Push")
+
+        if not success:
+            code = self._git_client._classify_push_error(stderr)
+            self._show_push_error_dialog(code, stderr)
+            log.warning(f"Push failed: {code}")
+            self._update_button_states()
+            return
+
+        log.info("Push completed successfully")
+
+        # Clear any leftover commit message after a successful push
+        if hasattr(self, "commit_message"):
+            self.commit_message.clear()
+
+        if self._current_repo_root:
+            self._update_upstream_info(self._current_repo_root)
+
+        self._show_status_message("Push completed", is_error=False)
+
+        QtCore.QTimer.singleShot(2000, self._clear_status_message)
+
+        self._update_button_states()
+
+    def _show_push_behind_warning(self):
+        """Show warning if behind upstream."""
+        msg_box = QtWidgets.QMessageBox(self)
+        msg_box.setIcon(QtWidgets.QMessageBox.Warning)
+        msg_box.setWindowTitle("Behind Upstream")
+        msg_box.setText(
+            f"You're {self._behind_count} commits behind upstream. "
+            "Push may be rejected."
+        )
+        msg_box.setInformativeText(
+            "Consider Pull first to sync with upstream."
+        )
+        msg_box.setStandardButtons(
+            QtWidgets.QMessageBox.Cancel
+            | QtWidgets.QMessageBox.Ok
+        )
+        msg_box.setDefaultButton(QtWidgets.QMessageBox.Cancel)
+        result = msg_box.exec()
+        return result == QtWidgets.QMessageBox.Ok
+
+    def _show_push_error_dialog(self, error_code, stderr):
+        """Show error dialog for push failure."""
+        dlg = dialogs.PushErrorDialog(error_code, stderr, self)
+        dlg.exec()
 
     def _on_refresh_clicked(self):
         """

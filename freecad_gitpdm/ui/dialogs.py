@@ -139,8 +139,11 @@ class PullErrorDialog(QtWidgets.QDialog):
             )
         if code == "DIVERGED_OR_NON_FF":
             return (
-                "Fast-forward not possible. Histories diverged.\n\n"
-                "Use GitHub Desktop to merge or rebase."
+                "Fast-forward not possible: branches diverged.\n\n"
+                "Fix without terminal:\n"
+                " 1) Open GitHub Desktop and pull (merge or rebase).\n"
+                " 2) Resolve conflicts there if prompted and finish pull.\n"
+                " 3) Back in GitPDM: Refresh Status, then Push."
             )
         if code == "AUTH_OR_PERMISSION":
             return (
@@ -165,7 +168,100 @@ class PullErrorDialog(QtWidgets.QDialog):
         log.info("Pull error details copied to clipboard")
 
 
+class PushErrorDialog(QtWidgets.QDialog):
+    """Dialog showing categorized push error with details."""
+
+    def __init__(self, error_code, stderr, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Push Failed")
+        self.setModal(True)
+        self.setMinimumWidth(500)
+        self.setMinimumHeight(300)
+
+        self._error_code = error_code
+        self._stderr = stderr
+
+        layout = QtWidgets.QVBoxLayout()
+        self.setLayout(layout)
+
+        header_layout = QtWidgets.QHBoxLayout()
+        icon_label = QtWidgets.QLabel()
+        icon_label.setPixmap(
+            self.style().standardIcon(
+                QtWidgets.QStyle.SP_MessageBoxCritical
+            ).pixmap(48, 48)
+        )
+        header_layout.addWidget(icon_label)
+
+        message_label = QtWidgets.QLabel(
+            self._friendly_message(error_code)
+        )
+        message_label.setWordWrap(True)
+        header_layout.addWidget(message_label)
+
+        layout.addLayout(header_layout)
+
+        details_group = QtWidgets.QGroupBox("Details")
+        details_layout = QtWidgets.QVBoxLayout()
+        details_group.setLayout(details_layout)
+
+        details_text = QtWidgets.QTextEdit()
+        details_text.setReadOnly(True)
+        details_text.setMaximumHeight(150)
+        details_text.setText(self._stderr)
+        details_text.setFont(QtGui.QFont("Courier", 9))
+        details_layout.addWidget(details_text)
+
+        copy_layout = QtWidgets.QHBoxLayout()
+        copy_btn = QtWidgets.QPushButton("Copy Details")
+        copy_btn.clicked.connect(self._on_copy_details)
+        copy_layout.addWidget(copy_btn)
+        copy_layout.addStretch()
+        details_layout.addLayout(copy_layout)
+
+        layout.addWidget(details_group)
+
+        close_layout = QtWidgets.QHBoxLayout()
+        close_layout.addStretch()
+        close_btn = QtWidgets.QPushButton("Close")
+        close_btn.setDefault(True)
+        close_btn.clicked.connect(self.accept)
+        close_layout.addWidget(close_btn)
+        layout.addLayout(close_layout)
+
+    def _friendly_message(self, code):
+        """Return user-friendly message for error code."""
+        if code == "AUTH_OR_PERMISSION":
+            return (
+                "Authentication or permission issue.\n\n"
+                "Sign in via GitHub Desktop, then try again."
+            )
+        if code == "NO_UPSTREAM":
+            return (
+                "No upstream branch set.\n\n"
+                "Push should auto-detect this, but upstream may be needed."
+            )
+        if code == "NO_REMOTE":
+            return "Remote not found. Check remote config and network."
+        if code == "REJECTED":
+            return (
+                "Push rejected. You may need to pull first.\n\n"
+                "Consider Pull before Push."
+            )
+        if code == "TIMEOUT":
+            return (
+                "Push timed out (>3 minutes). Check connection and retry."
+            )
+        return "Push failed due to an unexpected error. Check details."
+
+    def _on_copy_details(self):
+        clipboard = QtWidgets.QApplication.clipboard()
+        clipboard.setText(self._stderr)
+        log.info("Push error details copied to clipboard")
+
+
 __all__ = [
     "UncommittedChangesWarningDialog",
     "PullErrorDialog",
+    "PushErrorDialog",
 ]
