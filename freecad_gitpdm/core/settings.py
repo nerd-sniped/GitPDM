@@ -188,6 +188,46 @@ def load_last_pull_at():
     return load_setting("LastPullAt", "")
 
 
+# --- Sprint 6: Preview export settings ---
+
+def save_last_preview_at(timestamp):
+    """
+    Save the last preview generation timestamp (ISO 8601 UTC).
+    MVP: Single timestamp; future may use per-repo keys.
+    """
+    save_setting("LastPreviewAt", timestamp)
+
+
+def load_last_preview_at():
+    """
+    Load last preview generation timestamp.
+    """
+    return load_setting("LastPreviewAt", "")
+
+
+def save_last_preview_dir(rel_dir):
+    """Save last preview output repo-relative directory."""
+    save_setting("LastPreviewDir", rel_dir or "")
+
+
+def load_last_preview_dir():
+    """Load last preview output repo-relative directory."""
+    return load_setting("LastPreviewDir", "")
+
+
+def load_stage_previews_default_on():
+    """
+    Load whether to stage preview files after export.
+    Default ON.
+    """
+    return load_bool_setting("StagePreviews", True)
+
+
+def save_stage_previews(value):
+    """Persist staging preference."""
+    save_bool_setting("StagePreviews", bool(value))
+
+
 # --- Sprint 5: CAD extensions configuration ---
 
 _DEFAULT_CAD_EXT_STR = \

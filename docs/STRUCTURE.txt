@@ -14,17 +14,29 @@ GitPDM/
 │   ├── core/                         # Core functionality modules
 │   │   ├── __init__.py               # Core package init
 │   │   ├── log.py                    # Logging to FreeCAD console
-│   │   └── settings.py               # Settings persistence (FreeCAD params)
+│   │   ├── settings.py               # Settings persistence (FreeCAD params)
+│   │   ├── jobs.py                   # Async job runner (QProcess-based)
+│   │   ├── paths.py                  # Path safety utilities
+│   │   └── publish.py                # Sprint 7: Publish workflow coordinator
 │   │
 │   ├── ui/                           # User interface components
 │   │   ├── __init__.py               # UI package init
 │   │   └── panel.py                  # Main dock panel widget (Qt-based)
 │   │
 │   ├── git/                          # Git operations (Sprint 1+)
-│   │   └── __init__.py               # Placeholder for git logic
+│   │   ├── __init__.py               # Package init
+│   │   └── client.py                 # Git subprocess wrapper
+│   │
+│   ├── ui/                           # User interface components
+│   │   ├── __init__.py               # UI package init
+│   │   ├── panel.py                  # Main dock panel widget (Qt-based)
+│   │   └── dialogs.py                # Modal dialogs (Sprint 2+)
 │   │
 │   └── export/                       # Export functionality (Sprint 5+)
-│       └── __init__.py               # Placeholder for export logic
+│       ├── __init__.py               # Package init
+│       ├── preset.py                 # Repo-scoped preset loader (v1+Sprint 7)
+│       ├── mapper.py                 # Source→preview path mapping
+│       └── exporter.py               # PNG + JSON + GLB export (Sprint 6+7)
 │
 └── docs/
     ├── README.md                     # User documentation and install guide
@@ -89,3 +101,46 @@ All deliverables implemented:
 ✓ No external dependencies
 ✓ PEP8 formatting, lines ≤ 80 chars
 ✓ Documentation (README.md)
+
+## Sprint 6 Notes
+
+- Repo-scoped preset:
+    `.freecad-pdm/preset.json`
+
+- Preview output mapping (mirror path):
+    Source `<rel_dir>/<name>.FCStd` →
+    `previews/<rel_dir>/<name>/preview.png`
+    `previews/<rel_dir>/<name>/preview.json`
+
+## Sprint 7 Notes
+
+- Extended preset with mesh settings:
+    ```json
+    {
+      "mesh": {
+        "linearDeflection": 0.1,
+        "angularDeflectionDeg": 28.5,
+        "relative": false
+      }
+    }
+    ```
+
+- GLB export added to preview artifacts:
+    `previews/<rel_dir>/<name>/model.glb`
+
+- Extended preview.json schema:
+    - `artifacts.model`: GLB path
+    - `meshStats`: {triangles, vertices}
+    - `generationWarnings`: array of warnings
+
+- One-click Publish workflow:
+    1. Precheck (doc, repo, remote, behind check)
+    2. Export previews (PNG + JSON + GLB)
+    3. Stage files (source + artifacts)
+    4. Commit (user message)
+    5. Push to remote
+
+- Publish coordinator: `freecad_gitpdm/core/publish.py`
+    - PublishStep enum
+    - PublishResult dataclass
+    - PublishCoordinator class with workflow methods

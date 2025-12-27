@@ -19,6 +19,9 @@ except ImportError:
 from freecad_gitpdm.core import log, settings, jobs
 from freecad_gitpdm.git import client
 from freecad_gitpdm.ui import dialogs
+from freecad_gitpdm.export import exporter
+from freecad_gitpdm.core import paths as core_paths
+from freecad_gitpdm.core import publish
 
 
 class _DocumentObserver:
@@ -550,7 +553,69 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         self.publish_btn = QtWidgets.QPushButton("Publish Branch")
         self.publish_btn.setEnabled(False)
+        self.publish_btn.clicked.connect(self._on_publish_clicked)
         group_layout.addWidget(self.publish_btn)
+
+        self.stage_all_checkbox = QtWidgets.QCheckBox(
+            "Stage all changes during Publish"
+        )
+        self.stage_all_checkbox.setChecked(True)
+        group_layout.addWidget(self.stage_all_checkbox)
+
+        # Sprint 6: Generate Previews workflow
+        previews_group = QtWidgets.QGroupBox("Previews")
+        pg_layout = QtWidgets.QVBoxLayout()
+        pg_layout.setContentsMargins(6, 4, 6, 4)
+        pg_layout.setSpacing(4)
+        previews_group.setLayout(pg_layout)
+
+        rowp = QtWidgets.QHBoxLayout()
+        rowp.setSpacing(4)
+        self.generate_previews_btn = QtWidgets.QPushButton(
+            "Generate Previews"
+        )
+        self.generate_previews_btn.setEnabled(False)
+        self.generate_previews_btn.clicked.connect(
+            self._on_generate_previews_clicked
+        )
+        rowp.addWidget(self.generate_previews_btn)
+
+        self.stage_previews_checkbox = QtWidgets.QCheckBox(
+            "Stage preview files after export"
+        )
+        self.stage_previews_checkbox.setChecked(
+            settings.load_stage_previews_default_on()
+        )
+        self.stage_previews_checkbox.stateChanged.connect(
+            lambda _:
+                settings.save_stage_previews(
+                    self.stage_previews_checkbox.isChecked()
+                )
+        )
+        rowp.addWidget(self.stage_previews_checkbox)
+        rowp.addStretch()
+        pg_layout.addLayout(rowp)
+
+        # Status area
+        status_row = QtWidgets.QHBoxLayout()
+        status_row.setSpacing(6)
+        self.preview_status_label = QtWidgets.QLabel(
+            "Last generated: (never)"
+        )
+        self._set_meta_label(self.preview_status_label, "gray")
+        status_row.addWidget(self.preview_status_label)
+        status_row.addStretch()
+        self.open_preview_folder_btn = QtWidgets.QPushButton(
+            "Open Folder"
+        )
+        self.open_preview_folder_btn.setEnabled(False)
+        self.open_preview_folder_btn.clicked.connect(
+            self._on_open_preview_folder_clicked
+        )
+        status_row.addWidget(self.open_preview_folder_btn)
+        pg_layout.addLayout(status_row)
+
+        group_layout.addWidget(previews_group)
 
         # Busy indicator (indeterminate)
         self.busy_bar = QtWidgets.QProgressBar()
@@ -679,6 +744,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self._fetch_branch_and_status(repo_root)
             # Refresh repo browser
             self._refresh_repo_browser_files()
+            # Update preview status area
+            self._update_preview_status_labels()
             
             # Update button states
             self._update_button_states()
@@ -931,6 +998,22 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         self.changes_list.setEnabled(repo_ok)
         self.publish_btn.setEnabled(False)
+
+        # Enable Generate Previews when repo is valid and a doc is saved
+        doc_saved = False
+        try:
+            import FreeCAD
+            ad = FreeCAD.ActiveDocument
+            doc_saved = bool(getattr(ad, "FileName", ""))
+        except Exception:
+            doc_saved = False
+        self.generate_previews_btn.setEnabled(
+            git_ok and repo_ok and doc_saved and not busy
+        )
+        # Sprint 7: Enable Publish button with same criteria
+        self.publish_btn.setEnabled(
+            git_ok and repo_ok and doc_saved and not busy
+        )
 
     def _show_status_message(self, message, is_error=True):
         """
@@ -2186,6 +2269,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         
         if job_type == "fetch":
             self._handle_fetch_result(job)
+        elif job_type == "stage_previews":
+            self._handle_stage_previews_result(job)
 
     def _handle_fetch_result(self, job):
         """
@@ -2245,6 +2330,359 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # Update button states
         self._update_button_states()
 
+    # --- Sprint 6: Generate Previews ---
+
+    def _update_preview_status_labels(self):
+        ts = settings.load_last_preview_at()
+        rel_dir = settings.load_last_preview_dir()
+        if ts:
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(ts)
+                display = dt.strftime("%Y-%m-%d %H:%M:%S")
+            except Exception:
+                display = ts
+            self.preview_status_label.setText(
+                f"Last generated: {display}"
+            )
+            self._set_meta_label(self.preview_status_label, "blue")
+        else:
+            self.preview_status_label.setText(
+                "Last generated: (never)"
+            )
+            self._set_meta_label(self.preview_status_label, "gray")
+        self.open_preview_folder_btn.setEnabled(bool(rel_dir))
+
+    def _on_open_preview_folder_clicked(self):
+        rel_dir = settings.load_last_preview_dir()
+        if not rel_dir or not self._current_repo_root:
+            return
+        abs_dir = core_paths.safe_join_repo(
+            self._current_repo_root, rel_dir
+        )
+        if not abs_dir:
+            return
+        import os
+        try:
+            os.startfile(str(abs_dir))
+        except Exception as e:
+            log.warning(f"Open folder failed: {e}")
+
+    def _on_generate_previews_clicked(self):
+        if not self._current_repo_root:
+            self._show_status_message(
+                "Repo not selected / invalid", is_error=True
+            )
+            return
+        try:
+            import FreeCAD
+            ad = FreeCAD.ActiveDocument
+        except Exception:
+            ad = None
+        if not ad:
+            self._show_status_message(
+                "No active document", is_error=True
+            )
+            return
+        file_name = getattr(ad, "FileName", "")
+        if not file_name:
+            self._show_status_message(
+                "Document not saved", is_error=True
+            )
+            return
+        if not core_paths.is_inside_repo(file_name, self._current_repo_root):
+            self._show_status_message(
+                "Document outside selected repo", is_error=True
+            )
+            return
+
+        # Modal progress dialog (best-effort, keeps UI responsive)
+        progress = QtWidgets.QProgressDialog(
+            "Generating previews…", None, 0, 0, self
+        )
+        progress.setWindowTitle("GitPDM")
+        progress.setModal(True)
+        progress.setMinimumDuration(0)
+        progress.setCancelButton(None)
+        progress.show()
+        QtWidgets.QApplication.processEvents()
+
+        result = exporter.export_active_document(self._current_repo_root)
+
+        progress.close()
+
+        if not result.ok:
+            self._show_status_message(result.message or "Export failed", True)
+            return
+
+        # Update status labels and remember last output dir
+        from datetime import datetime, timezone
+        settings.save_last_preview_at(
+            datetime.now(timezone.utc).isoformat()
+        )
+        if result.rel_dir:
+            settings.save_last_preview_dir(result.rel_dir)
+        self._update_preview_status_labels()
+
+        # Stage outputs if enabled
+        if self.stage_previews_checkbox.isChecked() and result.rel_dir:
+            git_cmd = self._git_client._get_git_command()
+            png_rel = result.rel_dir + "preview.png"
+            json_rel = result.rel_dir + "preview.json"
+            args = [
+                git_cmd, "-C", self._current_repo_root,
+                "add", "--", png_rel, json_rel
+            ]
+            self._start_busy_feedback("Staging previews…")
+            self._job_runner.run_job(
+                "stage_previews", args, callback=self._on_stage_previews_completed
+            )
+        else:
+            self._show_status_message(
+                "Previews generated", is_error=False
+            )
+            self._refresh_status_views(self._current_repo_root)
+            QtCore.QTimer.singleShot(2000, self._clear_status_message)
+
+    def _on_stage_previews_completed(self, job):
+        # Handled in _handle_stage_previews_result
+        pass
+
+    def _handle_stage_previews_result(self, job):
+        self._stop_busy_feedback()
+        result = job.get("result", {})
+        success = result.get("success", False)
+        if success:
+            self._show_status_message(
+                "Previews generated and staged", is_error=False
+            )
+        else:
+            self._show_status_message(
+                "Staging failed; outputs kept", is_error=True
+            )
+            log.warning(result.get("stderr", ""))
+        if self._current_repo_root:
+            self._refresh_status_views(self._current_repo_root)
+        QtCore.QTimer.singleShot(2000, self._clear_status_message)
+
+    def _on_publish_clicked(self):
+        """Sprint 7: Handle Publish button click (one-click workflow)."""
+        if not self._current_repo_root:
+            self._show_status_message(
+                "Repo not selected / invalid", is_error=True
+            )
+            return
+        
+        # Check if busy
+        if self._job_runner.is_busy():
+            log.debug("Job running, publish ignored")
+            return
+        
+        try:
+            import FreeCAD
+            ad = FreeCAD.ActiveDocument
+        except Exception:
+            ad = None
+        if not ad:
+            self._show_status_message(
+                "No active document", is_error=True
+            )
+            return
+        
+        file_name = getattr(ad, "FileName", "")
+        if not file_name:
+            self._show_status_message(
+                "Document not saved", is_error=True
+            )
+            return
+        
+        # Sprint 7: Prompt for commit message
+        import os
+        doc_name = os.path.basename(file_name)
+        default_message = f"Publish {doc_name} (GitPDM)"
+        
+        message, ok = QtWidgets.QInputDialog.getMultiLineText(
+            self,
+            "Publish Branch",
+            "Commit message:",
+            default_message
+        )
+        
+        if not ok:
+            log.debug("User cancelled publish")
+            return
+        
+        message = message.strip()
+        if not message:
+            self._show_status_message(
+                "Commit message required", is_error=True
+            )
+            return
+        
+        # Run publish workflow with progress
+        self._run_publish_workflow(message)
+    
+    def _run_publish_workflow(self, commit_message):
+        """Execute the publish workflow with progress feedback."""
+        # Modal progress dialog
+        progress = QtWidgets.QProgressDialog(
+            "Starting publish workflow…", "Cancel", 0, 5, self
+        )
+        progress.setWindowTitle("GitPDM Publish")
+        progress.setModal(True)
+        progress.setMinimumDuration(0)
+        progress.show()
+        QtWidgets.QApplication.processEvents()
+        
+        coordinator = publish.PublishCoordinator(self._git_client)
+        
+        # Step 1: Precheck
+        progress.setLabelText("Running preflight checks…")
+        progress.setValue(0)
+        QtWidgets.QApplication.processEvents()
+        
+        result = coordinator.precheck(self._current_repo_root)
+        if not result.ok:
+            progress.close()
+            self._handle_publish_error(result)
+            return
+
+        precheck_details = result.details or {}
+        
+        # Check if behind upstream
+        details = result.details or {}
+        behind = details.get("behind", 0)
+        if behind > 0:
+            progress.close()
+            choice = QtWidgets.QMessageBox.question(
+                self,
+                "Branch Behind Remote",
+                f"Your branch is {behind} commit(s) behind the remote.\n\n"
+                "Recommendation: Pull changes first to avoid conflicts.\n\n"
+                "Publish anyway?",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                QtWidgets.QMessageBox.No
+            )
+            if choice != QtWidgets.QMessageBox.Yes:
+                log.info("User chose not to publish while behind")
+                return
+            # Reopen progress dialog
+            progress = QtWidgets.QProgressDialog(
+                "Continuing publish workflow…", "Cancel", 0, 5, self
+            )
+            progress.setWindowTitle("GitPDM Publish")
+            progress.setModal(True)
+            progress.setMinimumDuration(0)
+            progress.show()
+            QtWidgets.QApplication.processEvents()
+        
+        # Step 2: Export previews
+        progress.setLabelText("Exporting previews (PNG + JSON + GLB)…")
+        progress.setValue(1)
+        QtWidgets.QApplication.processEvents()
+        
+        result = coordinator.export_previews(self._current_repo_root)
+        if not result.ok:
+            progress.close()
+            self._handle_publish_error(result)
+            return
+
+        export_result = None
+        if result.details:
+            export_result = result.details.get("export_result")
+        
+        # Step 3: Stage files
+        progress.setLabelText("Staging files…")
+        progress.setValue(2)
+        QtWidgets.QApplication.processEvents()
+        
+        source_path = precheck_details.get("file_name") if precheck_details else None
+        result = coordinator.stage_files(
+            self._current_repo_root,
+            source_path,
+            export_result,
+            stage_all=self.stage_all_checkbox.isChecked(),
+        )
+        if not result.ok:
+            progress.close()
+            self._handle_publish_error(result)
+            return
+        
+        # Step 4: Commit
+        progress.setLabelText("Creating commit…")
+        progress.setValue(3)
+        QtWidgets.QApplication.processEvents()
+        
+        result = coordinator.commit_changes(self._current_repo_root, commit_message)
+        if not result.ok:
+            progress.close()
+            # Special handling for NOTHING_TO_COMMIT
+            if result.step == publish.PublishStep.COMMIT and "nothing" in result.message.lower():
+                self._show_status_message(
+                    "No changes to commit", is_error=False
+                )
+            else:
+                self._handle_publish_error(result)
+            return
+        
+        # Step 5: Push
+        progress.setLabelText("Pushing to remote…")
+        progress.setValue(4)
+        QtWidgets.QApplication.processEvents()
+        
+        result = coordinator.push_to_remote(self._current_repo_root)
+        progress.close()
+        
+        if not result.ok:
+            self._handle_publish_error(result)
+            return
+        
+        # Success!
+        self._show_status_message(
+            "Published successfully", is_error=False
+        )
+
+        # Clear commit message after successful publish
+        try:
+            self.commit_message.blockSignals(True)
+            self.commit_message.setPlainText("")
+        finally:
+            try:
+                self.commit_message.blockSignals(False)
+            except Exception:
+                pass
+        self._on_commit_message_changed()
+        
+        # Update preview status
+        from datetime import datetime, timezone
+        settings.save_last_preview_at(
+            datetime.now(timezone.utc).isoformat()
+        )
+        export_details = result.details or {}
+        if export_details.get("rel_dir"):
+            settings.save_last_preview_dir(export_details["rel_dir"])
+        self._update_preview_status_labels()
+        
+        # Refresh status views
+        self._refresh_status_views(self._current_repo_root)
+        QtCore.QTimer.singleShot(3000, self._clear_status_message)
+    
+    def _handle_publish_error(self, result):
+        """Display publish error to user."""
+        step_name = result.step.name if result.step else "Unknown"
+        error_msg = result.message or "Unknown error"
+        
+        QtWidgets.QMessageBox.critical(
+            self,
+            f"Publish Failed ({step_name})",
+            error_msg
+        )
+        
+        self._show_status_message(
+            f"Publish failed: {step_name}", is_error=True
+        )
+        log.error(f"Publish failed at {step_name}: {error_msg}")
+
     def _load_saved_repo_path(self):
         """
         Load the saved repository path from settings and validate it.
@@ -2259,3 +2697,5 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             log.info(
                 f"Restored repo path from settings: {saved_path}"
             )
+        # Initialize preview status area
+        self._update_preview_status_labels()

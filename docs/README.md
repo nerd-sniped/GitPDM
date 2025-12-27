@@ -117,18 +117,95 @@ You can view/edit these manually via `Tools` > `Edit parameters...`
 
 ## Development Roadmap
 
-- **Sprint 0 (Current):** Project foundation and UI skeleton ✓
-- **Sprint 1:** Basic git repository detection and status display
-- **Sprint 2:** Branch switching and history viewing
-- **Sprint 3:** Fetch and pull operations
-- **Sprint 4:** Commit and push operations
-- **Sprint 5:** FreeCAD document export integration
+
+### Sprint 6: Preview Export Pipeline (v1)
+
+- Deterministic previews for the active document:
+   - `preview.png` thumbnail
+   - `preview.json` manifest (sorted keys, LF endings)
+- Repo-scoped preset: `.freecad-pdm/preset.json`
+- Output mapping (mirror-the-source-path):
+   - Source: `<rel_dir>/<name>.FCStd`
+   - Outputs: `previews/<rel_dir>/<name>/preview.png` and `preview.json`
+- UI: "Generate Previews" button in the panel
+   - Optional staging of generated files (default ON)
+   - Preview status: last generated time and open folder
+
+Preset schema (v1):
+
+```
+{
+   "presetVersion": 1,
+   "thumbnail": {
+      "size": [512, 512],
+      "projection": "orthographic",
+      "view": "isometric",
+      "background": "#ffffff",
+      "showEdges": false
+   },
+   "stats": { "precision": 2 }
+}
+```
+
+Notes:
+- If preset missing or malformed, defaults are used with a friendly log.
+- Thumbnail requires FreeCAD GUI; JSON is always written.
+
+### Sprint 7: Preview Export Pipeline (v2) + One-Click Publish
+
+Extended preview exports to include 3D web-view artifacts:
+
+- **GLB Export:** Exports active document as `model.glb` (GLB preferred for web compatibility)
+  - Uses FreeCAD's Mesh module with configurable tessellation
+  - Fallback to STL if GLB export unavailable
+  - Mesh statistics: triangle count, vertex count
+- **Extended Manifest:** `preview.json` now includes:
+  - `artifacts.model`: path to GLB file
+  - `meshStats`: triangle and vertex counts
+  - `generationWarnings`: array of non-fatal issues
+- **Mesh Preset Settings:** Added to `.freecad-pdm/preset.json`:
+  ```json
+  {
+    "mesh": {
+      "linearDeflection": 0.1,
+      "angularDeflectionDeg": 28.5,
+      "relative": false
+    }
+  }
+  ```
+
+**One-Click Publish Workflow:**
+
+The "Publish Branch" button orchestrates a complete publish workflow:
+
+1. **Precheck:** Validates document, repository, remote, and branch status
+   - Warns if branch is behind remote (offers to continue or cancel)
+2. **Export Previews:** Generates PNG + JSON + GLB artifacts
+3. **Stage Files:** Stages source document and all preview artifacts
+4. **Commit:** Creates commit with user-provided message
+   - Default message: "Publish <filename> (GitPDM)"
+5. **Push:** Pushes commit to remote repository
+
+Features:
+- Modal progress dialog with step-by-step feedback
+- Friendly error handling for each step
+- Automatic status refresh after success
+- Works seamlessly with Git LFS for large binary files
+
+**Git LFS Recommendations:**
+
+For optimal performance with large FreeCAD files and GLB models:
+
+1. Install Git LFS: https://git-lfs.github.com/
+2. Track binary files in `.gitattributes`:
+   ```
+   *.FCStd filter=lfs diff=lfs merge=lfs -text
+   *.glb filter=lfs diff=lfs merge=lfs -text
+   ```
+3. Run `git lfs install` in your repository
+ 
 
 ## Requirements
-
-- FreeCAD 1.0 or later
-- Python 3.8+ (bundled with FreeCAD)
-- PySide2 or PySide6 (bundled with FreeCAD)
 - Git (for future functionality)
 
 ## Troubleshooting

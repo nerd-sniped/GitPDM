@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-GitPDM Export Module
-Sprint 0: Placeholder for future export functionality
+GitPDM Export Package
+Sprint 6: Preview export pipeline modules
+
+Modules:
+- preset: Load repo-scoped preset with defaults
+- mapper: Map source path to preview output dir
+- exporter: Deterministic PNG + JSON export
 """
 
-# Future: Export operations will be implemented here
-# - Export FreeCAD documents to version control
-# - Handle binary file formats
-# - Export configurations
-# - Integration with git workflows
