@@ -97,6 +97,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._behind_count = 0
         self._file_statuses = []
         self._pending_commit_message = ""
+        self._all_cad_files = []
+        self._is_listing_files = False
         self._busy_timer = QtCore.QTimer(self)
         self._busy_timer.setInterval(5000)
         self._busy_timer.timeout.connect(self._on_busy_timer_tick)
@@ -109,10 +111,18 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         )
         self._cached_has_remote = False
         self._doc_observer = None
+        self._browser_dock = None
+        self._browser_content = None
+
+        # Shared label styles
+        self._meta_font_size = 9
+        self._strong_font_size = 11
 
         # Create main widget and layout
         main_widget = QtWidgets.QWidget()
         main_layout = QtWidgets.QVBoxLayout()
+        main_layout.setContentsMargins(6, 6, 6, 6)
+        main_layout.setSpacing(6)
         main_widget.setLayout(main_layout)
         self.setWidget(main_widget)
 
@@ -134,6 +144,18 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         QtCore.QTimer.singleShot(100, self._deferred_initialization)
         
         log.info("GitPDM dock panel created")
+
+    def _set_meta_label(self, label, color="gray"):
+        label.setStyleSheet(
+            f"color: {color}; font-size: {self._meta_font_size}px;"
+        )
+
+    def _set_strong_label(self, label, color="black"):
+        label.setStyleSheet(
+            "font-weight: bold; "
+            f"font-size: {self._strong_font_size}px; "
+            f"color: {color};"
+        )
     
     def _deferred_initialization(self):
         """Run heavy initialization after panel is shown."""
@@ -185,14 +207,17 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         """
         group = QtWidgets.QGroupBox("System")
         group_layout = QtWidgets.QFormLayout()
+        group_layout.setContentsMargins(6, 4, 6, 4)
+        group_layout.setVerticalSpacing(4)
         group.setLayout(group_layout)
 
-        # Git availability
-        self.git_label = QtWidgets.QLabel("Checking...")
+        # Git availability (compact)
+        self.git_label = QtWidgets.QLabel("● Checking…")
         self.git_label.setTextInteractionFlags(
             QtCore.Qt.TextSelectableByMouse
         )
-        group_layout.addRow("Git:", self.git_label)
+        self.git_label.setStyleSheet("color: orange;")
+        group_layout.addRow("Git", self.git_label)
 
         layout.addWidget(group)
 
@@ -201,10 +226,10 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         is_available = self._git_client.is_git_available()
         if is_available:
             version = self._git_client.git_version()
-            self.git_label.setText(f"OK ({version})")
+            self.git_label.setText(f"● OK ({version})")
             self.git_label.setStyleSheet("color: green;")
         else:
-            self.git_label.setText("Not found")
+            self.git_label.setText("● Not found")
             self.git_label.setStyleSheet("color: red;")
             log.warning("Git not available on PATH")
 
@@ -217,10 +242,13 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         """
         group = QtWidgets.QGroupBox("Repository")
         group_layout = QtWidgets.QVBoxLayout()
+        group_layout.setContentsMargins(6, 3, 6, 3)
+        group_layout.setSpacing(2)
         group.setLayout(group_layout)
 
         # Repo path row
         path_layout = QtWidgets.QHBoxLayout()
+        path_layout.setSpacing(4)
         self.repo_path_field = QtWidgets.QLineEdit()
         self.repo_path_field.setPlaceholderText(
             "Select repository folder..."
@@ -237,7 +265,26 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         group_layout.addLayout(path_layout)
 
         # Repo root label (resolved path, read-only)
+        # Root details (collapsed by default)
+        self.root_toggle_btn = QtWidgets.QToolButton()
+        self.root_toggle_btn.setText("Show root")
+        self.root_toggle_btn.setArrowType(QtCore.Qt.RightArrow)
+        self.root_toggle_btn.setToolButtonStyle(
+            QtCore.Qt.ToolButtonTextBesideIcon
+        )
+        self.root_toggle_btn.setCheckable(True)
+        self.root_toggle_btn.setEnabled(False)
+        self.root_toggle_btn.toggled.connect(
+            self._on_root_toggle
+        )
+        group_layout.addWidget(self.root_toggle_btn)
+
+        self.repo_root_row = QtWidgets.QWidget()
         repo_root_layout = QtWidgets.QHBoxLayout()
+        repo_root_layout.setContentsMargins(0, 0, 0, 0)
+        repo_root_layout.setSpacing(4)
+        self.repo_root_row.setLayout(repo_root_layout)
+
         repo_root_layout.addWidget(QtWidgets.QLabel("Root:"))
         self.repo_root_label = QtWidgets.QLabel("—")
         self.repo_root_label.setStyleSheet(
@@ -248,10 +295,12 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         )
         self.repo_root_label.setWordWrap(True)
         repo_root_layout.addWidget(self.repo_root_label)
-        group_layout.addLayout(repo_root_layout)
+        self.repo_root_row.setVisible(False)
+        group_layout.addWidget(self.repo_root_row)
 
         # Validation status row
         validation_layout = QtWidgets.QHBoxLayout()
+        validation_layout.setSpacing(4)
         validation_layout.addWidget(QtWidgets.QLabel("Validate:"))
         self.validate_label = QtWidgets.QLabel("Not checked")
         self.validate_label.setStyleSheet(
@@ -261,6 +310,11 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         validation_layout.addStretch()
 
         refresh_btn = QtWidgets.QPushButton("Refresh Status")
+        refresh_btn.setMinimumWidth(130)
+        refresh_btn.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding,
+            QtWidgets.QSizePolicy.Preferred,
+        )
         refresh_btn.clicked.connect(self._on_refresh_clicked)
         validation_layout.addWidget(refresh_btn)
 
@@ -277,59 +331,72 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         """
         group = QtWidgets.QGroupBox("Status")
         group_layout = QtWidgets.QVBoxLayout()
+        group_layout.setContentsMargins(6, 4, 6, 4)
+        group_layout.setSpacing(4)
         group.setLayout(group_layout)
 
         # Operation status header (shows Pulling… / Fetching… / Synced)
         header_layout = QtWidgets.QHBoxLayout()
+        header_layout.setSpacing(4)
         header_layout.addWidget(QtWidgets.QLabel("Operation:"))
         self.operation_status_label = QtWidgets.QLabel("Ready")
         self.operation_status_label.setStyleSheet(
             "color: gray; font-size: 9px;"
         )
         self.operation_status_label.setAlignment(QtCore.Qt.AlignRight)
-        header_layout.addWidget(self.operation_status_label)
+        header_layout.addWidget(self.operation_status_label, 1)
         group_layout.addLayout(header_layout)
 
-        # Form-style fields
-        form_layout = QtWidgets.QFormLayout()
+        # Grid-style fields in 3 columns
+        grid_layout = QtWidgets.QGridLayout()
+        grid_layout.setContentsMargins(0, 0, 0, 0)
+        grid_layout.setHorizontalSpacing(8)
+        grid_layout.setVerticalSpacing(2)
 
-        # Branch label
-        self.branch_label = QtWidgets.QLabel("—")
-        self.branch_label.setTextInteractionFlags(
-            QtCore.Qt.TextSelectableByMouse
-        )
-        form_layout.addRow("Branch:", self.branch_label)
+        def add_field(row, col, title, value_label):
+            caption = QtWidgets.QLabel(title)
+            self._set_meta_label(caption, "gray")
+            grid_layout.addWidget(caption, row * 2, col)
+            grid_layout.addWidget(value_label, row * 2 + 1, col)
 
-        # Working tree status label
+        # Value labels
         self.working_tree_label = QtWidgets.QLabel("—")
         self.working_tree_label.setTextInteractionFlags(
             QtCore.Qt.TextSelectableByMouse
         )
-        form_layout.addRow("Working tree:", self.working_tree_label)
+        self._set_strong_label(self.working_tree_label, "black")
 
-        # Upstream label (Sprint 2)
-        self.upstream_label = QtWidgets.QLabel("—")
-        self.upstream_label.setTextInteractionFlags(
-            QtCore.Qt.TextSelectableByMouse
-        )
-        form_layout.addRow("Upstream:", self.upstream_label)
-
-        # Ahead/Behind label (Sprint 2)
         self.ahead_behind_label = QtWidgets.QLabel("—")
         self.ahead_behind_label.setTextInteractionFlags(
             QtCore.Qt.TextSelectableByMouse
         )
-        form_layout.addRow("Ahead/Behind:",
-                           self.ahead_behind_label)
+        self._set_strong_label(self.ahead_behind_label, "black")
 
-        # Last fetch label (Sprint 2)
+        self.branch_label = QtWidgets.QLabel("—")
+        self.branch_label.setTextInteractionFlags(
+            QtCore.Qt.TextSelectableByMouse
+        )
+        self._set_meta_label(self.branch_label, "gray")
+
+        self.upstream_label = QtWidgets.QLabel("—")
+        self.upstream_label.setTextInteractionFlags(
+            QtCore.Qt.TextSelectableByMouse
+        )
+        self._set_meta_label(self.upstream_label, "gray")
+
         self.last_fetch_label = QtWidgets.QLabel("—")
         self.last_fetch_label.setTextInteractionFlags(
             QtCore.Qt.TextSelectableByMouse
         )
-        form_layout.addRow("Last fetch:", self.last_fetch_label)
+        self._set_meta_label(self.last_fetch_label, "gray")
 
-        group_layout.addLayout(form_layout)
+        add_field(0, 0, "Working tree", self.working_tree_label)
+        add_field(0, 1, "Ahead/Behind", self.ahead_behind_label)
+        add_field(0, 2, "Branch", self.branch_label)
+        add_field(1, 0, "Upstream", self.upstream_label)
+        add_field(1, 1, "Last fetch", self.last_fetch_label)
+
+        group_layout.addLayout(grid_layout)
 
         # Error/message area (Sprint 2)
         self.status_message_label = QtWidgets.QLabel("")
@@ -351,6 +418,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         """
         group = QtWidgets.QGroupBox("Changes")
         group_layout = QtWidgets.QVBoxLayout()
+        group_layout.setContentsMargins(6, 4, 6, 4)
+        group_layout.setSpacing(4)
         group.setLayout(group_layout)
 
         info_label = QtWidgets.QLabel(
@@ -362,11 +431,12 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         group_layout.addWidget(info_label)
 
         self.changes_list = QtWidgets.QListWidget()
-        self.changes_list.setMaximumHeight(180)
+        self.changes_list.setMaximumHeight(80)
         self.changes_list.setEnabled(False)
         group_layout.addWidget(self.changes_list)
 
         stage_layout = QtWidgets.QHBoxLayout()
+        stage_layout.setSpacing(4)
         self.stage_all_checkbox = QtWidgets.QCheckBox("Stage all changes")
         self.stage_all_checkbox.setChecked(True)
         self.stage_all_checkbox.setEnabled(False)
@@ -388,9 +458,12 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         """
         group = QtWidgets.QGroupBox("Actions")
         group_layout = QtWidgets.QVBoxLayout()
+        group_layout.setContentsMargins(6, 4, 6, 4)
+        group_layout.setSpacing(4)
         group.setLayout(group_layout)
 
         row1_layout = QtWidgets.QHBoxLayout()
+        row1_layout.setSpacing(4)
         self.fetch_btn = QtWidgets.QPushButton("Fetch")
         self.fetch_btn.setEnabled(False)
         self.fetch_btn.clicked.connect(self._on_fetch_clicked)
@@ -411,13 +484,14 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.commit_message.setPlaceholderText(
             "Describe your changes before committing"
         )
-        self.commit_message.setMaximumHeight(90)
+        self.commit_message.setMaximumHeight(70)
         self.commit_message.textChanged.connect(
             self._on_commit_message_changed
         )
         group_layout.addWidget(self.commit_message)
 
         row2_layout = QtWidgets.QHBoxLayout()
+        row2_layout.setSpacing(4)
         
         # Combined Commit & Push button (regular push button)
         self.commit_push_btn = QtWidgets.QPushButton("Commit & Push")
@@ -488,32 +562,26 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         layout.addWidget(group)
 
     def _build_repo_browser_section(self, layout):
-        """
-        Build the repository browser section
-        
-        Args:
-            layout: Parent layout to add widgets to
-        """
-        group = QtWidgets.QGroupBox("Repository Browser")
-        group_layout = QtWidgets.QVBoxLayout()
-        group.setLayout(group_layout)
+        """Build launcher row for the dockable repository browser."""
+        self._ensure_browser_host()
 
-        # Info label
-        info_label = QtWidgets.QLabel(
-            "Browse commits, branches, and tags here (coming soon)."
+        row = QtWidgets.QHBoxLayout()
+        row.setContentsMargins(6, 4, 6, 4)
+        label = QtWidgets.QLabel("Repository Browser")
+        self._set_meta_label(label, "gray")
+        row.addWidget(label)
+        row.addStretch()
+
+        self.browser_window_btn = QtWidgets.QPushButton(
+            "Open Browser"
         )
-        info_label.setWordWrap(True)
-        info_label.setStyleSheet("color: gray; font-style: italic;")
-        group_layout.addWidget(info_label)
+        self.browser_window_btn.setEnabled(False)
+        self.browser_window_btn.clicked.connect(
+            self._open_repo_browser
+        )
+        row.addWidget(self.browser_window_btn)
 
-        # Tree/list widget placeholder
-        self.repo_tree = QtWidgets.QTreeWidget()
-        self.repo_tree.setHeaderLabels(["Item", "Details"])
-        self.repo_tree.setMaximumHeight(100)
-        self.repo_tree.setEnabled(False)  # Disabled in Sprint 0
-        group_layout.addWidget(self.repo_tree)
-
-        layout.addWidget(group)
+        layout.addLayout(row)
 
     def _on_browse_clicked(self):
         """
@@ -542,6 +610,16 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         if text:
             self._validate_repo_path(text)
 
+    def _on_root_toggle(self, checked):
+        """Show or hide the resolved repo root row."""
+        self.repo_root_row.setVisible(checked)
+        self.root_toggle_btn.setArrowType(
+            QtCore.Qt.DownArrow if checked else QtCore.Qt.RightArrow
+        )
+        self.root_toggle_btn.setText(
+            "Hide root" if checked else "Show root"
+        )
+
     def _validate_repo_path(self, path):
         """
         Validate that path is inside a git repository.
@@ -560,6 +638,18 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self.working_tree_label.setText("—")
             self.upstream_label.setText("—")
             self.ahead_behind_label.setText("—")
+            self.last_fetch_label.setText("—")
+            self._set_meta_label(self.branch_label, "gray")
+            self._set_strong_label(self.working_tree_label, "black")
+            self._set_meta_label(self.upstream_label, "gray")
+            self._set_strong_label(self.ahead_behind_label, "gray")
+            self._set_meta_label(self.last_fetch_label, "gray")
+            self.root_toggle_btn.setEnabled(False)
+            self.root_toggle_btn.setChecked(False)
+            self.repo_root_row.setVisible(False)
+            self.root_toggle_btn.setArrowType(QtCore.Qt.RightArrow)
+            self.root_toggle_btn.setText("Show root")
+            self.browser_window_btn.setEnabled(False)
             self._update_button_states()
             return
 
@@ -579,8 +669,16 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self.repo_root_label.setText(repo_root)
             self._current_repo_root = repo_root
 
+            self.root_toggle_btn.setEnabled(True)
+            self.repo_root_row.setVisible(
+                self.root_toggle_btn.isChecked()
+            )
+            self.browser_window_btn.setEnabled(True)
+
             # Fetch branch and status
             self._fetch_branch_and_status(repo_root)
+            # Refresh repo browser
+            self._refresh_repo_browser_files()
             
             # Update button states
             self._update_button_states()
@@ -595,8 +693,22 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self.working_tree_label.setText("—")
             self.upstream_label.setText("—")
             self.ahead_behind_label.setText("—")
+            self.last_fetch_label.setText("—")
+            self._set_meta_label(self.branch_label, "gray")
+            self._set_strong_label(self.working_tree_label, "black")
+            self._set_meta_label(self.upstream_label, "gray")
+            self._set_strong_label(self.ahead_behind_label, "gray")
+            self._set_meta_label(self.last_fetch_label, "gray")
             self._current_repo_root = None
+            self.root_toggle_btn.setEnabled(False)
+            self.root_toggle_btn.setChecked(False)
+            self.repo_root_row.setVisible(False)
+            self.root_toggle_btn.setArrowType(QtCore.Qt.RightArrow)
+            self.root_toggle_btn.setText("Show root")
+            self.browser_window_btn.setEnabled(False)
             self._update_button_states()
+            # Clear browser section
+            self._clear_repo_browser()
             # Do not overwrite saved path - just show typed text in UI
             log.warning(
                 f"Not a git repository: {path}"
@@ -635,9 +747,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         
         if not self._cached_has_remote:
             self.upstream_label.setText("(no remote)")
-            self.upstream_label.setStyleSheet("color: gray;")
+            self._set_meta_label(self.upstream_label, "gray")
             self.ahead_behind_label.setText("(unknown)")
-            self.ahead_behind_label.setStyleSheet("color: gray;")
+            self._set_strong_label(self.ahead_behind_label, "gray")
             self._upstream_ref = None
             return
         
@@ -649,14 +761,14 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         
         if not upstream_ref:
             self.upstream_label.setText("(not set)")
-            self.upstream_label.setStyleSheet("color: gray;")
+            self._set_meta_label(self.upstream_label, "gray")
             self.ahead_behind_label.setText("(unknown)")
-            self.ahead_behind_label.setStyleSheet("color: gray;")
+            self._set_strong_label(self.ahead_behind_label, "gray")
             return
         
         # Display upstream
         self.upstream_label.setText(upstream_ref)
-        self.upstream_label.setStyleSheet("color: blue;")
+        self._set_meta_label(self.upstream_label, "blue")
         
         # Compute ahead/behind
         ab_result = self._git_client.ahead_behind(repo_root, upstream_ref)
@@ -671,16 +783,22 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             ab_text = f"Ahead {ahead} / Behind {behind}"
             
             if ahead == 0 and behind == 0:
-                self.ahead_behind_label.setStyleSheet("color: green;")
+                self._set_strong_label(
+                    self.ahead_behind_label, "green"
+                )
             elif behind > 0:
-                self.ahead_behind_label.setStyleSheet("color: orange;")
+                self._set_strong_label(
+                    self.ahead_behind_label, "orange"
+                )
             else:
-                self.ahead_behind_label.setStyleSheet("color: blue;")
+                self._set_strong_label(
+                    self.ahead_behind_label, "blue"
+                )
             
             self.ahead_behind_label.setText(ab_text)
         else:
             self.ahead_behind_label.setText("(error)")
-            self.ahead_behind_label.setStyleSheet("color: red;")
+            self._set_strong_label(self.ahead_behind_label, "red")
             if ab_result["error"]:
                 log.debug(
                     f"Ahead/behind error: {ab_result['error']}"
@@ -698,13 +816,13 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 dt = datetime.fromisoformat(last_fetch)
                 display_time = dt.strftime("%Y-%m-%d %H:%M:%S")
                 self.last_fetch_label.setText(display_time)
-                self.last_fetch_label.setStyleSheet("color: blue;")
+                self._set_meta_label(self.last_fetch_label, "blue")
             except (ValueError, AttributeError):
                 self.last_fetch_label.setText(last_fetch)
-                self.last_fetch_label.setStyleSheet("color: blue;")
+                self._set_meta_label(self.last_fetch_label, "blue")
         else:
             self.last_fetch_label.setText("(never)")
-            self.last_fetch_label.setStyleSheet("color: gray;")
+            self._set_meta_label(self.last_fetch_label, "gray")
 
     def _update_button_states(self):
         """Update enabled/disabled state of action buttons (full checks)."""
@@ -839,6 +957,107 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     def _clear_status_message(self):
         """Clear the status message"""
         self.status_message_label.hide()
+
+    # --- Repository browser window/dock ---
+
+    def _create_browser_content(self):
+        """Create the shared browser content widget once."""
+        if self._browser_content:
+            return self._browser_content
+
+        container = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout()
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
+        container.setLayout(layout)
+
+        self.repo_info_label = QtWidgets.QLabel("Repo not selected.")
+        self.repo_info_label.setWordWrap(True)
+        self.repo_info_label.setStyleSheet(
+            "color: gray; font-style: italic;"
+        )
+        layout.addWidget(self.repo_info_label)
+
+        top_row = QtWidgets.QHBoxLayout()
+        self.repo_search = QtWidgets.QLineEdit()
+        self.repo_search.setPlaceholderText("Filter files…")
+        self.repo_search.textChanged.connect(
+            self._on_repo_search_changed
+        )
+        top_row.addWidget(self.repo_search)
+
+        self.repo_refresh_btn = QtWidgets.QPushButton("Refresh Files")
+        self.repo_refresh_btn.clicked.connect(
+            self._on_repo_refresh_files_clicked
+        )
+        top_row.addWidget(self.repo_refresh_btn)
+        layout.addLayout(top_row)
+
+        self.repo_list = QtWidgets.QListWidget()
+        self.repo_list.setContextMenuPolicy(
+            QtCore.Qt.CustomContextMenu
+        )
+        self.repo_list.customContextMenuRequested.connect(
+            self._on_repo_list_context_menu
+        )
+        self.repo_list.itemDoubleClicked.connect(
+            self._on_repo_item_double_clicked
+        )
+        layout.addWidget(self.repo_list)
+
+        # Initial disabled state
+        self.repo_search.setEnabled(False)
+        self.repo_refresh_btn.setEnabled(False)
+        self.repo_list.setEnabled(False)
+
+        self._browser_content = container
+        return container
+
+    def _ensure_browser_host(self):
+        """Create the dockable browser host; fallback to floating if needed."""
+        if self._browser_dock:
+            return self._browser_dock
+
+        content = self._create_browser_content()
+
+        dock = QtWidgets.QDockWidget("Repository Browser", self)
+        dock.setObjectName("GitPDM_RepoBrowserDock")
+        dock.setAllowedAreas(
+            QtCore.Qt.LeftDockWidgetArea
+            | QtCore.Qt.RightDockWidgetArea
+            | QtCore.Qt.BottomDockWidgetArea
+        )
+        dock.setFeatures(
+            QtWidgets.QDockWidget.DockWidgetClosable
+            | QtWidgets.QDockWidget.DockWidgetMovable
+            | QtWidgets.QDockWidget.DockWidgetFloatable
+        )
+        dock.setWidget(content)
+
+        main_window = None
+        try:
+            import FreeCADGui
+            main_window = FreeCADGui.getMainWindow()
+        except Exception:
+            main_window = None
+
+        if main_window:
+            main_window.addDockWidget(
+                QtCore.Qt.RightDockWidgetArea, dock
+            )
+        else:
+            dock.setParent(self)
+            dock.setFloating(True)
+
+        self._browser_dock = dock
+        return dock
+
+    def _open_repo_browser(self):
+        """Show the dockable repository browser (dock or floating)."""
+        dock = self._ensure_browser_host()
+        dock.show()
+        dock.raise_()
+        dock.activateWindow()
 
     def _on_fetch_clicked(self):
         """
@@ -1035,6 +1254,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self._refresh_status_views(self._current_repo_root)
             
             self._update_upstream_info(self._current_repo_root)
+            # Refresh repo browser after pull
+            self._refresh_repo_browser_files()
             
             from datetime import datetime, timezone
             pull_time = datetime.now(timezone.utc).isoformat()
@@ -1065,6 +1286,284 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._show_status_message(message, is_error=True)
         self._stop_busy_feedback()
         self._update_button_states()
+
+    # --- Sprint 5: Repo Browser logic ---
+
+    def _clear_repo_browser(self):
+        """Reset repo browser UI to empty state."""
+        self._ensure_browser_host()
+        self._all_cad_files = []
+        self.repo_list.clear()
+        self.repo_info_label.setText("Repo not selected.")
+        self.repo_info_label.setStyleSheet(
+            "color: gray; font-style: italic;"
+        )
+        self.repo_search.setEnabled(False)
+        self.repo_refresh_btn.setEnabled(False)
+        self.repo_list.setEnabled(False)
+
+    def _on_repo_refresh_files_clicked(self):
+        """Manual refresh of repo browser files."""
+        self._ensure_browser_host()
+        self._refresh_repo_browser_files()
+
+    def _refresh_repo_browser_files(self):
+        """
+        Load tracked CAD files asynchronously using git ls-files.
+        """
+        self._ensure_browser_host()
+        if not self._git_client.is_git_available():
+            self.repo_info_label.setText("Git not available.")
+            self.repo_info_label.setStyleSheet(
+                "color: red; font-style: italic;"
+            )
+            self.repo_search.setEnabled(False)
+            self.repo_refresh_btn.setEnabled(False)
+            self.repo_list.setEnabled(False)
+            return
+
+        if not self._current_repo_root:
+            self._clear_repo_browser()
+            return
+
+        if self._is_listing_files or self._job_runner.is_busy():
+            # Avoid overlapping jobs; user can re-click later
+            return
+
+        self._is_listing_files = True
+        self.repo_info_label.setText("Loading…")
+        self.repo_info_label.setStyleSheet(
+            "color: orange; font-style: italic;"
+        )
+        self.repo_search.setEnabled(False)
+        self.repo_refresh_btn.setEnabled(False)
+        self.repo_refresh_btn.setText("Loading…")
+        self.repo_list.setEnabled(False)
+        self.repo_list.clear()
+
+        git_cmd = self._git_client._get_git_command()
+        args = [git_cmd, "-C", self._current_repo_root,
+                "ls-files", "-z"]
+
+        self._job_runner.run_job(
+            "list_files",
+            args,
+            callback=self._on_list_files_job_finished,
+        )
+
+    def _on_list_files_job_finished(self, job):
+        """Process ls-files output and populate browser."""
+        self._ensure_browser_host()
+        self._is_listing_files = False
+
+        result = job.get("result", {})
+        success = result.get("success", False)
+        stdout = result.get("stdout", "")
+
+        self.repo_refresh_btn.setText("Refresh Files")
+
+        if not success:
+            err = result.get("stderr", "")
+            self.repo_info_label.setText("Failed to list files.")
+            self.repo_info_label.setStyleSheet(
+                "color: red; font-style: italic;"
+            )
+            log.warning(f"ls-files failed: {err}")
+            self.repo_search.setEnabled(True)
+            self.repo_refresh_btn.setEnabled(True)
+            self.repo_list.setEnabled(True)
+            return
+
+        # Parse NUL-separated entries
+        tokens = [t for t in stdout.split("\0") if t]
+
+        # Filter to CAD files using configured extensions
+        exts = settings.load_cad_extensions()
+
+        cad_set = []
+        for p in tokens:
+            name = p.rsplit("/", 1)[-1]
+            name = name.rsplit("\\", 1)[-1]
+            if "." not in name:
+                continue
+            ext = "." + name.split(".")[-1].lower()
+            if ext in exts:
+                cad_set.append(p)
+
+        self._all_cad_files = cad_set
+        self._apply_repo_filter_and_populate()
+
+        self.repo_search.setEnabled(True)
+        self.repo_refresh_btn.setEnabled(True)
+        self.repo_list.setEnabled(True)
+
+        if not self._all_cad_files:
+            self.repo_info_label.setText("No CAD files found.")
+            self.repo_info_label.setStyleSheet(
+                "color: gray; font-style: italic;"
+            )
+        else:
+            self.repo_info_label.setText(
+                f"Found {len(self._all_cad_files)} CAD files."
+            )
+            self.repo_info_label.setStyleSheet(
+                "color: blue; font-style: italic;"
+            )
+
+    def _on_repo_search_changed(self, _text):
+        """Filter list on search text change (in-memory)."""
+        self._ensure_browser_host()
+        self._apply_repo_filter_and_populate()
+
+    def _apply_repo_filter_and_populate(self):
+        """Apply filter and update list widget."""
+        self._ensure_browser_host()
+        self.repo_list.clear()
+        q = self.repo_search.text().strip().lower()
+        if not self._all_cad_files:
+            return
+        for rel in self._all_cad_files:
+            if not q or q in rel.lower():
+                self.repo_list.addItem(rel)
+
+    def _on_repo_item_double_clicked(self, item):
+        """Open double-clicked file if it's a .FCStd."""
+        self._ensure_browser_host()
+        rel = item.text()
+        self._open_repo_file(rel)
+
+    def _on_repo_list_context_menu(self, pos):
+        """Show context menu for repo list items."""
+        self._ensure_browser_host()
+        item = self.repo_list.itemAt(pos)
+        menu = QtWidgets.QMenu(self)
+
+        act_open = menu.addAction("Open")
+        act_reveal = menu.addAction("Reveal in Explorer/Finder")
+        act_copy = menu.addAction("Copy Relative Path")
+
+        chosen = menu.exec_(self.repo_list.mapToGlobal(pos))
+        if not chosen:
+            return
+
+        rel = item.text() if item else None
+        if chosen == act_copy and rel:
+            QtWidgets.QApplication.clipboard().setText(rel)
+            return
+
+        if not rel:
+            return
+
+        if chosen == act_open:
+            self._open_repo_file(rel)
+        elif chosen == act_reveal:
+            self._reveal_in_file_manager(rel)
+
+    def _open_repo_file(self, rel):
+        """Open the given repo-relative path in FreeCAD."""
+        self._ensure_browser_host()
+        if not self._current_repo_root:
+            return
+        import os
+        abs_path = os.path.normpath(
+            os.path.join(self._current_repo_root, rel)
+        )
+
+        # Only allow opening FCStd files
+        name = abs_path.rsplit("/", 1)[-1]
+        name = name.rsplit("\\", 1)[-1]
+        is_fcstd = name.lower().endswith(".fcstd")
+        if not is_fcstd:
+            msg = QtWidgets.QMessageBox(self)
+            msg.setIcon(QtWidgets.QMessageBox.Information)
+            msg.setWindowTitle("Unsupported File Type")
+            msg.setText("Only .FCStd files can be opened directly.")
+            msg.exec()
+            return
+
+        if not os.path.isfile(abs_path):
+            msg = QtWidgets.QMessageBox(self)
+            msg.setIcon(QtWidgets.QMessageBox.Warning)
+            msg.setWindowTitle("File Missing")
+            msg.setText(
+                "File not present in working tree. Try Pull/Fetch."
+            )
+            msg.exec()
+            return
+
+        # Check for unsaved documents (MVP best-effort)
+        try:
+            import FreeCAD
+            docs = FreeCAD.listDocuments()
+            has_dirty = False
+            for d in docs.values():
+                # Document.Modified may exist; ignore if missing
+                try:
+                    if getattr(d, "Modified", False):
+                        has_dirty = True
+                        break
+                except Exception:
+                    pass
+            if has_dirty:
+                ask = QtWidgets.QMessageBox(self)
+                ask.setIcon(QtWidgets.QMessageBox.Warning)
+                ask.setWindowTitle("Unsaved Changes")
+                ask.setText(
+                    "There are unsaved changes. Open another file?"
+                )
+                ask.setStandardButtons(
+                    QtWidgets.QMessageBox.No | QtWidgets.QMessageBox.Yes
+                )
+                res = ask.exec()
+                if res != QtWidgets.QMessageBox.Yes:
+                    return
+        except Exception:
+            # If FreeCAD API differs, proceed without blocking
+            pass
+
+        # Open document in FreeCAD
+        try:
+            import FreeCAD
+            FreeCAD.open(abs_path)
+        except Exception:
+            try:
+                import FreeCADGui
+                FreeCADGui.open(abs_path)
+            except Exception as e:
+                log.error(f"Failed to open file: {e}")
+                msg = QtWidgets.QMessageBox(self)
+                msg.setIcon(QtWidgets.QMessageBox.Critical)
+                msg.setWindowTitle("Open Failed")
+                msg.setText("Could not open the file in FreeCAD.")
+                msg.exec()
+
+    def _reveal_in_file_manager(self, rel):
+        """Reveal the file in the OS file manager (MVP)."""
+        if not self._current_repo_root:
+            return
+        import os
+        import sys
+        import subprocess as sp
+        abs_path = os.path.normpath(
+            os.path.join(self._current_repo_root, rel)
+        )
+        folder = os.path.dirname(abs_path)
+
+        if sys.platform.startswith("win"):
+            try:
+                os.startfile(folder)
+            except Exception as e:
+                log.error(f"Reveal failed: {e}")
+        elif sys.platform == "darwin":
+            try:
+                sp.run(["open", "-R", abs_path], timeout=10)
+            except Exception as e:
+                log.error(f"Reveal failed: {e}")
+        else:
+            try:
+                sp.run(["xdg-open", folder], timeout=10)
+            except Exception as e:
+                log.error(f"Reveal failed: {e}")
 
     def _show_pull_error_dialog(self, error_code, stderr):
         """
@@ -1158,7 +1657,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         """
         if status["is_clean"]:
             self.working_tree_label.setText("Clean")
-            self.working_tree_label.setStyleSheet("color: green;")
+            self._set_strong_label(self.working_tree_label, "green")
         else:
             parts = []
             if status["modified"] > 0:
@@ -1172,7 +1671,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
             status_str = "Dirty (" + " ".join(parts) + ")"
             self.working_tree_label.setText(status_str)
-            self.working_tree_label.setStyleSheet("color: orange;")
+            self._set_strong_label(self.working_tree_label, "orange")
 
     def _refresh_status_views(self, repo_root):
         """Refresh working tree status and changes list."""

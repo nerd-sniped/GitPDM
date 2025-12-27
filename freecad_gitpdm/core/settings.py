@@ -186,3 +186,75 @@ def load_last_pull_at():
         ISO 8601 timestamp string (empty if not set)
     """
     return load_setting("LastPullAt", "")
+
+
+# --- Sprint 5: CAD extensions configuration ---
+
+_DEFAULT_CAD_EXT_STR = \
+    ".FCStd;.STEP;.STP;.IGES;.IGS;.STL;.DXF;.SVG"
+
+
+def _normalize_ext(ext):
+    """
+    Normalize a single extension string.
+    Ensures leading dot and lower-case for matching.
+    """
+    if not ext:
+        return ""
+    e = ext.strip()
+    if not e:
+        return ""
+    if not e.startswith("."):
+        e = "." + e
+    return e.lower()
+
+
+def load_cad_extensions():
+    """
+    Load configured CAD file extensions.
+
+    Returns:
+        list[str]: normalized extensions (lower-case, with leading dot)
+    """
+    raw = load_setting("cad_extensions", _DEFAULT_CAD_EXT_STR)
+    parts = [p for p in raw.split(";") if p]
+    normalized = []
+    for p in parts:
+        n = _normalize_ext(p)
+        if n and n not in normalized:
+            normalized.append(n)
+    if not normalized:
+        # Fallback to default if parsing produced empty list
+        for p in _DEFAULT_CAD_EXT_STR.split(";"):
+            n = _normalize_ext(p)
+            if n and n not in normalized:
+                normalized.append(n)
+    return normalized
+
+
+def save_cad_extensions(ext_list):
+    """
+    Save CAD file extensions.
+
+    Args:
+        ext_list: list[str] of extensions; case preserved in storage
+
+    Notes:
+        - Stored as semicolon-separated string in parameter group.
+        - Matching uses normalized (lower-case) values at load-time.
+    """
+    try:
+        # Store as given, but ensure leading dots and trim spaces
+        cleaned = []
+        for e in ext_list or []:
+            s = e.strip()
+            if not s:
+                continue
+            if not s.startswith("."):
+                s = "." + s
+            cleaned.append(s)
+        value = ";".join(cleaned) if cleaned else _DEFAULT_CAD_EXT_STR
+        save_setting("cad_extensions", value)
+        log.info(f"Saved CAD extensions: {value}")
+    except Exception as e:
+        log.error(f"Failed to save CAD extensions: {e}")

@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """
 GitPDM FreeCAD Addon - Initialization Module
-Sprint 0: Project foundation
 """
 
 __title__ = "GitPDM"

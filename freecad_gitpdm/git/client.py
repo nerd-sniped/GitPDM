@@ -980,3 +980,104 @@ class GitClient:
 
         # Unknown error
         return "UNKNOWN_ERROR"
+
+    # --- Sprint 5: Repo file listing ---
+
+    def list_tracked_files(self, repo_root):
+        """
+        List files currently tracked by git in working tree.
+
+        Args:
+            repo_root: Repository root path (string)
+
+        Returns:
+            list[str]: repo-relative paths (NUL-safe parsing)
+        """
+        files: List[str] = []
+
+        if not self.is_git_available():
+            log.warning("Git not available for ls-files")
+            return files
+
+        if not repo_root or not os.path.isdir(repo_root):
+            log.warning("Invalid repository path for ls-files")
+            return files
+
+        git_cmd = self._get_git_command()
+
+        try:
+            proc = subprocess.run(
+                [git_cmd, "-C", repo_root, "ls-files", "-z"],
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+        except subprocess.TimeoutExpired:
+            log.warning("git ls-files timed out")
+            return files
+        except OSError as e:
+            log.warning(f"Failed to run git ls-files: {e}")
+            return files
+
+        if proc.returncode != 0:
+            err = proc.stderr.strip()
+            log.warning(f"git ls-files failed: {err}")
+            return files
+
+        # NUL-separated output; entries may be empty at ends
+        raw = proc.stdout
+        if not raw:
+            return files
+
+        for token in raw.split("\0"):
+            if token:
+                # git returns repo-relative paths
+                files.append(token)
+
+        return files
+
+    def list_cad_files(self, repo_root, extensions):
+        """
+        Filter tracked files by CAD extensions.
+
+        Args:
+            repo_root: repo root path
+            extensions: list[str] of extensions (case-insensitive)
+
+        Returns:
+            list[str]: repo-relative CAD file paths
+        """
+        tracked = self.list_tracked_files(repo_root)
+        if not tracked:
+            return []
+
+        # Normalize extension list for matching
+        norm_exts = []
+        for e in extensions or []:
+            if not e:
+                continue
+            s = e.strip().lower()
+            if not s:
+                continue
+            if not s.startswith("."):
+                s = "." + s
+            if s not in norm_exts:
+                norm_exts.append(s)
+
+        if not norm_exts:
+            return []
+
+        cad_files: List[str] = []
+        for p in tracked:
+            # Extract extension safely; consider multi-dot names
+            name = p.rsplit("/", 1)[-1]
+            # Also handle Windows separators if any
+            name = name.rsplit("\\", 1)[-1]
+            # If no dot, skip
+            if "." not in name:
+                continue
+            ext = "." + name.split(".")[-1].lower()
+            if ext in norm_exts:
+                cad_files.append(p)
+
+        return cad_files
