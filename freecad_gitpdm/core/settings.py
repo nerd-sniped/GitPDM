@@ -164,3 +164,25 @@ def load_last_fetch_at():
         ISO 8601 timestamp string (empty if not set)
     """
     return load_setting("LastFetchAt", "")
+
+
+def save_last_pull_at(timestamp):
+    """
+    Save the last pull timestamp to persistent storage.
+    MVP: Single timestamp for current repo.
+    Future: Per-repo timestamps using repo root as key.
+    
+    Args:
+        timestamp: ISO 8601 timestamp string
+    """
+    save_setting("LastPullAt", timestamp)
+
+
+def load_last_pull_at():
+    """
+    Load the last pull timestamp from persistent storage
+    
+    Returns:
+        ISO 8601 timestamp string (empty if not set)
+    """
+    return load_setting("LastPullAt", "")

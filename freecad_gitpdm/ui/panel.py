@@ -18,6 +18,7 @@ except ImportError:
 
 from freecad_gitpdm.core import log, settings, jobs
 from freecad_gitpdm.git import client
+from freecad_gitpdm.ui import dialogs
 
 
 class GitPDMDockWidget(QtWidgets.QDockWidget):
@@ -40,7 +41,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # State tracking
         self._current_repo_root = None
         self._is_fetching = False
+        self._is_pulling = False
         self._upstream_ref = None
+        self._behind_count = 0
 
         # Create main widget and layout
         main_widget = QtWidgets.QWidget()
@@ -170,36 +173,50 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             layout: Parent layout to add widgets to
         """
         group = QtWidgets.QGroupBox("Status")
-        group_layout = QtWidgets.QFormLayout()
+        group_layout = QtWidgets.QVBoxLayout()
         group.setLayout(group_layout)
+
+        # Operation status header (shows Pulling… / Fetching… / Synced)
+        header_layout = QtWidgets.QHBoxLayout()
+        header_layout.addWidget(QtWidgets.QLabel("Operation:"))
+        self.operation_status_label = QtWidgets.QLabel("Ready")
+        self.operation_status_label.setStyleSheet(
+            "color: gray; font-size: 9px;"
+        )
+        self.operation_status_label.setAlignment(QtCore.Qt.AlignRight)
+        header_layout.addWidget(self.operation_status_label)
+        group_layout.addLayout(header_layout)
+
+        # Form-style fields
+        form_layout = QtWidgets.QFormLayout()
 
         # Branch label
         self.branch_label = QtWidgets.QLabel("—")
         self.branch_label.setTextInteractionFlags(
             QtCore.Qt.TextSelectableByMouse
         )
-        group_layout.addRow("Branch:", self.branch_label)
+        form_layout.addRow("Branch:", self.branch_label)
 
         # Working tree status label
         self.working_tree_label = QtWidgets.QLabel("—")
         self.working_tree_label.setTextInteractionFlags(
             QtCore.Qt.TextSelectableByMouse
         )
-        group_layout.addRow("Working tree:", self.working_tree_label)
+        form_layout.addRow("Working tree:", self.working_tree_label)
 
         # Upstream label (Sprint 2)
         self.upstream_label = QtWidgets.QLabel("—")
         self.upstream_label.setTextInteractionFlags(
             QtCore.Qt.TextSelectableByMouse
         )
-        group_layout.addRow("Upstream:", self.upstream_label)
+        form_layout.addRow("Upstream:", self.upstream_label)
 
         # Ahead/Behind label (Sprint 2)
         self.ahead_behind_label = QtWidgets.QLabel("—")
         self.ahead_behind_label.setTextInteractionFlags(
             QtCore.Qt.TextSelectableByMouse
         )
-        group_layout.addRow("Ahead/Behind:",
+        form_layout.addRow("Ahead/Behind:",
                            self.ahead_behind_label)
 
         # Last fetch label (Sprint 2)
@@ -207,7 +224,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.last_fetch_label.setTextInteractionFlags(
             QtCore.Qt.TextSelectableByMouse
         )
-        group_layout.addRow("Last fetch:", self.last_fetch_label)
+        form_layout.addRow("Last fetch:", self.last_fetch_label)
+
+        group_layout.addLayout(form_layout)
 
         # Error/message area (Sprint 2)
         self.status_message_label = QtWidgets.QLabel("")
@@ -216,7 +235,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             "color: red; font-size: 10px;"
         )
         self.status_message_label.hide()
-        group_layout.addRow("", self.status_message_label)
+        group_layout.addWidget(self.status_message_label)
 
         layout.addWidget(group)
 
@@ -267,6 +286,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         self.pull_btn = QtWidgets.QPushButton("Pull")
         self.pull_btn.setEnabled(False)
+        self.pull_btn.clicked.connect(self._on_pull_clicked)
         row1_layout.addWidget(self.pull_btn)
 
         group_layout.addLayout(row1_layout)
@@ -433,6 +453,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         Args:
             repo_root: str - repository root path
         """
+        # Reset behind count
+        self._behind_count = 0
+        
         # Check if remote exists
         has_remote = self._git_client.has_remote(
             repo_root, self._remote_name
@@ -469,6 +492,10 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         if ab_result["ok"]:
             ahead = ab_result["ahead"]
             behind = ab_result["behind"]
+            
+            # Store behind count for button enable logic
+            self._behind_count = behind
+            
             ab_text = f"Ahead {ahead} / Behind {behind}"
             
             if ahead == 0 and behind == 0:
@@ -513,6 +540,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             and self._current_repo_root != ""
         )
         has_remote = False
+        upstream_ok = self._upstream_ref is not None
         
         if repo_ok:
             has_remote = self._git_client.has_remote(
@@ -520,14 +548,23 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             )
         
         # Enable Fetch if: git available, repo valid, has remote,
-        # not currently fetching
+        # not currently fetching or pulling
         fetch_enabled = (
-            git_ok and repo_ok and has_remote and not self._is_fetching
+            git_ok and repo_ok and has_remote and 
+            not self._is_fetching and not self._is_pulling
         )
         self.fetch_btn.setEnabled(fetch_enabled)
         
-        # Keep other buttons disabled in Sprint 2
-        self.pull_btn.setEnabled(False)
+        # Enable Pull if: git available, repo valid, has remote,
+        # upstream known, behind > 0, not fetching/pulling
+        pull_enabled = (
+            git_ok and repo_ok and has_remote and upstream_ok and
+            self._behind_count > 0 and not self._is_fetching and 
+            not self._is_pulling
+        )
+        self.pull_btn.setEnabled(pull_enabled)
+        
+        # Keep other buttons disabled in Sprint 3
         self.commit_btn.setEnabled(False)
         self.push_btn.setEnabled(False)
         self.publish_btn.setEnabled(False)
@@ -606,6 +643,221 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # We'll do most work in _on_job_finished to avoid duplication
         pass
 
+    def _on_pull_clicked(self):
+        """
+        Handle Pull button click.
+        Check for uncommitted changes; if present, show warning.
+        Then run pull sequence: fetch -> pull -> refresh.
+        """
+        log.info("Pull button clicked!")
+        
+        if not self._current_repo_root:
+            log.warning("No repository to pull")
+            return
+        
+        if self._is_pulling or self._is_fetching:
+            log.debug("Pull/fetch already in progress")
+            return
+        
+        log.info(f"Starting pull for repo: {self._current_repo_root}")
+        
+        # Clear previous messages
+        self._clear_status_message()
+        
+        # Check for uncommitted changes
+        has_changes = (
+            self._git_client.has_uncommitted_changes(
+                self._current_repo_root
+            )
+        )
+        
+        log.info(f"Has uncommitted changes: {has_changes}")
+        
+        if has_changes:
+            # Show warning dialog
+            dlg = dialogs.UncommittedChangesWarningDialog(self)
+            if not dlg.show_and_ask():
+                log.info("User cancelled pull due to changes")
+                return
+        
+        # Start pull sequence
+        self._start_pull_sequence()
+
+    def _start_pull_sequence(self):
+        """
+        Start the pull sequence: fetch -> pull -> refresh.
+        This is an async workflow that keeps UI responsive.
+        """
+        if not self._current_repo_root or not self._upstream_ref:
+            log.warning("Cannot start pull sequence")
+            return
+        
+        self._is_pulling = True
+        self.pull_btn.setEnabled(False)
+        self.fetch_btn.setEnabled(False)
+        self._update_operation_status("Pulling…")
+        
+        # Step 1: Fetch from origin
+        git_cmd = self._git_client._get_git_command()
+        command = [
+            git_cmd, "-C", self._current_repo_root,
+            "fetch", self._remote_name
+        ]
+        
+        log.info("Pull sequence: starting fetch")
+        self._job_runner.run_job(
+            "pull_fetch",
+            command,
+            callback=self._on_pull_fetch_completed
+        )
+
+    def _on_pull_fetch_completed(self, job):
+        """
+        Callback when fetch completes in pull sequence.
+        If successful, proceed to pull; otherwise abort.
+        """
+        result = job.get("result", {})
+        if not result.get("success"):
+            # Fetch failed - abort pull sequence
+            stderr = result.get("stderr", "")
+            log.warning(
+                f"Pull sequence aborted: fetch failed: {stderr}"
+            )
+            self._handle_pull_failed("Fetch failed before pull")
+            return
+        
+        log.info("Pull sequence: fetch completed, starting pull")
+        
+        # Step 2: Pull with ff-only
+        if not self._current_repo_root or not self._upstream_ref:
+            self._handle_pull_failed("Repository lost during pull")
+            return
+        
+        git_cmd = self._git_client._get_git_command()
+        # Extract branch from upstream (e.g., origin/main -> main)
+        if "/" in self._upstream_ref:
+            branch = self._upstream_ref.split("/", 1)[1]
+        else:
+            branch = self._upstream_ref
+        
+        command = [
+            git_cmd, "-C", self._current_repo_root,
+            "pull", "--ff-only", self._remote_name, branch
+        ]
+        
+        self._job_runner.run_job(
+            "pull_main",
+            command,
+            callback=self._on_pull_main_completed
+        )
+
+    def _on_pull_main_completed(self, job):
+        """
+        Callback when main pull command completes.
+        Refresh status if successful.
+        """
+        result = job.get("result", {})
+        success = result.get("success", False)
+        stderr = result.get("stderr", "")
+        
+        if not success:
+            # Pull failed - classify error and show dialog
+            error_code = (
+                self._git_client._classify_pull_error(stderr)
+            )
+            log.warning(
+                f"Pull failed with error {error_code}: {stderr}"
+            )
+            self._show_pull_error_dialog(error_code, stderr)
+            self._is_pulling = False
+            self._update_operation_status("Error")
+            self._update_button_states()
+            return
+        
+        # Pull succeeded - refresh status
+        log.info("Pull completed successfully")
+        self._update_operation_status("Synced")
+        
+        # Refresh branch and status
+        if self._current_repo_root:
+            branch = self._git_client.current_branch(
+                self._current_repo_root
+            )
+            self.branch_label.setText(branch)
+            
+            status = self._git_client.status_summary(
+                self._current_repo_root
+            )
+            self._display_working_tree_status(status)
+            
+            # Refresh ahead/behind
+            self._update_upstream_info(self._current_repo_root)
+            
+            # Update last pull time
+            from datetime import datetime, timezone
+            pull_time = datetime.now(timezone.utc).isoformat()
+            settings.save_last_pull_at(pull_time)
+        
+        self._is_pulling = False
+        self._show_status_message(
+            "Synced to latest",
+            is_error=False
+        )
+        
+        # Clear success message after 3 seconds
+        QtCore.QTimer.singleShot(
+            3000, self._clear_status_message
+        )
+        
+        self._update_button_states()
+
+    def _handle_pull_failed(self, message):
+        """
+        Handle pull failure.
+        
+        Args:
+            message: str - failure message
+        """
+        self._is_pulling = False
+        self._update_operation_status("Error")
+        self._show_status_message(message, is_error=True)
+        self._update_button_states()
+
+    def _show_pull_error_dialog(self, error_code, stderr):
+        """
+        Show detailed error dialog for pull failure.
+        
+        Args:
+            error_code: str - error classification
+            stderr: str - raw error output
+        """
+        dlg = dialogs.PullErrorDialog(error_code, stderr, self)
+        dlg.exec()
+
+    def _update_operation_status(self, status_text):
+        """
+        Update the operation status label.
+        
+        Args:
+            status_text: str - status message
+        """
+        self.operation_status_label.setText(status_text)
+        if status_text == "Ready":
+            self.operation_status_label.setStyleSheet(
+                "color: gray; font-size: 9px;"
+            )
+        elif "…" in status_text:
+            self.operation_status_label.setStyleSheet(
+                "color: orange; font-size: 9px;"
+            )
+        elif status_text == "Synced":
+            self.operation_status_label.setStyleSheet(
+                "color: green; font-size: 9px;"
+            )
+        else:
+            self.operation_status_label.setStyleSheet(
+                "color: red; font-size: 9px;"
+            )
 
     def _display_working_tree_status(self, status):
         """

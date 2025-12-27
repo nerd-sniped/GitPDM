@@ -549,3 +549,177 @@ class GitClient:
             log.debug(result["error"])
 
         return result
+
+    def has_uncommitted_changes(self, repo_root):
+        """
+        Check whether the repository has uncommitted changes.
+        Uses 'git status --porcelain' length to detect changes.
+        
+        Args:
+            repo_root: Repository root path (string)
+            
+        Returns:
+            bool: True if there are uncommitted changes
+        """
+        if not self.is_git_available():
+            return False
+
+        if not repo_root or not os.path.isdir(repo_root):
+            return False
+
+        git_cmd = self._get_git_command()
+
+        try:
+            result = subprocess.run(
+                [git_cmd, "-C", repo_root, "status",
+                 "--porcelain"],
+                capture_output=True,
+                text=True,
+                timeout=15
+            )
+            if result.returncode != 0:
+                return False
+
+            # If output is non-empty, there are changes
+            return len(result.stdout.strip()) > 0
+
+        except (subprocess.TimeoutExpired, OSError) as e:
+            log.warning(f"Failed to check uncommitted changes: {e}")
+            return False
+
+    def pull_ff_only(self, repo_root, remote="origin",
+                     upstream=None):
+        """
+        Pull from upstream using fast-forward only strategy.
+        If upstream is provided, pulls from that explicit ref.
+        Otherwise runs 'git pull --ff-only' against the default.
+        
+        Args:
+            repo_root: Repository root path (string)
+            remote: Remote name (default "origin")
+            upstream: Explicit upstream ref (e.g., "origin/main")
+                      If None, uses 'git pull --ff-only'
+            
+        Returns:
+            dict with keys:
+                - ok: bool
+                - stdout: str
+                - stderr: str
+                - error_code: str (category of error, or None if ok)
+                - fetched_at: str (ISO 8601 UTC timestamp)
+        """
+        result = {
+            "ok": False,
+            "stdout": "",
+            "stderr": "",
+            "error_code": None,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        if not self.is_git_available():
+            result["error_code"] = "NO_GIT"
+            return result
+
+        if not repo_root or not os.path.isdir(repo_root):
+            result["error_code"] = "INVALID_REPO"
+            return result
+
+        git_cmd = self._get_git_command()
+
+        try:
+            if upstream:
+                # Extract branch name from upstream ref
+                # e.g., "origin/main" -> "main"
+                if "/" in upstream:
+                    branch = upstream.split("/", 1)[1]
+                else:
+                    branch = upstream
+
+                # Use: git pull --ff-only <remote> <branch>
+                command = [git_cmd, "-C", repo_root,
+                           "pull", "--ff-only", remote, branch]
+            else:
+                # Use: git pull --ff-only (default upstream)
+                command = [git_cmd, "-C", repo_root,
+                           "pull", "--ff-only"]
+
+            proc_result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=120  # 2 minutes for pull
+            )
+
+            result["stdout"] = proc_result.stdout.strip()
+            result["stderr"] = proc_result.stderr.strip()
+            result["ok"] = proc_result.returncode == 0
+
+            if result["ok"]:
+                log.info("Pull fast-forward completed successfully")
+            else:
+                # Classify the error
+                result["error_code"] = self._classify_pull_error(
+                    result["stderr"]
+                )
+                log.warning(
+                    f"Pull failed with error code "
+                    f"{result['error_code']}: {result['stderr']}"
+                )
+
+        except subprocess.TimeoutExpired:
+            result["error_code"] = "TIMEOUT"
+            log.warning("Pull timed out after 120 seconds")
+        except OSError as e:
+            result["error_code"] = "OS_ERROR"
+            result["stderr"] = str(e)
+            log.warning(f"Failed to run pull: {e}")
+
+        return result
+
+    def _classify_pull_error(self, stderr):
+        """
+        Classify a git pull error by inspecting stderr text.
+        
+        Args:
+            stderr: Error output from git
+            
+        Returns:
+            str: Error code category
+        """
+        stderr_lower = stderr.lower()
+
+        # Check for dirty working tree
+        if "working tree" in stderr_lower and "dirty" in stderr_lower:
+            return "WORKING_TREE_DIRTY"
+        if "please commit your changes" in stderr_lower:
+            return "WORKING_TREE_DIRTY"
+        if "local changes" in stderr_lower:
+            return "WORKING_TREE_DIRTY"
+
+        # Check for diverged/non-ff history
+        if "not possible to fast-forward" in stderr_lower:
+            return "DIVERGED_OR_NON_FF"
+        if "commit before merging" in stderr_lower:
+            return "DIVERGED_OR_NON_FF"
+        if "conflict" in stderr_lower:
+            return "DIVERGED_OR_NON_FF"
+
+        # Check for authentication/permission issues
+        if "authentication failed" in stderr_lower:
+            return "AUTH_OR_PERMISSION"
+        if "permission denied" in stderr_lower:
+            return "AUTH_OR_PERMISSION"
+        if "fatal: could not read" in stderr_lower:
+            return "AUTH_OR_PERMISSION"
+
+        # Check for no remote
+        if "no such remote" in stderr_lower:
+            return "NO_REMOTE"
+        if "not a git repository" in stderr_lower:
+            return "NO_REMOTE"
+        if "does not appear to be a git repository" in \
+                stderr_lower:
+            return "NO_REMOTE"
+
+        # Unknown error
+        return "UNKNOWN_ERROR"
