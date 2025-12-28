@@ -52,7 +52,32 @@ def _find_git_executable():
     Returns:
         str: Path to git.exe or 'git' if on PATH
     """
-    # First try 'git' command (works if on PATH)
+    # Prefer GitHub Desktop git so we leverage its credential helper
+    # (helps avoid AUTH errors when users are signed in to Desktop).
+    common_paths = [
+        os.path.expandvars(
+            r"%LOCALAPPDATA%\GitHubDesktop\app-*\resources\app"
+            r"\git\cmd\git.exe"
+        ),
+        r"C:\\Program Files\\Git\\cmd\\git.exe",
+        r"C:\\Program Files (x86)\\Git\\cmd\\git.exe",
+        os.path.expandvars(
+            r"%LOCALAPPDATA%\Programs\Git\cmd\git.exe"
+        ),
+    ]
+
+    for path in common_paths:
+        # Handle wildcards in path
+        if "*" in path:
+            import glob
+            matches = glob.glob(path)
+            if matches:
+                path = matches[0]
+        if os.path.isfile(path):
+            log.info(f"Found git at: {path}")
+            return path
+
+    # Fallback to PATH
     try:
         result = subprocess.run(
             ["git", "--version"],
@@ -64,32 +89,6 @@ def _find_git_executable():
             return "git"
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
-    
-    # Common Git installation paths on Windows
-    common_paths = [
-        r"C:\Program Files\Git\cmd\git.exe",
-        r"C:\Program Files (x86)\Git\cmd\git.exe",
-        os.path.expandvars(
-            r"%LOCALAPPDATA%\Programs\Git\cmd\git.exe"
-        ),
-        os.path.expandvars(
-            r"%LOCALAPPDATA%\GitHubDesktop\app-*\resources\app"
-            r"\git\cmd\git.exe"
-        ),
-    ]
-    
-    for path in common_paths:
-        # Handle wildcards in path
-        if "*" in path:
-            import glob
-            matches = glob.glob(path)
-            if matches:
-                path = matches[0]
-        
-        if os.path.isfile(path):
-            log.info(f"Found git at: {path}")
-            return path
-    
     return None
 
 
@@ -207,6 +206,168 @@ class GitClient:
             log.warning(f"Git command error: {e}")
 
         return None
+
+    def init_repo(self, path):
+        """
+        Initialize a new git repository in the given path.
+        
+        Args:
+            path: Directory path where to create the repository (string)
+            
+        Returns:
+            CmdResult: Result of the init operation
+        """
+        if not self.is_git_available():
+            log.error("Git not available for repo init")
+            return CmdResult(
+                ok=False,
+                stdout="",
+                stderr="Git not available",
+                error_code="no_git"
+            )
+
+        if not path or not os.path.isdir(path):
+            log.error(f"Invalid path for repo init: {path}")
+            return CmdResult(
+                ok=False,
+                stdout="",
+                stderr="Path does not exist",
+                error_code="bad_path"
+            )
+
+        git_cmd = self._get_git_command()
+
+        try:
+            result = subprocess.run(
+                [git_cmd, "-C", path, "init"],
+                capture_output=True,
+                text=True,
+                timeout=15
+            )
+            if result.returncode == 0:
+                log.info(f"Repository initialized at: {path}")
+                return CmdResult(
+                    ok=True,
+                    stdout=result.stdout.strip(),
+                    stderr=""
+                )
+            else:
+                log.error(
+                    f"Git init failed (exit {result.returncode}): "
+                    f"{result.stderr.strip()}"
+                )
+                return CmdResult(
+                    ok=False,
+                    stdout=result.stdout.strip(),
+                    stderr=result.stderr.strip(),
+                    error_code="init_failed"
+                )
+        except subprocess.TimeoutExpired:
+            log.error("Git init command timed out")
+            return CmdResult(
+                ok=False,
+                stdout="",
+                stderr="Command timed out",
+                error_code="timeout"
+            )
+        except OSError as e:
+            log.error(f"Git init error: {e}")
+            return CmdResult(
+                ok=False,
+                stdout="",
+                stderr=str(e),
+                error_code="os_error"
+            )
+
+    def add_remote(self, repo_root, name, url):
+        """
+        Add a remote to the repository.
+        Uses the Git executable (from PATH or GitHub Desktop) so credentials
+        are handled by the Git credential helper (e.g., GitHub Desktop).
+
+        Args:
+            repo_root: str - repository root path
+            name: str - remote name (e.g., "origin")
+            url: str - remote URL
+
+        Returns:
+            CmdResult indicating success/failure
+        """
+        if not self.is_git_available():
+            log.error("Git not available for adding remote")
+            return CmdResult(
+                ok=False,
+                stdout="",
+                stderr="Git not available",
+                error_code="no_git"
+            )
+
+        if not repo_root or not os.path.isdir(repo_root):
+            log.error(f"Invalid repo root for add_remote: {repo_root}")
+            return CmdResult(
+                ok=False,
+                stdout="",
+                stderr="Invalid repository path",
+                error_code="bad_path"
+            )
+
+        url = (url or "").strip()
+        name = (name or "").strip()
+        if not url or not name:
+            log.error("Missing remote name or URL for add_remote")
+            return CmdResult(
+                ok=False,
+                stdout="",
+                stderr="Missing remote name or URL",
+                error_code="bad_args"
+            )
+
+        git_cmd = self._get_git_command()
+
+        try:
+            result = subprocess.run(
+                [git_cmd, "-C", repo_root, "remote", "add", name, url],
+                capture_output=True,
+                text=True,
+                timeout=15
+            )
+            if result.returncode == 0:
+                log.info(f"Remote '{name}' added: {url}")
+                return CmdResult(
+                    ok=True,
+                    stdout=result.stdout.strip(),
+                    stderr=""
+                )
+
+            stderr = result.stderr.strip()
+            log.error(
+                f"Git remote add failed (exit {result.returncode}): {stderr}"
+            )
+            error_code = "add_remote_failed"
+            if "already exists" in stderr.lower():
+                error_code = "remote_exists"
+            return CmdResult(
+                ok=False,
+                stdout=result.stdout.strip(),
+                stderr=stderr,
+                error_code=error_code
+            )
+        except subprocess.TimeoutExpired:
+            log.error("Git remote add timed out")
+            return CmdResult(
+                ok=False,
+                stdout="",
+                stderr="Command timed out",
+                error_code="timeout"
+            )
+        except OSError as e:
+            log.error(f"Git remote add error: {e}")
+            return CmdResult(
+                ok=False,
+                stdout="",
+                stderr=str(e),
+                error_code="os_error"
+            )
 
     def current_branch(self, repo_root):
         """

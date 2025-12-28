@@ -419,6 +419,26 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         validation_layout.addWidget(self.validate_label)
         validation_layout.addStretch()
 
+        self.create_repo_btn = QtWidgets.QPushButton("Create Repo")
+        self.create_repo_btn.setMinimumWidth(130)
+        self.create_repo_btn.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding,
+            QtWidgets.QSizePolicy.Preferred,
+        )
+        self.create_repo_btn.clicked.connect(self._on_create_repo_clicked)
+        self.create_repo_btn.setVisible(False)
+        validation_layout.addWidget(self.create_repo_btn)
+
+        self.connect_remote_btn = QtWidgets.QPushButton("Connect Remote")
+        self.connect_remote_btn.setMinimumWidth(130)
+        self.connect_remote_btn.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding,
+            QtWidgets.QSizePolicy.Preferred,
+        )
+        self.connect_remote_btn.clicked.connect(self._on_connect_remote_clicked)
+        self.connect_remote_btn.setVisible(False)
+        validation_layout.addWidget(self.connect_remote_btn)
+
         refresh_btn = QtWidgets.QPushButton("Refresh Status")
         refresh_btn.setMinimumWidth(130)
         refresh_btn.setSizePolicy(
@@ -613,7 +633,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         row2_layout = QtWidgets.QHBoxLayout()
         row2_layout.setSpacing(4)
         
-        # Combined Commit & Push button (regular push button)
+        # Combined Commit & Push / Publish button (regular push button)
         self.commit_push_btn = QtWidgets.QPushButton("Commit & Push")
         self.commit_push_btn.setEnabled(False)
         self.commit_push_btn.clicked.connect(
@@ -644,6 +664,14 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.workflow_action_push.triggered.connect(
             self._on_workflow_changed
         )
+        self.workflow_menu.addSeparator()
+        self.workflow_action_publish = self.workflow_menu.addAction(
+            "Publish Branch (with previews)"
+        )
+        self.workflow_action_publish.setCheckable(True)
+        self.workflow_action_publish.triggered.connect(
+            self._on_workflow_changed
+        )
         
         self._workflow_mode = 'both'
         
@@ -653,7 +681,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         workflow_menu_btn.setDefault(False)
         workflow_menu_btn.setFlat(True)
         workflow_menu_btn.setFixedWidth(24)
-        workflow_menu_btn.setToolTip("Select workflow: Commit & Push, Commit Only, or Push Only")
+        workflow_menu_btn.setToolTip("Select workflow: Commit & Push, Commit Only, Push Only, or Publish Branch")
         workflow_menu_btn.clicked.connect(
             lambda: self.workflow_menu.exec_(
                 workflow_menu_btn.mapToGlobal(
@@ -664,14 +692,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         
         row2_layout.addWidget(self.commit_push_btn)
         row2_layout.addWidget(workflow_menu_btn)
-        row2_layout.addStretch()
 
         extra_layout.addLayout(row2_layout)
-
-        self.publish_btn = QtWidgets.QPushButton("Publish Branch")
-        self.publish_btn.setEnabled(False)
-        self.publish_btn.clicked.connect(self._on_publish_clicked)
-        extra_layout.addWidget(self.publish_btn)
 
         self.stage_all_checkbox = QtWidgets.QCheckBox(
             "Stage all changes during Publish"
@@ -1085,7 +1107,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             and not self._is_pulling and not busy
         )
         self.pull_btn.setEnabled(pull_enabled)
-
         commit_enabled = (
             git_ok and repo_ok and changes_present and commit_msg_ok
             and not busy
@@ -1114,6 +1135,19 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 git_ok and repo_ok and self._cached_has_remote and not busy
                 and ((self._ahead_count > 0) or not upstream_ok)
             )
+        elif self._workflow_mode == 'publish':
+            # Publish mode: needs valid repo, saved doc, and remote
+            doc_saved = False
+            try:
+                import FreeCAD
+                ad = FreeCAD.ActiveDocument
+                doc_saved = bool(getattr(ad, "FileName", ""))
+            except Exception:
+                doc_saved = False
+            commit_push_enabled = (
+                git_ok and repo_ok and doc_saved and self._cached_has_remote
+                and not busy
+            )
         
         self.commit_push_btn.setEnabled(commit_push_enabled)
 
@@ -1123,7 +1157,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             )
 
         self.changes_list.setEnabled(repo_ok)
-        self.publish_btn.setEnabled(False)
 
         # Enable Generate Previews when repo is valid and a doc is saved
         doc_saved = False
@@ -1136,10 +1169,24 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.generate_previews_btn.setEnabled(
             git_ok and repo_ok and doc_saved and not busy
         )
-        # Sprint 7: Enable Publish button with same criteria
-        self.publish_btn.setEnabled(
-            git_ok and repo_ok and doc_saved and not busy
+
+        # Update Create Repo button visibility
+        # Show when: path is specified, valid directory, but NOT a git repo
+        import os
+        current_path = self.repo_path_field.text()
+        path_is_valid_dir = (
+            current_path
+            and os.path.isdir(os.path.normpath(os.path.expanduser(current_path)))
         )
+        create_repo_visible = path_is_valid_dir and not repo_ok and git_ok
+        self.create_repo_btn.setVisible(create_repo_visible)
+
+        # Update Connect Remote button visibility/state
+        remote_missing = repo_ok and git_ok and not self._cached_has_remote
+        self.connect_remote_btn.setVisible(remote_missing)
+        # Allow connecting even while other tasks might be considered busy,
+        # but still require git/repo to be valid.
+        self.connect_remote_btn.setEnabled(remote_missing)
 
     def _show_status_message(self, message, is_error=True):
         """
@@ -1933,6 +1980,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self._workflow_mode = 'commit'
         elif sender == self.workflow_action_push:
             self._workflow_mode = 'push'
+        elif sender == self.workflow_action_publish:
+            self._workflow_mode = 'publish'
         
         # Update checkmarks
         self.workflow_action_both.setChecked(
@@ -1943,6 +1992,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         )
         self.workflow_action_push.setChecked(
             self._workflow_mode == 'push'
+        )
+        self.workflow_action_publish.setChecked(
+            self._workflow_mode == 'publish'
         )
         
         # Update button label and states for the new mode
@@ -1955,6 +2007,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self.commit_push_btn.setText("Commit")
         elif self._workflow_mode == 'push':
             self.commit_push_btn.setText("Push")
+        elif self._workflow_mode == 'publish':
+            self.commit_push_btn.setText("Publish Branch")
         else:
             self.commit_push_btn.setText("Commit & Push")
 
@@ -1964,13 +2018,15 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._button_update_timer.start()
 
     def _on_commit_push_clicked(self):
-        """Handle Commit & Push button click (routes to appropriate flow)."""
+        """Handle Commit & Push / Publish button click (routes to appropriate flow)."""
         if self._workflow_mode == 'both':
             self._start_commit_push_sequence()
         elif self._workflow_mode == 'commit':
             self._on_commit_clicked()
         elif self._workflow_mode == 'push':
             self._on_push_clicked()
+        elif self._workflow_mode == 'publish':
+            self._on_publish_clicked()
     
     def _start_commit_push_sequence(self):
         """Start combined commit & push workflow."""
@@ -2402,6 +2458,187 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # Defer the actual work to keep UI responsive
         QtCore.QTimer.singleShot(50, lambda: self._do_refresh(current_path))
 
+    def _on_create_repo_clicked(self):
+        """
+        Handle Create Repo button click.
+        Initialize a new git repository in the selected path.
+        """
+        current_path = self.repo_path_field.text()
+        if not current_path:
+            log.warning("No path specified for repo creation")
+            self._show_status_message(
+                "Error: Please specify a folder path first",
+                is_error=True
+            )
+            return
+        
+        # Normalize the path
+        import os
+        current_path = os.path.normpath(os.path.expanduser(current_path))
+        
+        # Check if path exists
+        if not os.path.isdir(current_path):
+            log.warning(f"Path does not exist: {current_path}")
+            self._show_status_message(
+                f"Error: Folder does not exist: {current_path}",
+                is_error=True
+            )
+            return
+        
+        # Show confirmation dialog
+        dlg = QtWidgets.QMessageBox(self)
+        dlg.setWindowTitle("Create Repository")
+        dlg.setText(f"Create a new git repository at:\n{current_path}")
+        dlg.setStandardButtons(
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.Cancel
+        )
+        dlg.setDefaultButton(QtWidgets.QMessageBox.Cancel)
+        dlg.setIcon(QtWidgets.QMessageBox.Question)
+        
+        if dlg.exec() != QtWidgets.QMessageBox.Yes:
+            log.info("Repository creation cancelled by user")
+            return
+        
+        # Show busy feedback
+        self._start_busy_feedback("Creating repository…")
+        self._update_operation_status("Creating repository…")
+        
+        # Perform the actual init in a deferred call to keep UI responsive
+        QtCore.QTimer.singleShot(50, lambda: self._do_create_repo(current_path))
+
+    def _do_create_repo(self, path):
+        """Execute the actual repo creation."""
+        try:
+            log.info(f"Creating repository at: {path}")
+            result = self._git_client.init_repo(path)
+            
+            if result.ok:
+                log.info("Repository created successfully")
+                self._show_status_message(
+                    "Repository created successfully!",
+                    is_error=False
+                )
+                
+                # Show helpful next steps dialog
+                dlg = QtWidgets.QMessageBox(self)
+                dlg.setWindowTitle("Repository Created")
+                dlg.setText(
+                    "Your local repository has been created successfully!\n\n"
+                    "Next steps:\n"
+                    "1. Create a repository on GitHub/GitLab\n"
+                    "2. Copy the repository URL\n"
+                    "3. Run in a terminal:\n"
+                    "   git -C \"" + path + "\" remote add origin <your-repo-url>\n\n"
+                    "Then you'll be able to commit and publish your changes."
+                )
+                dlg.setStandardButtons(
+                    QtWidgets.QMessageBox.Ok | QtWidgets.QMessageBox.Yes
+                )
+                dlg.button(QtWidgets.QMessageBox.Yes).setText(
+                    "Connect Remote Now"
+                )
+                dlg.setIcon(QtWidgets.QMessageBox.Information)
+                choice = dlg.exec()
+                if choice == QtWidgets.QMessageBox.Yes:
+                    # Launch remote connect flow immediately
+                    QtCore.QTimer.singleShot(50, self._on_connect_remote_clicked)
+                
+                # Refresh the repo validation with the new repo
+                QtCore.QTimer.singleShot(500, lambda: self._validate_repo_path(path))
+            else:
+                log.error(f"Repository creation failed: {result.stderr}")
+                self._show_status_message(
+                    f"Error: Failed to create repository",
+                    is_error=True
+                )
+        except Exception as e:
+            log.error(f"Exception during repo creation: {e}")
+            self._show_status_message(
+                f"Error: {str(e)}",
+                is_error=True
+            )
+        finally:
+            self._stop_busy_feedback()
+
+    def _on_connect_remote_clicked(self):
+        """Entry point for Connect Remote button or prompt."""
+        if not self._current_repo_root:
+            self._show_status_message(
+                "No repository selected", is_error=True
+            )
+            return
+        self._start_connect_remote_flow()
+
+    def _start_connect_remote_flow(self, url_hint=""):
+        """Prompt user for remote URL and start add-remote operation."""
+        remote_name = getattr(self, "_remote_name", "origin") or "origin"
+        prompt_title = "Connect Remote"
+        prompt_label = (
+            f"Add remote '{remote_name}'.\n"
+            "Paste the repository URL (GitHub Desktop will handle auth):"
+        )
+        url, ok = QtWidgets.QInputDialog.getText(
+            self,
+            prompt_title,
+            prompt_label,
+            text=url_hint
+        )
+        if not ok:
+            log.info("Connect Remote cancelled")
+            return
+
+        url = url.strip()
+        if not url:
+            self._show_status_message("Remote URL required", is_error=True)
+            return
+
+        # Run asynchronously to keep UI responsive
+        self._start_busy_feedback("Connecting remote…")
+        self._update_operation_status("Connecting remote…")
+        QtCore.QTimer.singleShot(
+            50,
+            lambda: self._do_connect_remote(remote_name, url)
+        )
+
+    def _do_connect_remote(self, remote_name, url):
+        """Execute remote add and refresh UI."""
+        try:
+            if not self._current_repo_root:
+                self._show_status_message(
+                    "No repository selected", is_error=True
+                )
+                return
+
+            result = self._git_client.add_remote(
+                self._current_repo_root, remote_name, url
+            )
+
+            if result.ok:
+                self._show_status_message(
+                    "Remote connected. You can publish now.",
+                    is_error=False
+                )
+                self._cached_has_remote = True
+                # Refresh labels/status to pick up remote
+                self._validate_repo_path(self._current_repo_root)
+            else:
+                msg = result.stderr or "Failed to add remote"
+                QtWidgets.QMessageBox.critical(
+                    self,
+                    "Connect Remote Failed",
+                    msg
+                )
+                self._show_status_message(
+                    f"Error: {msg}", is_error=True
+                )
+        except Exception as e:
+            log.error(f"Exception during connect remote: {e}")
+            self._show_status_message(
+                f"Error: {str(e)}", is_error=True
+            )
+        finally:
+            self._stop_busy_feedback()
+
     def _on_job_finished(self, job):
         """
         Callback when a background job finishes.
@@ -2642,23 +2879,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             )
             return
         
-        # Sprint 7: Prompt for commit message
-        import os
-        doc_name = os.path.basename(file_name)
-        default_message = f"Publish {doc_name} (GitPDM)"
-        
-        message, ok = QtWidgets.QInputDialog.getMultiLineText(
-            self,
-            "Publish Branch",
-            "Commit message:",
-            default_message
-        )
-        
-        if not ok:
-            log.debug("User cancelled publish")
-            return
-        
-        message = message.strip()
+        # Use commit message from the text box
+        message = self.commit_message.toPlainText().strip()
         if not message:
             self._show_status_message(
                 "Commit message required", is_error=True
@@ -2866,10 +3088,32 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         step_name = result.step.name if result.step else "Unknown"
         error_msg = result.message or "Unknown error"
         
+        # Provide helpful guidance for common errors
+        detailed_msg = error_msg
+        if "Remote 'origin' not found" in error_msg:
+            choice = QtWidgets.QMessageBox.question(
+                self,
+                f"Publish Failed ({step_name})",
+                "No remote configured. Connect a remote now?\n\n"
+                "Tip: Create the repo in GitHub Desktop, copy its URL, then paste here.",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.Cancel,
+                QtWidgets.QMessageBox.Yes
+            )
+            if choice == QtWidgets.QMessageBox.Yes:
+                self._start_connect_remote_flow()
+            else:
+                self._show_status_message(
+                    f"Publish failed: {step_name}", is_error=True
+                )
+                log.error(f"Publish failed at {step_name}: {error_msg}")
+                return
+            # Do not continue to generic message box if user handled prompt
+            return
+        
         QtWidgets.QMessageBox.critical(
             self,
             f"Publish Failed ({step_name})",
-            error_msg
+            detailed_msg
         )
         
         self._show_status_message(
