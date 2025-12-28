@@ -1300,3 +1300,117 @@ class GitClient:
                 cad_files.append(p)
 
         return cad_files
+
+    def set_default_branch(self, repo_root, branch="main"):
+        """
+        Rename/set the default branch to the specified name.
+        Uses 'git branch -M <branch>' to rename HEAD branch.
+
+        Args:
+            repo_root: Repository root path (string)
+            branch: Target branch name (default "main")
+
+        Returns:
+            CmdResult indicating success/failure
+        """
+        if not self.is_git_available():
+            return CmdResult(False, "", "Git not available", "NO_GIT")
+
+        if not repo_root or not os.path.isdir(repo_root):
+            return CmdResult(False, "", "Invalid repository", "INVALID_REPO")
+
+        branch = (branch or "main").strip()
+        if not branch:
+            branch = "main"
+
+        git_cmd = self._get_git_command()
+        return self._run_command(
+            [git_cmd, "-C", repo_root, "branch", "-M", branch],
+            timeout=30,
+        )
+
+    def lfs_install(self):
+        """
+        Run 'git lfs install' to set up Git LFS hooks in git config.
+        This is a one-time setup per user environment.
+
+        Returns:
+            CmdResult indicating success/failure
+        """
+        if not self.is_git_available():
+            return CmdResult(False, "", "Git not available", "NO_GIT")
+
+        git_cmd = self._get_git_command()
+        return self._run_command(
+            [git_cmd, "lfs", "install", "--skip-smudge"],
+            timeout=30,
+        )
+
+    def get_config(self, repo_root, key, local=False):
+        """
+        Get a git config value.
+
+        Args:
+            repo_root: Repository root path (string), or None for global
+            key: Config key (e.g., "user.name")
+            local: If True, use --local; else use --global (if repo_root is None)
+
+        Returns:
+            str: Config value, or empty string if not found
+        """
+        if not self.is_git_available():
+            return ""
+
+        git_cmd = self._get_git_command()
+
+        args = [git_cmd, "config"]
+        if local and repo_root:
+            args.append("--local")
+        elif repo_root:
+            args.append("--global")
+        args.append(key)
+
+        try:
+            result = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                cwd=repo_root if repo_root and os.path.isdir(repo_root) else None,
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+
+        return ""
+
+    def set_config(self, repo_root, key, value, local=False):
+        """
+        Set a git config value.
+
+        Args:
+            repo_root: Repository root path (string), or None for global
+            key: Config key (e.g., "user.name")
+            value: Config value
+            local: If True, use --local; else use --global (if repo_root is None)
+
+        Returns:
+            CmdResult indicating success/failure
+        """
+        if not self.is_git_available():
+            return CmdResult(False, "", "Git not available", "NO_GIT")
+
+        if not key or not value:
+            return CmdResult(False, "", "Missing key or value", "INVALID_ARGS")
+
+        git_cmd = self._get_git_command()
+
+        args = [git_cmd, "config"]
+        if local and repo_root:
+            args.append("--local")
+        elif repo_root:
+            args.append("--global")
+        args.extend([key, value])
+
+        return self._run_command(args, timeout=30)

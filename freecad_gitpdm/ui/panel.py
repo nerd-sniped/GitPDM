@@ -388,6 +388,10 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         clone_btn.clicked.connect(self._on_open_clone_repo_clicked)
         path_layout.addWidget(clone_btn)
 
+        new_repo_btn = QtWidgets.QPushButton("New Repo…")
+        new_repo_btn.clicked.connect(self._on_new_repo_clicked)
+        path_layout.addWidget(new_repo_btn)
+
         group_layout.addLayout(path_layout)
 
         # Repo root label (resolved path, read-only)
@@ -935,6 +939,51 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 self,
                 "Open/Clone Repo",
                 "Failed to open repo picker. See logs for details.",
+            )
+
+    def _on_new_repo_clicked(self):
+        """Open New Repo wizard to create GitHub repo + local scaffold."""
+        try:
+            from freecad_gitpdm.ui.new_repo_wizard import NewRepoWizard
+
+            # Check if user is connected to GitHub
+            api_client = self._create_github_client()
+            if not api_client:
+                log.info("Not connected to GitHub; prompting connect")
+                self._on_github_connect_clicked()
+                api_client = self._create_github_client()
+                if not api_client:
+                    QtWidgets.QMessageBox.information(
+                        self,
+                        "New Repository",
+                        "Please connect to GitHub first.",
+                    )
+                    return
+
+            wizard = NewRepoWizard(api_client=api_client, parent=self)
+            if wizard.exec():
+                repo_path = wizard.get_created_repo_path()
+                repo_name = wizard.get_created_repo_name()
+                if repo_path:
+                    log.info(f"New repo created: {repo_name} at {repo_path}")
+                    # Switch to the new repo
+                    settings.save_repo_path(repo_path)
+                    self.repo_path_field.setText(repo_path)
+                    self._validate_repo_path(repo_path)
+                    # Show success message with repo URL
+                    QtWidgets.QMessageBox.information(
+                        self,
+                        "Repository Created",
+                        f"Repository '{repo_name}' has been created!\n\n"
+                        f"Local folder: {repo_path}\n\n"
+                        f"GitPDM is now configured to work with this repository.",
+                    )
+        except Exception as e:
+            log.error(f"New repo wizard failed: {e}")
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Create New Repository",
+                f"Failed to create repository. See logs for details.\n\n{e}",
             )
 
     def _on_repo_path_editing_finished(self):
