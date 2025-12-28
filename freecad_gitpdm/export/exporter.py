@@ -10,6 +10,8 @@ Constraints:
 
 import json
 import hashlib
+import time
+import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -80,6 +82,44 @@ def _sha256_file(path: Path) -> Optional[str]:
     except Exception as e:
         log.warning(f"SHA256 failed: {e}")
         return None
+
+
+def _move_fcbak_to_previews(source_fcstd: Path, preview_dir: Path, part_name: str) -> bool:
+    """
+    Move FCBak file from source directory to preview folder.
+    FreeCAD creates FCBak files during save, but timing is unpredictable.
+    This function waits briefly for the file to appear before moving it.
+    
+    Returns True if FCBak was moved, False otherwise.
+    """
+    fcbak_source = source_fcstd.with_suffix(".FCBak")
+    
+    # Wait up to 2 seconds for FCBak to appear (FreeCAD creates it asynchronously)
+    max_attempts = 20
+    wait_interval = 0.1  # 100ms
+    
+    for attempt in range(max_attempts):
+        if fcbak_source.exists():
+            try:
+                fcbak_dest = preview_dir / f"{part_name}.FCBak"
+                # Remove existing FCBak if present (Windows won't overwrite on rename)
+                if fcbak_dest.exists():
+                    fcbak_dest.unlink()
+                # Move FCBak to the part's preview folder
+                fcbak_source.rename(fcbak_dest)
+                log.info(f"FCBak moved to previews: {fcbak_dest.name}")
+                return True
+            except Exception as e:
+                log.warning(f"Failed to move FCBak: {e}")
+                return False
+        
+        # Wait a bit before checking again
+        if attempt < max_attempts - 1:
+            time.sleep(wait_interval)
+    
+    # FCBak file never appeared (this is normal if FreeCAD didn't create one)
+    log.debug(f"No FCBak file found at {fcbak_source}")
+    return False
 
 
 def _compute_bbox_mm(doc) -> Optional[Tuple[float, float, float]]:
@@ -345,11 +385,19 @@ def _export_glb(
         # Default: export as OBJ using Mesh.export on Mesh::Feature objects
         try:
             obj_path = out_path.with_suffix(".obj")
+            stl_path = out_path.with_suffix(".stl")
+            glb_path = out_path.with_suffix(".glb")
+            # Clean old artifacts to avoid stale files (Windows-safe overwrite)
+            for old in (obj_path, stl_path, glb_path):
+                try:
+                    if old.exists():
+                        old.unlink()
+                except Exception:
+                    pass
             Mesh.export(mesh_objs, str(obj_path))
             FreeCAD.closeDocument(mesh_doc.Name)
             if obj_path.exists() and obj_path.stat().st_size > 0:
                 # OBJ success; convert to STL for GitHub preview support
-                stl_path = out_path.with_suffix(".stl")
                 try:
                     stl_err = obj_to_stl(obj_path, stl_path)
                     if stl_err:
@@ -586,17 +634,34 @@ def export_active_document(repo_root: str) -> ExportResult:
         # Move STL to root if it was generated in the part folder
         if stl_path_in_part.exists() and stl_path_in_part.stat().st_size > 100:
             try:
-                # Ensure parent directory exists
                 if stl_root_abs:
                     stl_root_abs.parent.mkdir(parents=True, exist_ok=True)
-                    # Move STL to root
-                    stl_path_in_part.rename(stl_root_abs)
+                    # Replace any existing STL in the root (Windows-safe overwrite)
+                    if stl_root_abs.exists():
+                        stl_root_abs.unlink()
+                    try:
+                        stl_path_in_part.replace(stl_root_abs)
+                    except Exception:
+                        # Fallback to copy then delete source
+                        shutil.copy2(stl_path_in_part, stl_root_abs)
+                        stl_path_in_part.unlink(missing_ok=True)
                     model_artifacts["stl"] = stl_root_rel
-                    log.debug(f"STL moved to root: {stl_root_rel}")
+                    log.debug(f"STL placed at root: {stl_root_rel}")
             except Exception as e:
                 log.warning(f"Failed to move STL to root: {e}")
-                # Fallback: keep it in the part folder
                 model_artifacts["stl"] = rel_dir + f"{part_name}.stl"
+            finally:
+                # Ensure no stale STL remains in the part folder
+                if stl_path_in_part.exists():
+                    try:
+                        stl_path_in_part.unlink()
+                    except Exception:
+                        pass
+        
+        # Move FCBak file to previews folder if it exists
+        # FCBak files are FreeCAD's auto-backup files created alongside FCStd
+        # This waits briefly for the file to appear since FreeCAD creates it asynchronously
+        _move_fcbak_to_previews(Path(file_name), out_dir, part_name)
         
         # Only warn if we had to fall back to STL or nothing was created
         if not model_file:

@@ -4,13 +4,18 @@
 Modified the export output structure to:
 1. **Name .obj and .stl files after the part name** instead of hardcoded "model"
 2. **Move STL files to the previews root folder** for easier browsing
-3. **Keep .obj and .glb files in the part subfolder** (unchanged location)
-4. **Keep JSON, PNG, and FCStd/FCBak files in the part subfolder** (unchanged location)
+3. **Move FCBak files to the part's preview subfolder** to keep source directories clean
+4. **Keep .obj and .glb files in the part subfolder** (unchanged location)
+5. **Keep JSON and PNG files in the part subfolder** (unchanged location)
 
 ## File Structure Changes
 
 ### Before
 ```
+cad/parts/BRK-001/
+├── BRK-001.FCStd         (source file)
+├── BRK-001.FCBak         (backup file)
+
 previews/
 └── cad/parts/BRK-001/BRK-001/
     ├── preview.png
@@ -22,13 +27,17 @@ previews/
 
 ### After
 ```
+cad/parts/BRK-001/
+└── BRK-001.FCStd         ← Only source file remains!
+
 previews/
 ├── BRK-001.stl           ← STL moved to root, named after part
-├── cad/parts/BRK-001/BRK-001/
-│   ├── preview.png
-│   ├── preview.json
-│   ├── BRK-001.glb       ← Named after part (was: model.glb)
-│   ├── BRK-001.obj       ← Named after part (was: model.obj)
+└── cad/parts/BRK-001/BRK-001/
+    ├── preview.png
+    ├── preview.json
+    ├── BRK-001.glb       ← Named after part (was: model.glb)
+    ├── BRK-001.obj       ← Named after part (was: model.obj)
+    ├── BRK-001.FCBak     ← Backup moved here
 ```
 
 ## Technical Changes
@@ -52,8 +61,15 @@ Added new function `stl_root_path_rel(source_rel: str) -> str`:
   - `stl_path = glb_path.with_suffix(".stl")`
 - Move generated STL files from part folder to previews root:
   - Check if STL exists in part folder
+  - Remove any existing STL at destination (ensures updates replace old files)
   - Move to root location using `Path.rename()`
   - Handle move failures gracefully with fallback
+- Move FCBak files from source directory to preview folder:
+  - Detect FCBak file alongside source FCStd
+  - Wait up to 2 seconds for FCBak to appear (FreeCAD creates it asynchronously)
+  - Remove any existing FCBak at destination (ensures updates replace old files)
+  - Move to part's preview subfolder with part name
+  - Silent failure (debug log only) if FCBak doesn't exist after waiting
 
 #### _export_glb() function signature changes
 - Added optional parameter: `part_name: str = "model"`
@@ -67,10 +83,11 @@ Added new function `stl_root_path_rel(source_rel: str) -> str`:
 
 ## Benefits
 
-1. **Easier Navigation**: Users can see all STL files at root level without diving into folder structure
-2. **Clear Part Naming**: Files are named after their parts (BRK-001.stl, wheel.stl) instead of generic "model"
-3. **Organized Structure**: JSON/PNG remain with part data in subfolder; STL is at convenient root location
-4. **Backward Compatible**: Default parameter values ensure existing code continues to work
+1. **Cleaner Source Directories**: Only FCStd files remain in source folders; FCBak backups moved to previews
+2. **Easier Navigation**: Users can see all STL files at root level without diving into folder structure
+3. **Clear Part Naming**: Files are named after their parts (BRK-001.stl, wheel.stl) instead of generic "model"
+4. **Organized Structure**: JSON/PNG/backups remain with part data in subfolder; STL is at convenient root location
+5. **Backward Compatible**: Default parameter values ensure existing code continues to work
 
 ## Testing
 
