@@ -69,6 +69,16 @@ workflows into FreeCAD, with a focus on GitHub Desktop-style user experience.
 - The changes list and repository browser are placeholders.
 - Repository validation is not implemented.
 
+### GitHub Authentication
+
+GitPDM includes GitHub OAuth authentication for future features like
+release creation and pull request management. See
+[OAUTH_DEVICE_FLOW.md](OAUTH_DEVICE_FLOW.md) for details on how
+GitPDM authenticates with GitHub using OAuth Device Flow.
+
+**Note**: OAuth authentication is prepared but not yet functional in
+Sprint OAUTH-0. It will be enabled in Sprint OAUTH-1.
+
 ## Architecture
 
 ```

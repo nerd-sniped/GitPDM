@@ -1,0 +1,195 @@
+# -*- coding: utf-8 -*-
+"""
+GitPDM Diagnostics Module
+Sprint OAUTH-0: System diagnostic information
+
+Provides diagnostic information for troubleshooting and
+support requests. Includes OAuth configuration status but
+never includes sensitive data like tokens.
+"""
+
+import sys
+import platform
+from freecad_gitpdm.core import settings, log
+
+
+def get_diagnostics():
+    """
+    Collect diagnostic information about GitPDM configuration.
+    
+    Returns:
+        dict: Diagnostic information
+        
+    Notes:
+        Never includes sensitive data (tokens, passwords, etc.)
+    """
+    diagnostics = {}
+    
+    # Python and platform information
+    diagnostics["python_version"] = sys.version
+    diagnostics["platform"] = platform.platform()
+    diagnostics["platform_system"] = platform.system()
+    diagnostics["platform_release"] = platform.release()
+    
+    # FreeCAD version
+    try:
+        import FreeCAD
+        diagnostics["freecad_version"] = (
+            f"{FreeCAD.Version()[0]}."
+            f"{FreeCAD.Version()[1]}."
+            f"{FreeCAD.Version()[2]}"
+        )
+        diagnostics["freecad_build"] = FreeCAD.Version()[3]
+    except Exception as e:
+        diagnostics["freecad_version"] = f"Error: {e}"
+        diagnostics["freecad_build"] = "Unknown"
+    
+    # Qt binding
+    try:
+        from PySide6 import QtCore
+        diagnostics["qt_binding"] = "PySide6"
+        diagnostics["qt_version"] = QtCore.qVersion()
+    except ImportError:
+        try:
+            from PySide2 import QtCore
+            diagnostics["qt_binding"] = "PySide2"
+            diagnostics["qt_version"] = QtCore.qVersion()
+        except ImportError:
+            diagnostics["qt_binding"] = "None"
+            diagnostics["qt_version"] = "None"
+    
+    # Git availability
+    try:
+        from freecad_gitpdm.git import client
+        git_client = client.GitClient()
+        git_version = git_client.get_git_version()
+        diagnostics["git_available"] = git_version is not None
+        diagnostics["git_version"] = (
+            git_version if git_version else "Not found"
+        )
+    except Exception as e:
+        diagnostics["git_available"] = False
+        diagnostics["git_version"] = f"Error: {e}"
+    
+    # Repository configuration
+    try:
+        repo_path = settings.load_repo_path()
+        diagnostics["repo_path_configured"] = bool(repo_path)
+        # Don't include actual path for privacy
+    except Exception as e:
+        diagnostics["repo_path_configured"] = False
+        log.warning(f"Failed to load repo path: {e}")
+    
+    # GitHub OAuth configuration (Sprint OAUTH-0)
+    try:
+        from freecad_gitpdm.auth import config as auth_config
+        client_id = auth_config.get_client_id()
+        diagnostics["oauth_client_id_configured"] = (
+            client_id is not None
+        )
+        # Never include actual client_id value
+    except Exception as e:
+        diagnostics["oauth_client_id_configured"] = False
+        log.warning(f"Failed to load OAuth config: {e}")
+    
+    # GitHub connection status (Sprint OAUTH-0)
+    try:
+        diagnostics["github_connected"] = (
+            settings.load_github_connected()
+        )
+        github_login = settings.load_github_login()
+        diagnostics["github_login"] = (
+            github_login if github_login else None
+        )
+        diagnostics["github_host"] = settings.load_github_host()
+    except Exception as e:
+        diagnostics["github_connected"] = False
+        diagnostics["github_login"] = None
+        diagnostics["github_host"] = "github.com"
+        log.warning(f"Failed to load GitHub settings: {e}")
+    
+    return diagnostics
+
+
+def format_diagnostics(diagnostics=None):
+    """
+    Format diagnostics as human-readable text.
+    
+    Args:
+        diagnostics: dict from get_diagnostics() (or None to fetch)
+        
+    Returns:
+        str: Formatted diagnostic report
+    """
+    if diagnostics is None:
+        diagnostics = get_diagnostics()
+    
+    lines = []
+    lines.append("=== GitPDM Diagnostics ===")
+    lines.append("")
+    
+    lines.append("Platform:")
+    lines.append(f"  System: {diagnostics.get('platform_system')}")
+    lines.append(f"  Release: {diagnostics.get('platform_release')}")
+    lines.append(f"  Platform: {diagnostics.get('platform')}")
+    lines.append("")
+    
+    lines.append("Python:")
+    py_ver = diagnostics.get('python_version', 'Unknown')
+    # Show just version line, not full details
+    first_line = py_ver.split('\n')[0] if py_ver else 'Unknown'
+    lines.append(f"  Version: {first_line}")
+    lines.append("")
+    
+    lines.append("FreeCAD:")
+    lines.append(f"  Version: {diagnostics.get('freecad_version')}")
+    lines.append(f"  Build: {diagnostics.get('freecad_build')}")
+    lines.append("")
+    
+    lines.append("Qt:")
+    lines.append(f"  Binding: {diagnostics.get('qt_binding')}")
+    lines.append(f"  Version: {diagnostics.get('qt_version')}")
+    lines.append("")
+    
+    lines.append("Git:")
+    lines.append(
+        f"  Available: {diagnostics.get('git_available')}"
+    )
+    lines.append(f"  Version: {diagnostics.get('git_version')}")
+    lines.append("")
+    
+    lines.append("Repository:")
+    lines.append(
+        f"  Configured: {diagnostics.get('repo_path_configured')}"
+    )
+    lines.append("")
+    
+    lines.append("GitHub OAuth:")
+    lines.append(
+        f"  Client ID configured: "
+        f"{diagnostics.get('oauth_client_id_configured')}"
+    )
+    lines.append(
+        f"  Connected: {diagnostics.get('github_connected')}"
+    )
+    github_login = diagnostics.get('github_login')
+    lines.append(
+        f"  Login: {github_login if github_login else 'None'}"
+    )
+    lines.append(f"  Host: {diagnostics.get('github_host')}")
+    lines.append("")
+    
+    lines.append("=== End Diagnostics ===")
+    
+    return "\n".join(lines)
+
+
+def print_diagnostics():
+    """
+    Print diagnostics to FreeCAD console.
+    Useful for troubleshooting and support.
+    """
+    diagnostics = get_diagnostics()
+    report = format_diagnostics(diagnostics)
+    log.info(report)
+    return report

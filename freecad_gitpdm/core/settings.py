@@ -298,3 +298,66 @@ def save_cad_extensions(ext_list):
         log.info(f"Saved CAD extensions: {value}")
     except Exception as e:
         log.error(f"Failed to save CAD extensions: {e}")
+
+
+# --- Sprint OAUTH-0: GitHub OAuth settings (metadata only) ---
+
+def save_github_connected(connected):
+    """
+    Save GitHub connection status (metadata only, no tokens).
+    
+    Args:
+        connected: bool indicating if user is connected to GitHub
+    """
+    save_bool_setting("GitHubConnected", bool(connected))
+
+
+def load_github_connected():
+    """
+    Load GitHub connection status.
+    
+    Returns:
+        bool: True if GitHub is connected, False otherwise
+    """
+    return load_bool_setting("GitHubConnected", False)
+
+
+def save_github_login(login):
+    """
+    Save GitHub username (metadata only, no tokens).
+    
+    Args:
+        login: str GitHub username or None to clear
+    """
+    save_setting("GitHubLogin", login or "")
+
+
+def load_github_login():
+    """
+    Load GitHub username.
+    
+    Returns:
+        str | None: GitHub username if set, None otherwise
+    """
+    login = load_setting("GitHubLogin", "")
+    return login if login else None
+
+
+def save_github_host(host):
+    """
+    Save GitHub host (supports GitHub Enterprise).
+    
+    Args:
+        host: str GitHub host (e.g., "github.com")
+    """
+    save_setting("GitHubHost", host or "github.com")
+
+
+def load_github_host():
+    """
+    Load GitHub host.
+    
+    Returns:
+        str: GitHub host (default "github.com")
+    """
+    return load_setting("GitHubHost", "github.com")

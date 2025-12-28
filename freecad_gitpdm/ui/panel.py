@@ -143,6 +143,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._build_view_toggle(main_layout)
         self._build_git_check_section(main_layout)
         self._build_repo_selector(main_layout)
+        self._build_github_account_section(main_layout)
         self._build_status_section(main_layout)
         self._build_changes_section(main_layout)
         self._build_buttons_section(main_layout)
@@ -207,6 +208,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         for w in [
             getattr(self, "_group_git_check", None),
             getattr(self, "_group_repo_selector", None),
+            getattr(self, "_group_github_account", None),
             getattr(self, "_group_changes", None),
             getattr(self, "_actions_extra_container", None),
             getattr(self, "_repo_browser_container", None),
@@ -452,6 +454,78 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         layout.addWidget(group)
         self._group_repo_selector = group
+
+    def _build_github_account_section(self, layout):
+        """
+        Build the GitHub Account section (Sprint OAUTH-0)
+        Shows connection status and connect/disconnect buttons.
+        No actual OAuth implementation yet - just placeholders.
+        
+        Args:
+            layout: Parent layout to add widgets to
+        """
+        group = QtWidgets.QGroupBox("GitHub Account")
+        group_layout = QtWidgets.QVBoxLayout()
+        group_layout.setContentsMargins(6, 4, 6, 4)
+        group_layout.setSpacing(4)
+        group.setLayout(group_layout)
+
+        # Connection status label
+        self.github_status_label = QtWidgets.QLabel(
+            "GitHub: Not connected"
+        )
+        self._set_strong_label(self.github_status_label, "gray")
+        group_layout.addWidget(self.github_status_label)
+
+        # Check if OAuth is configured
+        try:
+            from freecad_gitpdm.auth import config as auth_config
+            client_id = auth_config.get_client_id()
+            oauth_configured = client_id is not None
+        except Exception:
+            oauth_configured = False
+
+        # Config hint (shown if OAuth not configured)
+        if not oauth_configured:
+            hint_label = QtWidgets.QLabel(
+                "GitHub OAuth not configured. See docs."
+            )
+            hint_label.setWordWrap(True)
+            hint_label.setStyleSheet(
+                "color: orange; font-style: italic; font-size: 9px;"
+            )
+            group_layout.addWidget(hint_label)
+
+        # Buttons row
+        buttons_layout = QtWidgets.QHBoxLayout()
+        buttons_layout.setSpacing(4)
+
+        self.github_connect_btn = QtWidgets.QPushButton(
+            "Connect GitHub"
+        )
+        self.github_connect_btn.setEnabled(oauth_configured)
+        self.github_connect_btn.setToolTip(
+            "Connect to GitHub using OAuth Device Flow"
+            if oauth_configured
+            else "OAuth not configured"
+        )
+        # TODO OAUTH-1: Connect to OAuth flow handler
+        buttons_layout.addWidget(self.github_connect_btn)
+
+        self.github_disconnect_btn = QtWidgets.QPushButton(
+            "Disconnect"
+        )
+        self.github_disconnect_btn.setEnabled(False)
+        self.github_disconnect_btn.setToolTip(
+            "Disconnect GitHub account"
+        )
+        # TODO OAUTH-1: Connect to disconnect handler
+        buttons_layout.addWidget(self.github_disconnect_btn)
+
+        group_layout.addLayout(buttons_layout)
+
+        layout.addWidget(group)
+        self._group_github_account = group
 
     def _build_status_section(self, layout):
         """
