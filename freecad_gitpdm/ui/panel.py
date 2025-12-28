@@ -384,6 +384,10 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         browse_btn.clicked.connect(self._on_browse_clicked)
         path_layout.addWidget(browse_btn)
 
+        clone_btn = QtWidgets.QPushButton("Open/Clone Repo…")
+        clone_btn.clicked.connect(self._on_open_clone_repo_clicked)
+        path_layout.addWidget(clone_btn)
+
         group_layout.addLayout(path_layout)
 
         # Repo root label (resolved path, read-only)
@@ -904,6 +908,34 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             # Trigger validation
             self._validate_repo_path(folder)
             log.info(f"Selected repo folder: {folder}")
+
+    def _on_open_clone_repo_clicked(self):
+        """Open repo picker dialog to select and clone GitHub repo."""
+        try:
+            from freecad_gitpdm.ui.repo_picker import RepoPickerDialog
+
+            dlg = RepoPickerDialog(
+                parent=self,
+                job_runner=self._job_runner,
+                git_client=self._git_client,
+                client_factory=self._create_github_client,
+                on_connect_requested=self._on_github_connect_clicked,
+                default_clone_dir=settings.load_default_clone_dir(),
+            )
+
+            if dlg.exec():
+                cloned_path = dlg.cloned_path()
+                if cloned_path:
+                    settings.save_repo_path(cloned_path)
+                    self.repo_path_field.setText(cloned_path)
+                    self._validate_repo_path(cloned_path)
+        except Exception as e:
+            log.error(f"Open/Clone flow failed: {e}")
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Open/Clone Repo",
+                "Failed to open repo picker. See logs for details.",
+            )
 
     def _on_repo_path_editing_finished(self):
         """
@@ -3657,6 +3689,28 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     def _on_github_refresh_clicked(self):
         """Legacy refresh handler: route to verify."""
         self._on_github_verify_clicked()
+
+    def _create_github_client(self):
+        """Construct a GitHubApiClient using stored token; returns None if not connected."""
+        try:
+            from freecad_gitpdm.auth.token_store_wincred import WindowsCredentialStore
+            from freecad_gitpdm.github.api_client import GitHubApiClient
+
+            host = settings.load_github_host()
+            account = settings.load_github_login()
+            if not host or not account:
+                return None
+
+            store = WindowsCredentialStore()
+            token_resp = store.load(host, account)
+            if not token_resp:
+                return None
+
+            ua = "GitPDM/1.0"
+            return GitHubApiClient("api.github.com", token_resp.access_token, ua)
+        except Exception as e:
+            log.debug(f"Failed to create GitHub client: {e}")
+            return None
 
     # ========== Sprint OAUTH-2: Identity verification ==========
 

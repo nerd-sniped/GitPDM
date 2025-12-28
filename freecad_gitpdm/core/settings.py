@@ -300,6 +300,18 @@ def save_cad_extensions(ext_list):
         log.error(f"Failed to save CAD extensions: {e}")
 
 
+# --- Sprint OAUTH-3: Clone defaults ---
+
+def save_default_clone_dir(path: str):
+    """Persist default clone destination directory (user-friendly)."""
+    save_setting("DefaultCloneDir", path or "")
+
+
+def load_default_clone_dir() -> str:
+    """Load default clone destination directory (empty string if unset)."""
+    return load_setting("DefaultCloneDir", "")
+
+
 # --- Sprint OAUTH-0: GitHub OAuth settings (metadata only) ---
 
 def save_github_connected(connected):

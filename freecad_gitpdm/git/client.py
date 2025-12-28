@@ -369,6 +369,64 @@ class GitClient:
                 error_code="os_error"
             )
 
+    def clone_repo(self, clone_url: str, dest_path: str) -> CmdResult:
+        """Clone a repository to dest_path using https clone URL."""
+        if not self.is_git_available():
+            log.error("Git not available for clone")
+            return CmdResult(False, "", "Git not available", error_code="no_git")
+
+        clone_url = (clone_url or "").strip()
+        dest_path = (dest_path or "").strip()
+        if not clone_url or not dest_path:
+            log.error("Missing clone URL or destination for clone")
+            return CmdResult(False, "", "Missing clone URL or destination", error_code="bad_args")
+
+        git_cmd = self._get_git_command()
+        dest_abs = os.path.abspath(dest_path)
+        parent_dir = os.path.dirname(dest_abs)
+        try:
+            if parent_dir and not os.path.isdir(parent_dir):
+                os.makedirs(parent_dir, exist_ok=True)
+
+            if os.path.isdir(dest_abs):
+                try:
+                    existing = os.listdir(dest_abs)
+                except OSError:
+                    existing = []
+                if existing:
+                    log.warning("Destination folder already contains files; aborting clone")
+                    return CmdResult(
+                        False,
+                        "",
+                        "Destination folder is not empty.",
+                        error_code="dest_not_empty",
+                    )
+
+            result = subprocess.run(
+                [git_cmd, "clone", clone_url, dest_abs],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            if result.returncode == 0:
+                log.info(f"Repository cloned to: {dest_abs}")
+                return CmdResult(True, result.stdout.strip(), result.stderr.strip())
+
+            stderr_safe = (result.stderr or "").replace(clone_url, "<repo>")
+            log.error(f"Git clone failed (exit {result.returncode})")
+            return CmdResult(
+                False,
+                result.stdout.strip(),
+                stderr_safe.strip(),
+                error_code="clone_failed",
+            )
+        except subprocess.TimeoutExpired:
+            log.error("Git clone timed out")
+            return CmdResult(False, "", "Clone timed out", error_code="timeout")
+        except OSError as e:
+            log.error(f"Git clone error: {e}")
+            return CmdResult(False, "", str(e), error_code="os_error")
+
     def current_branch(self, repo_root):
         """
         Get the current branch name.
