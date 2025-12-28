@@ -19,6 +19,7 @@ from freecad_gitpdm.core import log
 from freecad_gitpdm.core import paths as core_paths
 from freecad_gitpdm.export.preset import load_preset
 from freecad_gitpdm.export.mapper import to_preview_dir_rel
+from freecad_gitpdm.export.stl_converter import obj_to_stl
 
 
 @dataclass
@@ -341,7 +342,17 @@ def _export_glb(
             Mesh.export(mesh_objs, str(obj_path))
             FreeCAD.closeDocument(mesh_doc.Name)
             if obj_path.exists() and obj_path.stat().st_size > 0:
-                # OBJ success; no warning needed
+                # OBJ success; convert to STL for GitHub preview support
+                stl_path = out_path.with_suffix(".stl")
+                try:
+                    stl_err = obj_to_stl(obj_path, stl_path)
+                    if stl_err:
+                        log.debug(f"STL conversion failed: {stl_err}")
+                    else:
+                        log.debug(f"STL conversion succeeded: {stl_path}")
+                except Exception as e_stl:
+                    log.debug(f"STL conversion error: {e_stl}")
+                # Return OBJ success regardless of STL conversion (STL is bonus)
                 return None, stats
             else:
                 raise Exception("OBJ export failed")
@@ -537,7 +548,7 @@ def export_active_document(repo_root: str) -> ExportResult:
         # GLB Export (Sprint 7)
         glb_err, mesh_stats = _export_glb(doc, glb_path, preset)
         
-        # Determine which model file actually exists (prefer OBJ)
+        # Determine which model file actually exists (prefer OBJ; STL as converted)
         model_file = None
         obj_path = glb_path.with_suffix(".obj")
         stl_path = glb_path.with_suffix(".stl")
@@ -548,6 +559,13 @@ def export_active_document(repo_root: str) -> ExportResult:
             model_file = rel_dir + "model.glb"
         elif stl_path.exists() and stl_path.stat().st_size > 100:
             model_file = rel_dir + "model.stl"
+        
+        # Also include STL in artifacts if it was generated (GitHub preview support)
+        model_artifacts = {}
+        if model_file:
+            model_artifacts["model"] = model_file
+        if stl_path.exists() and stl_path.stat().st_size > 100:
+            model_artifacts["stl"] = rel_dir + "model.stl"
         
         # Only warn if we had to fall back to STL or nothing was created
         if not model_file:
@@ -588,9 +606,7 @@ def export_active_document(repo_root: str) -> ExportResult:
             "stats": {
                 "bboxMm": stats_bbox,
             },
-            "artifacts": {
-                "model": model_file,
-            },
+            "artifacts": model_artifacts,
             "meshStats": mesh_stats,
         }
         if thumb_err:
