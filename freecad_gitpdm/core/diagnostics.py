@@ -102,10 +102,30 @@ def get_diagnostics():
             github_login if github_login else None
         )
         diagnostics["github_host"] = settings.load_github_host()
+        diagnostics["github_user_id"] = settings.load_github_user_id()
+        diagnostics["last_verified_at"] = settings.load_last_verified_at()
+        # Token presence (yes/no) without exposing token
+        try:
+            from freecad_gitpdm.auth.token_store_wincred import WindowsCredentialStore
+            store = WindowsCredentialStore()
+            token_present = store.load(
+                settings.load_github_host(), settings.load_github_login()
+            ) is not None
+            diagnostics["token_present"] = token_present
+        except Exception:
+            diagnostics["token_present"] = False
+        code, msg = settings.load_last_api_error()
+        diagnostics["last_api_error_code"] = code or None
+        diagnostics["last_api_error_message"] = msg or None
     except Exception as e:
         diagnostics["github_connected"] = False
         diagnostics["github_login"] = None
         diagnostics["github_host"] = "github.com"
+        diagnostics["github_user_id"] = None
+        diagnostics["last_verified_at"] = ""
+        diagnostics["token_present"] = False
+        diagnostics["last_api_error_code"] = None
+        diagnostics["last_api_error_message"] = None
         log.warning(f"Failed to load GitHub settings: {e}")
     
     return diagnostics
@@ -177,6 +197,18 @@ def format_diagnostics(diagnostics=None):
         f"  Login: {github_login if github_login else 'None'}"
     )
     lines.append(f"  Host: {diagnostics.get('github_host')}")
+    lines.append(f"  Token present: {diagnostics.get('token_present')}")
+    uid = diagnostics.get('github_user_id')
+    lines.append(f"  User ID: {uid if uid is not None else 'None'}")
+    lv = diagnostics.get('last_verified_at')
+    lines.append(f"  Last verified: {lv if lv else 'Never'}")
+    lec = diagnostics.get('last_api_error_code')
+    lem = diagnostics.get('last_api_error_message')
+    if lec or lem:
+        lines.append("  Last API error:")
+        lines.append(f"    Code: {lec if lec else 'Unknown'}")
+        # Message may already be redacted by log module when printed
+        lines.append(f"    Message: {lem if lem else ''}")
     lines.append("")
     
     lines.append("=== End Diagnostics ===")

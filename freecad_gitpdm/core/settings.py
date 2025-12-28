@@ -361,3 +361,48 @@ def load_github_host():
         str: GitHub host (default "github.com")
     """
     return load_setting("GitHubHost", "github.com")
+
+
+# --- Sprint OAUTH-2: Session verification metadata ---
+
+def save_github_user_id(user_id: int | None):
+    """Save GitHub user id (metadata only)."""
+    try:
+        # Store as string; empty if None
+        value = "" if user_id is None else str(int(user_id))
+        save_setting("GitHubUserId", value)
+    except Exception:
+        save_setting("GitHubUserId", "")
+
+
+def load_github_user_id() -> int | None:
+    """Load GitHub user id (int or None)."""
+    raw = load_setting("GitHubUserId", "")
+    try:
+        return int(raw) if raw else None
+    except Exception:
+        return None
+
+
+def save_last_verified_at(ts_iso: str | None):
+    """Save last successful identity verification timestamp (ISO)."""
+    save_setting("GitHubLastVerifiedAt", ts_iso or "")
+
+
+def load_last_verified_at() -> str:
+    """Load last successful identity verification timestamp (ISO string or empty)."""
+    return load_setting("GitHubLastVerifiedAt", "")
+
+
+def save_last_api_error(code: str | None, message: str | None):
+    """Persist last API error classification (no secrets)."""
+    save_setting("GitHubLastApiErrorCode", (code or ""))
+    # Message may be user-facing; store redacted/non-sensitive
+    save_setting("GitHubLastApiErrorMessage", (message or ""))
+
+
+def load_last_api_error():
+    """Return tuple (code, message) for last API error."""
+    code = load_setting("GitHubLastApiErrorCode", "")
+    msg = load_setting("GitHubLastApiErrorMessage", "")
+    return (code or "", msg or "")

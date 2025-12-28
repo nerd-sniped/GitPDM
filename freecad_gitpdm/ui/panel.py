@@ -235,6 +235,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             
             # Load GitHub connection status (Sprint OAUTH-1)
             self._refresh_github_connection_status()
+            # Sprint OAUTH-2: Auto-verify identity in background with cooldown
+            QtCore.QTimer.singleShot(50, self._maybe_auto_verify_identity)
             
             log.info("GitPDM dock panel initialized")
         except Exception as e:
@@ -530,10 +532,10 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.github_disconnect_btn.clicked.connect(self._on_github_disconnect_clicked)
         buttons_layout.addWidget(self.github_disconnect_btn)
 
-        self.github_refresh_btn = QtWidgets.QPushButton("Refresh")
+        self.github_refresh_btn = QtWidgets.QPushButton("Verify / Refresh Account")
         self.github_refresh_btn.setEnabled(oauth_configured)
-        self.github_refresh_btn.setToolTip("Check GitHub connection status")
-        self.github_refresh_btn.clicked.connect(self._on_github_refresh_clicked)
+        self.github_refresh_btn.setToolTip("Verify GitHub account and refresh session")
+        self.github_refresh_btn.clicked.connect(self._on_github_verify_clicked)
         buttons_layout.addWidget(self.github_refresh_btn)
 
         group_layout.addLayout(buttons_layout)
@@ -3265,7 +3267,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         login = settings.load_github_login()
         
         if is_connected and login:
-            self.github_status_label.setText(f"GitHub: {login}")
+            self.github_status_label.setText(f"GitHub: Signed in as {login}")
             self._set_strong_label(self.github_status_label, "green")
         elif is_connected:
             self.github_status_label.setText("GitHub: Connected")
@@ -3535,6 +3537,11 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self._oauth_in_progress = False
             self._oauth_cancel_token = None
             self._update_github_ui_state()
+            # Trigger identity verification immediately after connect
+            try:
+                QtCore.QTimer.singleShot(50, self._verify_identity_async)
+            except Exception:
+                pass
 
     def _on_token_poll_error(self, error):
         """Called if token polling fails."""
@@ -3624,6 +3631,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             # Update settings
             settings.save_github_connected(False)
             settings.save_github_login(None)
+            settings.save_github_user_id(None)
+            settings.save_last_verified_at(None)
+            settings.save_last_api_error(None, None)
             
             # Update UI
             self._update_github_ui_state()
@@ -3645,13 +3655,131 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             )
 
     def _on_github_refresh_clicked(self):
-        """Handle Refresh button click."""
-        self._refresh_github_connection_status()
-        QtWidgets.QMessageBox.information(
-            self,
-            "GitHub Status",
-            f"Status: {'Connected' if settings.load_github_connected() else 'Not connected'}"
-        )
+        """Legacy refresh handler: route to verify."""
+        self._on_github_verify_clicked()
+
+    # ========== Sprint OAUTH-2: Identity verification ==========
+
+    def _on_github_verify_clicked(self):
+        """Handle Verify / Refresh Account button click."""
+        self._verify_identity_async(force=True)
+
+    def _maybe_auto_verify_identity(self):
+        """Auto-verify identity on panel open with 10-minute cooldown."""
+        try:
+            from freecad_gitpdm.auth.token_store_wincred import WindowsCredentialStore
+            store = WindowsCredentialStore()
+            host = settings.load_github_host()
+            account = settings.load_github_login()
+            token = store.load(host, account)
+            if not token:
+                return
+            last_verified = settings.load_last_verified_at() or ""
+            if not last_verified:
+                self._verify_identity_async(force=False)
+                return
+            from datetime import datetime, timezone
+            try:
+                dt = datetime.fromisoformat(last_verified)
+                now = datetime.now(timezone.utc)
+                age_s = (now - dt).total_seconds()
+                if age_s > 10 * 60:
+                    self._verify_identity_async(force=False)
+            except Exception:
+                self._verify_identity_async(force=False)
+        except Exception as e:
+            log.debug(f"Auto verify skipped: {e}")
+
+    def _verify_identity_async(self, force: bool = False):
+        """Run identity verification in a worker thread and update UI."""
+        try:
+            from freecad_gitpdm.auth.token_store_wincred import WindowsCredentialStore
+            from freecad_gitpdm.github.api_client import GitHubApiClient
+            from freecad_gitpdm.github.identity import fetch_viewer_identity
+
+            host = settings.load_github_host()
+            account = settings.load_github_login()
+            store = WindowsCredentialStore()
+            token_resp = store.load(host, account)
+            if not token_resp:
+                self.github_status_label.setText("GitHub: Not connected")
+                self._set_strong_label(self.github_status_label, "gray")
+                # Ensure buttons reflect current state
+                self._update_github_ui_state()
+                return
+
+            # Show verifying state
+            self.github_status_label.setText("GitHub: Verifying…")
+            self._set_strong_label(self.github_status_label, "orange")
+            self.github_refresh_btn.setEnabled(False)
+
+            # Construct client
+            ua = "GitPDM/1.0"
+            client = GitHubApiClient("api.github.com", token_resp.access_token, ua)
+
+            # Run in background
+            self._job_runner.run_callable(
+                "github_verify",
+                lambda: fetch_viewer_identity(client),
+                on_success=self._on_identity_result,
+                on_error=self._on_identity_error,
+            )
+        except Exception as e:
+            log.error(f"Verify failed to start: {e}")
+            self.github_refresh_btn.setEnabled(True)
+            self._update_github_ui_state()
+
+    def _on_identity_result(self, result):
+        """Handle identity verification result on UI thread."""
+        from datetime import datetime, timezone
+        try:
+            if not result or not getattr(result, "ok", False):
+                settings.save_last_api_error(result.error_code if result else "UNKNOWN", result.message if result else "")
+                if result and result.error_code == "UNAUTHORIZED":
+                    settings.save_github_connected(False)
+                    self.github_status_label.setText("GitHub: Session expired; please reconnect")
+                    self._set_strong_label(self.github_status_label, "red")
+                elif result and result.error_code == "RATE_LIMITED":
+                    self.github_status_label.setText("GitHub: Rate limit reached; try later")
+                    self._set_strong_label(self.github_status_label, "orange")
+                elif result and result.error_code == "NETWORK_ERROR":
+                    self.github_status_label.setText("GitHub: Network error; retry")
+                    self._set_strong_label(self.github_status_label, "orange")
+                else:
+                    self.github_status_label.setText("GitHub: Verification failed")
+                    self._set_strong_label(self.github_status_label, "red")
+                self.github_refresh_btn.setEnabled(True)
+                self._update_github_ui_state()
+                return
+
+            # Success: persist non-secret metadata
+            login = result.login or ""
+            uid = result.user_id
+            settings.save_github_login(login or None)
+            settings.save_github_user_id(uid)
+            settings.save_github_connected(True)
+            settings.save_last_api_error(None, None)
+            settings.save_last_verified_at(datetime.now(timezone.utc).isoformat())
+
+            # Update UI
+            if login:
+                self.github_status_label.setText(f"GitHub: Signed in as {login}")
+            else:
+                self.github_status_label.setText("GitHub: Connected")
+            self._set_strong_label(self.github_status_label, "green")
+            self.github_refresh_btn.setEnabled(True)
+            self._update_github_ui_state()
+        except Exception as e:
+            log.error(f"Identity result handling failed: {e}")
+            self.github_refresh_btn.setEnabled(True)
+
+    def _on_identity_error(self, error):
+        """Handle unexpected verification error."""
+        settings.save_last_api_error("UNKNOWN", str(error))
+        self.github_status_label.setText("GitHub: Verification error")
+        self._set_strong_label(self.github_status_label, "red")
+        self.github_refresh_btn.setEnabled(True)
+        self._update_github_ui_state()
 
 
 class _CancelToken:

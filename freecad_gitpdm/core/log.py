@@ -69,6 +69,14 @@ def _redact_sensitive(message):
         msg,
         flags=re.IGNORECASE
     )
+
+    # Redact Authorization: Bearer <token> header-like strings
+    msg = re.sub(
+        r'(Authorization\s*:\s*Bearer)\s+[A-Za-z0-9_\-\.~=+/]+' ,
+        r'\1 [REDACTED]',
+        msg,
+        flags=re.IGNORECASE
+    )
     
     return msg
 
