@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from freecad_gitpdm.core import log
 from freecad_gitpdm.core import paths as core_paths
 from freecad_gitpdm.export.preset import load_preset
-from freecad_gitpdm.export.mapper import to_preview_dir_rel
+from freecad_gitpdm.export.mapper import to_preview_dir_rel, stl_root_path_rel
 from freecad_gitpdm.export.stl_converter import obj_to_stl
 
 
@@ -253,11 +253,17 @@ def _save_thumbnail(view, preset, out_path: Path) -> Optional[str]:
 
 
 def _export_glb(
-    doc, out_path: Path, preset: Dict[str, Any]
+    doc, out_path: Path, preset: Dict[str, Any], part_name: str = "model"
 ) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
     """
     Export GLB mesh artifact. Best-effort across FreeCAD versions.
     Returns (error_msg, mesh_stats).
+    
+    Args:
+        doc: FreeCAD document
+        out_path: Output path for model file (base path; extensions vary)
+        preset: Export preset configuration
+        part_name: Name of the part for file naming (used in .obj/.stl filenames)
     """
     try:
         import FreeCAD
@@ -507,9 +513,13 @@ def export_active_document(repo_root: str) -> ExportResult:
             )
         out_dir.mkdir(parents=True, exist_ok=True)
 
+        # Extract part name from source path for use in file naming
+        source_path = Path(rel)
+        part_name = source_path.stem
+
         png_path = out_dir / "preview.png"
         json_path = out_dir / "preview.json"
-        glb_path = out_dir / "model.glb"
+        glb_path = out_dir / f"{part_name}.glb"
 
         warnings = []
 
@@ -546,26 +556,47 @@ def export_active_document(repo_root: str) -> ExportResult:
             thumb_err = "Thumbnail requires FreeCAD GUI"
 
         # GLB Export (Sprint 7)
-        glb_err, mesh_stats = _export_glb(doc, glb_path, preset)
+        glb_err, mesh_stats = _export_glb(doc, glb_path, preset, part_name)
         
         # Determine which model file actually exists (prefer OBJ; STL as converted)
+        # OBJ and GLB stay in the part folder
+        # STL gets moved to the previews root folder
         model_file = None
         obj_path = glb_path.with_suffix(".obj")
-        stl_path = glb_path.with_suffix(".stl")
+        stl_path_in_part = glb_path.with_suffix(".stl")  # Where STL is generated initially
+        
+        # STL root path (where it will be placed)
+        stl_root_rel = stl_root_path_rel(rel)
+        stl_root_abs = core_paths.safe_join_repo(repo_root_n, stl_root_rel)
         
         if obj_path.exists() and obj_path.stat().st_size > 100:
-            model_file = rel_dir + "model.obj"
+            model_file = rel_dir + f"{part_name}.obj"
         elif glb_path.exists() and glb_path.stat().st_size > 100:
-            model_file = rel_dir + "model.glb"
-        elif stl_path.exists() and stl_path.stat().st_size > 100:
-            model_file = rel_dir + "model.stl"
+            model_file = rel_dir + f"{part_name}.glb"
+        elif stl_path_in_part.exists() and stl_path_in_part.stat().st_size > 100:
+            # If no OBJ or GLB, STL is the primary model (still point to root location)
+            model_file = stl_root_rel
         
         # Also include STL in artifacts if it was generated (GitHub preview support)
+        # STL is stored in the previews root
         model_artifacts = {}
         if model_file:
             model_artifacts["model"] = model_file
-        if stl_path.exists() and stl_path.stat().st_size > 100:
-            model_artifacts["stl"] = rel_dir + "model.stl"
+        
+        # Move STL to root if it was generated in the part folder
+        if stl_path_in_part.exists() and stl_path_in_part.stat().st_size > 100:
+            try:
+                # Ensure parent directory exists
+                if stl_root_abs:
+                    stl_root_abs.parent.mkdir(parents=True, exist_ok=True)
+                    # Move STL to root
+                    stl_path_in_part.rename(stl_root_abs)
+                    model_artifacts["stl"] = stl_root_rel
+                    log.debug(f"STL moved to root: {stl_root_rel}")
+            except Exception as e:
+                log.warning(f"Failed to move STL to root: {e}")
+                # Fallback: keep it in the part folder
+                model_artifacts["stl"] = rel_dir + f"{part_name}.stl"
         
         # Only warn if we had to fall back to STL or nothing was created
         if not model_file:
