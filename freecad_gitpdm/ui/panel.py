@@ -127,6 +127,11 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._repo_browser_container = None
         self._is_compact = False
 
+        # OAuth state tracking (Sprint OAUTH-1)
+        self._oauth_dialog = None
+        self._oauth_cancel_token = None
+        self._oauth_in_progress = False
+
         # Font sizes for labels
         self._meta_font_size = 9
         self._strong_font_size = 11
@@ -227,6 +232,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             
             # Register document observer to auto-refresh on save
             self._register_document_observer()
+            
+            # Load GitHub connection status (Sprint OAUTH-1)
+            self._refresh_github_connection_status()
             
             log.info("GitPDM dock panel initialized")
         except Exception as e:
@@ -457,9 +465,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
     def _build_github_account_section(self, layout):
         """
-        Build the GitHub Account section (Sprint OAUTH-0)
+        Build the GitHub Account section (Sprint OAUTH-1)
         Shows connection status and connect/disconnect buttons.
-        No actual OAuth implementation yet - just placeholders.
+        Implements OAuth Device Flow workflow.
         
         Args:
             layout: Parent layout to add widgets to
@@ -509,7 +517,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             if oauth_configured
             else "OAuth not configured"
         )
-        # TODO OAUTH-1: Connect to OAuth flow handler
+        self.github_connect_btn.clicked.connect(self._on_github_connect_clicked)
         buttons_layout.addWidget(self.github_connect_btn)
 
         self.github_disconnect_btn = QtWidgets.QPushButton(
@@ -519,10 +527,17 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.github_disconnect_btn.setToolTip(
             "Disconnect GitHub account"
         )
-        # TODO OAUTH-1: Connect to disconnect handler
+        self.github_disconnect_btn.clicked.connect(self._on_github_disconnect_clicked)
         buttons_layout.addWidget(self.github_disconnect_btn)
 
+        self.github_refresh_btn = QtWidgets.QPushButton("Refresh")
+        self.github_refresh_btn.setEnabled(oauth_configured)
+        self.github_refresh_btn.setToolTip("Check GitHub connection status")
+        self.github_refresh_btn.clicked.connect(self._on_github_refresh_clicked)
+        buttons_layout.addWidget(self.github_refresh_btn)
+
         group_layout.addLayout(buttons_layout)
+
 
         layout.addWidget(group)
         self._group_github_account = group
@@ -3211,3 +3226,439 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             )
         # Initialize preview status area
         self._update_preview_status_labels()
+    # ========== OAuth Device Flow Handlers (Sprint OAUTH-1) ==========
+
+    def _refresh_github_connection_status(self):
+        """
+        Check if GitHub token exists in credential store and update UI.
+        Called on startup to restore connection state.
+        """
+        try:
+            from freecad_gitpdm.auth.token_store_wincred import (
+                WindowsCredentialStore
+            )
+            from freecad_gitpdm.auth import config as auth_config
+            
+            store = WindowsCredentialStore()
+            host = settings.load_github_host()
+            account = settings.load_github_login()
+            
+            token = store.load(host, account)
+            is_connected = token is not None
+            
+            settings.save_github_connected(is_connected)
+            self._update_github_ui_state()
+            
+            if is_connected:
+                log.info(f"GitHub token found in credential store")
+            else:
+                log.debug(f"No GitHub token in credential store")
+        except Exception as e:
+            log.debug(f"Failed to refresh GitHub status: {e}")
+            self._update_github_ui_state()
+
+    def _update_github_ui_state(self):
+        """
+        Update GitHub UI buttons and status label based on connection state.
+        """
+        is_connected = settings.load_github_connected()
+        login = settings.load_github_login()
+        
+        if is_connected and login:
+            self.github_status_label.setText(f"GitHub: {login}")
+            self._set_strong_label(self.github_status_label, "green")
+        elif is_connected:
+            self.github_status_label.setText("GitHub: Connected")
+            self._set_strong_label(self.github_status_label, "green")
+        else:
+            self.github_status_label.setText("GitHub: Not connected")
+            self._set_strong_label(self.github_status_label, "gray")
+        
+        # Enable/disable buttons
+        self.github_connect_btn.setEnabled(
+            not self._oauth_in_progress and not is_connected
+        )
+        self.github_disconnect_btn.setEnabled(
+            not self._oauth_in_progress and is_connected
+        )
+        self.github_refresh_btn.setEnabled(not self._oauth_in_progress)
+
+    def _on_github_connect_clicked(self):
+        """Handle Connect GitHub button click."""
+        if self._oauth_in_progress:
+            log.warning("OAuth flow already in progress")
+            return
+        
+        try:
+            from freecad_gitpdm.auth import config as auth_config
+            
+            # Check if OAuth is configured
+            client_id = auth_config.get_client_id()
+            if not client_id:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "GitHub OAuth Not Configured",
+                    "Client ID not found. Please check docs/OAUTH_DEVICE_FLOW.md"
+                )
+                return
+            
+            log.info("Starting GitHub OAuth Device Flow")
+            self._oauth_in_progress = True
+            self._update_github_ui_state()
+            
+            # Start request_device_code in background
+            self._job_runner.run_callable(
+                "request_device_code",
+                lambda: self._request_device_code_sync(client_id, auth_config),
+                on_success=self._on_device_code_received,
+                on_error=self._on_oauth_error
+            )
+        except Exception as e:
+            log.error(f"Connect button error: {e}")
+            self._oauth_in_progress = False
+            self._update_github_ui_state()
+            QtWidgets.QMessageBox.critical(
+                self,
+                "GitHub Connection Error",
+                f"Failed to start OAuth flow: {str(e)}"
+            )
+
+    def _request_device_code_sync(self, client_id, auth_config):
+        """Sync wrapper for request_device_code (runs in worker thread)."""
+        from freecad_gitpdm.auth.oauth_device_flow import request_device_code
+        
+        return request_device_code(
+            client_id,
+            auth_config.DEFAULT_SCOPES,
+            auth_config.DEVICE_CODE_URL
+        )
+
+    def _on_device_code_received(self, device_code_response):
+        """
+        Called when device code is received.
+        Shows dialog with verification code and starts token polling.
+        """
+        try:
+            log.info(f"Device code received: {device_code_response.user_code}")
+            
+            # Create and show dialog
+            self._show_oauth_dialog(device_code_response)
+            
+            # Start polling for token
+            self._start_token_polling(device_code_response)
+        except Exception as e:
+            log.error(f"Error processing device code: {e}")
+            self._on_oauth_error(e)
+
+    def _show_oauth_dialog(self, device_code_response):
+        """
+        Create and show the OAuth authorization dialog.
+        Shows user code, offers Copy and Open GitHub buttons.
+        """
+        self._oauth_dialog = QtWidgets.QDialog(self)
+        self._oauth_dialog.setWindowTitle("Connect GitHub")
+        self._oauth_dialog.setMinimumWidth(400)
+        self._oauth_dialog.setModal(True)
+        
+        layout = QtWidgets.QVBoxLayout()
+        layout.setSpacing(12)
+        layout.setContentsMargins(12, 12, 12, 12)
+        
+        # Instructions
+        instructions = QtWidgets.QLabel()
+        instructions.setWordWrap(True)
+        instructions.setText(
+            "We opened a GitHub page in your browser.\n"
+            "Enter this code on the GitHub page:"
+        )
+        layout.addWidget(instructions)
+        
+        # Code display (large, monospace)
+        code_label = QtWidgets.QLabel(device_code_response.user_code)
+        code_font = QtGui.QFont("Courier")
+        code_font.setPointSize(16)
+        code_font.setBold(True)
+        code_label.setFont(code_font)
+        code_label.setAlignment(QtCore.Qt.AlignCenter)
+        code_label.setStyleSheet("color: darkblue; border: 1px solid gray; padding: 8px;")
+        code_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        layout.addWidget(code_label)
+        
+        # Status label (initially shows "Waiting...")
+        self._oauth_status_label = QtWidgets.QLabel("Waiting for authorization…")
+        self._oauth_status_label.setStyleSheet("color: orange; font-style: italic;")
+        self._oauth_status_label.setAlignment(QtCore.Qt.AlignCenter)
+        layout.addWidget(self._oauth_status_label)
+        
+        # Buttons
+        buttons_layout = QtWidgets.QHBoxLayout()
+        buttons_layout.setSpacing(6)
+        
+        copy_btn = QtWidgets.QPushButton("Copy Code")
+        copy_btn.clicked.connect(
+            lambda: self._copy_to_clipboard(device_code_response.user_code)
+        )
+        buttons_layout.addWidget(copy_btn)
+        
+        open_btn = QtWidgets.QPushButton("Open GitHub Page")
+        open_btn.clicked.connect(
+            lambda: self._open_verification_uri(
+                device_code_response.verification_uri
+            )
+        )
+        buttons_layout.addWidget(open_btn)
+        
+        cancel_btn = QtWidgets.QPushButton("Cancel")
+        cancel_btn.clicked.connect(self._on_oauth_dialog_cancel)
+        buttons_layout.addWidget(cancel_btn)
+        
+        layout.addLayout(buttons_layout)
+        layout.addStretch()
+        
+        self._oauth_dialog.setLayout(layout)
+        
+        # Auto-copy code to clipboard
+        self._copy_to_clipboard(device_code_response.user_code)
+        
+        # Open GitHub page in browser
+        self._open_verification_uri(device_code_response.verification_uri)
+        
+        self._oauth_dialog.show()
+
+    def _copy_to_clipboard(self, text):
+        """Copy text to clipboard."""
+        try:
+            clipboard = QtWidgets.QApplication.clipboard()
+            clipboard.setText(text)
+            log.debug(f"Copied to clipboard")
+        except Exception as e:
+            log.warning(f"Failed to copy to clipboard: {e}")
+
+    def _open_verification_uri(self, uri):
+        """Open verification URI in default browser."""
+        try:
+            QtGui.QDesktopServices.openUrl(QtCore.QUrl(uri))
+            log.debug(f"Opened browser to {uri}")
+        except Exception as e:
+            log.warning(f"Failed to open browser: {e}")
+
+    def _on_oauth_dialog_cancel(self):
+        """Handle Cancel button in OAuth dialog."""
+        if self._oauth_cancel_token:
+            self._oauth_cancel_token.cancel()
+        if self._oauth_dialog:
+            self._oauth_dialog.close()
+        self._oauth_in_progress = False
+        self._update_github_ui_state()
+        log.info("OAuth flow cancelled by user")
+
+    def _start_token_polling(self, device_code_response):
+        """Start polling for token in background thread."""
+        try:
+            from freecad_gitpdm.auth import config as auth_config
+            
+            client_id = auth_config.get_client_id()
+            
+            # Create cancel token
+            self._oauth_cancel_token = _CancelToken()
+            
+            # Start polling
+            self._job_runner.run_callable(
+                "poll_for_token",
+                lambda: self._poll_for_token_sync(
+                    client_id,
+                    device_code_response,
+                    auth_config
+                ),
+                on_success=self._on_token_received,
+                on_error=self._on_token_poll_error
+            )
+        except Exception as e:
+            log.error(f"Failed to start token polling: {e}")
+            self._on_oauth_error(e)
+
+    def _poll_for_token_sync(self, client_id, device_code_response, auth_config):
+        """Sync wrapper for poll_for_token (runs in worker thread)."""
+        from freecad_gitpdm.auth.oauth_device_flow import poll_for_token
+        
+        return poll_for_token(
+            client_id,
+            device_code_response.device_code,
+            device_code_response.interval,
+            device_code_response.expires_in,
+            cancel_cb=lambda: self._oauth_cancel_token.is_cancelled if self._oauth_cancel_token else False,
+            token_url=auth_config.TOKEN_URL
+        )
+
+    def _on_token_received(self, token_response):
+        """
+        Called when token is successfully received.
+        Stores it in credential manager and updates UI.
+        """
+        try:
+            from freecad_gitpdm.auth.token_store_wincred import (
+                WindowsCredentialStore
+            )
+            
+            log.info("Token received successfully")
+            
+            # Store token in Windows Credential Manager
+            store = WindowsCredentialStore()
+            host = settings.load_github_host()
+            account = settings.load_github_login()
+            
+            store.save(host, account, token_response)
+            log.info(f"Token stored in credential manager")
+            
+            # Update settings
+            settings.save_github_connected(True)
+            
+            # Update UI
+            self._update_github_ui_state()
+            
+            # Close dialog
+            if self._oauth_dialog:
+                self._oauth_dialog.close()
+            
+            # Show success message
+            QtWidgets.QMessageBox.information(
+                self,
+                "GitHub Connected",
+                "Successfully connected to GitHub!"
+            )
+            
+            log.info("GitHub OAuth flow completed successfully")
+        except Exception as e:
+            log.error(f"Error storing token: {e}")
+            self._on_oauth_error(e)
+        finally:
+            self._oauth_in_progress = False
+            self._oauth_cancel_token = None
+            self._update_github_ui_state()
+
+    def _on_token_poll_error(self, error):
+        """Called if token polling fails."""
+        from freecad_gitpdm.auth.oauth_device_flow import DeviceFlowError
+        
+        try:
+            self._oauth_in_progress = False
+            
+            # Close dialog if open
+            if self._oauth_dialog:
+                self._oauth_dialog.close()
+            
+            # Show appropriate error message
+            if isinstance(error, DeviceFlowError):
+                if error.error_code == "user_cancelled":
+                    log.info("OAuth flow cancelled")
+                    return
+                elif error.error_code == "expired_token":
+                    msg = "Device code expired. Please try again."
+                elif error.error_code == "access_denied":
+                    msg = "GitHub access was denied. Please try again."
+                else:
+                    msg = f"GitHub error: {error.error_code}"
+            else:
+                msg = f"Connection error: {str(error)}"
+            
+            log.error(f"OAuth error: {msg}")
+            QtWidgets.QMessageBox.warning(
+                self,
+                "GitHub Connection Failed",
+                msg
+            )
+        except Exception as e:
+            log.error(f"Error handling token poll error: {e}")
+        finally:
+            self._update_github_ui_state()
+            self._oauth_cancel_token = None
+
+    def _on_oauth_error(self, error):
+        """General error handler for OAuth flow."""
+        try:
+            self._oauth_in_progress = False
+            
+            # Close dialog if open
+            if self._oauth_dialog:
+                self._oauth_dialog.close()
+            
+            log.error(f"OAuth flow error: {error}")
+            QtWidgets.QMessageBox.critical(
+                self,
+                "GitHub Connection Error",
+                f"An error occurred: {str(error)}"
+            )
+        except Exception as e:
+            log.error(f"Error handling OAuth error: {e}")
+        finally:
+            self._update_github_ui_state()
+            self._oauth_cancel_token = None
+
+    def _on_github_disconnect_clicked(self):
+        """Handle Disconnect GitHub button click."""
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            "Disconnect GitHub",
+            "Remove GitHub credentials from this computer?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No
+        )
+        
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
+        
+        try:
+            from freecad_gitpdm.auth.token_store_wincred import (
+                WindowsCredentialStore
+            )
+            
+            log.info("Disconnecting GitHub")
+            
+            # Delete token from credential manager
+            store = WindowsCredentialStore()
+            host = settings.load_github_host()
+            account = settings.load_github_login()
+            
+            store.delete(host, account)
+            log.info(f"Token deleted from credential manager")
+            
+            # Update settings
+            settings.save_github_connected(False)
+            settings.save_github_login(None)
+            
+            # Update UI
+            self._update_github_ui_state()
+            
+            # Show success message
+            QtWidgets.QMessageBox.information(
+                self,
+                "GitHub Disconnected",
+                "GitHub credentials have been removed."
+            )
+            
+            log.info("GitHub disconnected")
+        except Exception as e:
+            log.error(f"Error disconnecting GitHub: {e}")
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Disconnect Failed",
+                f"Failed to disconnect: {str(e)}"
+            )
+
+    def _on_github_refresh_clicked(self):
+        """Handle Refresh button click."""
+        self._refresh_github_connection_status()
+        QtWidgets.QMessageBox.information(
+            self,
+            "GitHub Status",
+            f"Status: {'Connected' if settings.load_github_connected() else 'Not connected'}"
+        )
+
+
+class _CancelToken:
+    """Simple cancel token for OAuth polling."""
+    
+    def __init__(self):
+        self.is_cancelled = False
+    
+    def cancel(self):
+        self.is_cancelled = True

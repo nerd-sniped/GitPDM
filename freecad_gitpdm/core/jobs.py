@@ -2,8 +2,10 @@
 """
 GitPDM Jobs Module
 Sprint 1: Background job runner using QtCore.QProcess
+Sprint OAUTH-1: Added support for running Python callables in worker threads
 """
 
+import threading
 from freecad_gitpdm.core import log
 
 
@@ -25,6 +27,56 @@ def _get_qt_core():
                 "FreeCAD installation may be incomplete."
             )
     return QtCore
+
+
+class _CallableWorkerSignals:
+    """
+    Helper object that emits signals to marshal callbacks to UI thread.
+    This is a workaround for the fact that threading.Thread doesn't 
+    integrate with Qt's event loop.
+    """
+    def __init__(self, qt_core):
+        self.QtCore = qt_core
+        # Create a QObject subclass dynamically to get signal support
+        class _SignalEmitter(qt_core.QObject):
+            success = qt_core.Signal(object, str)  # result, name
+            error = qt_core.Signal(Exception, str)  # error, name
+        
+        self._emitter = _SignalEmitter()
+    
+    def connect_success(self, callback):
+        """Connect success signal to callback"""
+        self._emitter.success.connect(
+            lambda result, name: self._invoke_success(callback, result, name)
+        )
+    
+    def connect_error(self, callback):
+        """Connect error signal to callback"""
+        self._emitter.error.connect(
+            lambda error, name: self._invoke_error(callback, error, name)
+        )
+    
+    def emit_success(self, result, name):
+        """Emit success signal (thread-safe)"""
+        self._emitter.success.emit(result, name)
+    
+    def emit_error(self, error, name):
+        """Emit error signal (thread-safe)"""
+        self._emitter.error.emit(error, name)
+    
+    def _invoke_success(self, callback, result, name):
+        """Called on UI thread"""
+        try:
+            callback(result)
+        except Exception as e:
+            log.error(f"Success callback error for {name}: {e}")
+    
+    def _invoke_error(self, callback, error, name):
+        """Called on UI thread"""
+        try:
+            callback(error)
+        except Exception as e:
+            log.error(f"Error callback failed for {name}: {e}")
 
 
 class GitJobRunner:
@@ -215,6 +267,65 @@ class GitJobRunner:
             bool: True if a job is running
         """
         return self._runner._current_job is not None
+
+    def run_callable(
+        self,
+        name,
+        func,
+        on_success=None,
+        on_error=None,
+        cancel_token=None
+    ):
+        """
+        Run a Python callable in a worker thread.
+        
+        This method is useful for network operations (e.g., OAuth polling) that
+        would block the UI if run on the main thread.
+        
+        Args:
+            name: str - Name for this callable job (for logging)
+            func: callable() -> result - Function to run in worker thread
+                  Must accept no arguments and return a result.
+                  If cancel_token is provided, func can check it to support
+                  cancellation: if cancel_token.is_cancelled, stop early.
+            on_success: callable(result) -> None - Called on UI thread if func succeeds
+            on_error: callable(exception) -> None - Called on UI thread if func raises
+            cancel_token: CancelToken or None - Token with is_cancelled property
+                          that func can check to support cancellation
+                          
+        Returns:
+            None
+        """
+        QtCore = self._runner._qt_core
+        
+        # Create signal emitter for this job
+        signals = _CallableWorkerSignals(QtCore)
+        
+        # Connect callbacks to signals
+        if on_success:
+            signals.connect_success(on_success)
+        if on_error:
+            signals.connect_error(on_error)
+        
+        def _worker():
+            try:
+                log.debug(f"Callable job {name} starting")
+                result = func()
+                log.debug(f"Callable job {name} completed")
+                
+                # Emit success signal (thread-safe, marshals to UI thread)
+                if on_success:
+                    signals.emit_success(result, name)
+            except Exception as e:
+                log.error(f"Callable job {name} failed: {e}")
+                
+                # Emit error signal (thread-safe, marshals to UI thread)
+                if on_error:
+                    signals.emit_error(e, name)
+        
+        thread = threading.Thread(target=_worker, daemon=True)
+        log.debug(f"Starting callable job {name}")
+        thread.start()
 
     @property
     def job_finished(self):

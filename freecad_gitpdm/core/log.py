@@ -2,23 +2,75 @@
 """
 GitPDM Logging Module
 Sprint 1: Lightweight logging to FreeCAD console
+Sprint OAUTH-1: Token redaction to prevent secrets in logs
 """
+
+import re
 
 
 def _redact_sensitive(message):
     """
-    Redact potentially sensitive data from log messages
-    Sprint 0: Stub implementation
+    Redact potentially sensitive data from log messages.
+    
+    Patterns removed:
+    - OAuth access tokens (ghp_* format used by GitHub)
+    - OAuth refresh tokens
+    - GitHub Personal Access Tokens (github_pat_* format)
+    - JSON keys containing "access_token", "refresh_token"
     
     Args:
         message: Log message string
         
     Returns:
-        Redacted message string
+        Redacted message string with sensitive data replaced
     """
-    # Future: implement password/token redaction
-    # For now, just return as-is
-    return message
+    if not message:
+        return message
+    
+    msg = str(message)
+    
+    # Redact GitHub OAuth access tokens (ghp_XXXX)
+    msg = re.sub(
+        r'ghp_[a-zA-Z0-9_]+',
+        '[REDACTED_ACCESS_TOKEN]',
+        msg
+    )
+    
+    # Redact GitHub Personal Access Tokens (github_pat_XXXX)
+    msg = re.sub(
+        r'github_pat_[a-zA-Z0-9_]+',
+        '[REDACTED_PAT]',
+        msg
+    )
+    
+    # Redact refresh tokens (usually long base64 or similar)
+    # Look for "refresh_token": "..." patterns in JSON
+    msg = re.sub(
+        r'("refresh_token"\s*:\s*)"([^"]*)"',
+        r'\1"[REDACTED_REFRESH_TOKEN]"',
+        msg,
+        flags=re.IGNORECASE
+    )
+    
+    # Redact access tokens in JSON
+    # Look for "access_token": "..." patterns in JSON
+    msg = re.sub(
+        r'("access_token"\s*:\s*)"([^"]*)"',
+        r'\1"[REDACTED_ACCESS_TOKEN]"',
+        msg,
+        flags=re.IGNORECASE
+    )
+    
+    # Redact token_type if it's a bearer token (less critical but good practice)
+    # Redact any "token" key that looks like it contains a real token
+    msg = re.sub(
+        r'"token"\s*:\s*"([a-zA-Z0-9_\-\.]+)"',
+        r'"token": "[REDACTED_TOKEN]"',
+        msg,
+        flags=re.IGNORECASE
+    )
+    
+    return msg
 
 
 def info(message):
