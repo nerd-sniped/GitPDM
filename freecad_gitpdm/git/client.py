@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List, Optional
 from freecad_gitpdm.core import log
+from freecad_gitpdm.core.result import Result
 
 
 # Status kinds for porcelain parsing
@@ -1062,51 +1063,60 @@ class GitClient:
                 - fetched_at: str (ISO 8601 UTC timestamp)
                 - error: str | None
         """
-        result = {
+        # Internal Result-based implementation (Sprint 2) while keeping
+        # the public return shape stable for existing callers.
+        fetched_at = datetime.now(timezone.utc).isoformat()
+
+        res = self._fetch_result(repo_root, remote=remote, fetched_at=fetched_at)
+        if res.ok:
+            payload = res.value or {}
+            return {
+                "ok": True,
+                "stdout": payload.get("stdout", ""),
+                "stderr": payload.get("stderr", ""),
+                "fetched_at": payload.get("fetched_at", fetched_at),
+                "error": None,
+            }
+
+        err = res.error
+        return {
             "ok": False,
             "stdout": "",
             "stderr": "",
-            "fetched_at": datetime.now(timezone.utc).isoformat(),
-            "error": None,
+            "fetched_at": fetched_at,
+            "error": err.message if err else "Fetch failed",
         }
 
+    def _fetch_result(self, repo_root: str, remote: str, fetched_at: str) -> Result[dict]:
         if not self.is_git_available():
-            result["error"] = "Git not available"
-            return result
+            return Result.failure("GIT_NOT_AVAILABLE", "Git not available")
 
         if not repo_root or not os.path.isdir(repo_root):
-            result["error"] = "Invalid repository path"
-            return result
+            return Result.failure("INVALID_REPO_PATH", "Invalid repository path")
 
         git_cmd = self._get_git_command()
-
         try:
             proc_result = subprocess.run(
                 [git_cmd, "-C", repo_root, "fetch", remote],
                 capture_output=True,
                 text=True,
-                timeout=120  # 2 minutes for fetch
+                timeout=120,
             )
-            result["ok"] = proc_result.returncode == 0
-            result["stdout"] = proc_result.stdout.strip()
-            result["stderr"] = proc_result.stderr.strip()
-
-            if result["ok"]:
-                log.info(f"Fetch completed: {remote}")
-            else:
-                result["error"] = (
-                    f"Git fetch failed (exit {proc_result.returncode})"
-                )
-                log.warning(result["error"])
-
         except subprocess.TimeoutExpired:
-            result["error"] = "Fetch timed out after 120 seconds"
-            log.warning(result["error"])
+            return Result.failure("TIMEOUT", "Fetch timed out after 120 seconds")
         except OSError as e:
-            result["error"] = f"Failed to run git fetch: {e}"
-            log.warning(result["error"])
+            return Result.failure("OS_ERROR", "Failed to run git fetch", details=str(e))
 
-        return result
+        stdout = (proc_result.stdout or "").strip()
+        stderr = (proc_result.stderr or "").strip()
+
+        if proc_result.returncode == 0:
+            log.info(f"Fetch completed: {remote}")
+            return Result.success({"stdout": stdout, "stderr": stderr, "fetched_at": fetched_at})
+
+        msg = f"Git fetch failed (exit {proc_result.returncode})"
+        log.warning(msg)
+        return Result.failure("GIT_FETCH_FAILED", msg, details=stderr)
 
     def default_upstream_ref(self, repo_root, remote="origin"):
         """

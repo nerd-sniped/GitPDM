@@ -25,6 +25,7 @@ from urllib import request, error
 
 from freecad_gitpdm.core import log
 from freecad_gitpdm.github.errors import GitHubApiError, GitHubApiNetworkError
+from freecad_gitpdm.core.result import Result
 
 
 @dataclass
@@ -238,3 +239,45 @@ class GitHubApiClient:
             )
 
         return status, parsed, raw_headers
+
+    def request_json_result(
+        self,
+        method: str,
+        url: str,
+        headers: Optional[Dict[str, str]],
+        body: Optional[Dict[str, Any]],
+        timeout_s: int,
+    ) -> Result[Tuple[int, Optional[Dict[str, Any]], Dict[str, str]]]:
+        """Result-returning wrapper around request_json.
+
+        Keeps exceptions from propagating into UI code.
+        """
+        try:
+            status, js, resp_headers = self.request_json(
+                method, url, headers=headers, body=body, timeout_s=timeout_s
+            )
+            return Result.success((status, js, resp_headers))
+        except GitHubApiNetworkError as e:
+            return Result.failure(
+                "NETWORK_ERROR",
+                "Network error. Check connection and try again.",
+                details=str(e),
+            )
+        except GitHubApiError as e:
+            meta = {
+                "status": e.status,
+                "retry_after_s": e.retry_after_s,
+                "rate_limit_reset_utc": e.rate_limit_reset_utc,
+            }
+            return Result.failure(
+                e.code or "UNKNOWN",
+                e.message or "GitHub API error",
+                details=e.details or "",
+                meta=meta,
+            )
+        except Exception as e:
+            return Result.failure(
+                "UNKNOWN",
+                "An unexpected error occurred.",
+                details=str(e),
+            )
