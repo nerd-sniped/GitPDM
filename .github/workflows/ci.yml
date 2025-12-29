@@ -23,5 +23,8 @@ jobs:
           PYTHONUTF8: '1'
         run: python -m pytest
 
+      - name: Ruff (lint)
+        run: python -m ruff check .
+
       - name: Architecture guard
         run: python tools/architecture_guard.py

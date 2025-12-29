@@ -1,0 +1,18 @@
+[tool.ruff]
+# Conservative baseline: catch syntax and undefined-name style issues
+# without forcing mass cleanups/refactors in Sprint 1.
+target-version = "py311"
+line-length = 88
+
+# Keep the checks intentionally small for now.
+select = [
+  "E9",   # syntax errors
+  "F63",  # invalid print format
+  "F7",   # syntax errors
+  "F82",  # undefined names
+]
+
+exclude = [
+  ".git",
+  "__pycache__",
+]

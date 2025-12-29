@@ -19,6 +19,19 @@ try {
         python tools/stdlib_test_runner.py
     }
 
+    # Optional lint: run ruff if installed.
+    $hasRuff = $false
+    try {
+        & python -c "import ruff" 2>$null
+        $hasRuff = ($LASTEXITCODE -eq 0)
+    } catch {
+        $hasRuff = $false
+    }
+
+    if ($hasRuff) {
+        python -m ruff check .
+    }
+
     python tools/architecture_guard.py
 }
 finally {
