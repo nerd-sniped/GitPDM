@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from freecad_gitpdm.git.client import GitClient
 from freecad_gitpdm.core import settings
 
+
 def separator(title):
     print("\n" + "=" * 70)
     print(f"  {title}")
@@ -250,4 +251,5 @@ def main():
         sys.exit(1)
 
 if __name__ == '__main__':
+if __name__ == "__main__":
     main()

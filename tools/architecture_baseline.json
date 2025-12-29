@@ -1,0 +1,7 @@
+{
+  "files": {
+    "freecad_gitpdm/ui/panel.py": { "max_lines": 5125 },
+    "freecad_gitpdm/git/client.py": { "max_lines": 1855 },
+    "freecad_gitpdm/export/exporter.py": { "max_lines": 825 }
+  }
+}
