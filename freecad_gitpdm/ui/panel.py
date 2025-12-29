@@ -106,15 +106,22 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     Sprint 1: Git status, validation, and controls
     """
 
-    def __init__(self):
+    def __init__(self, services=None):
         super().__init__()
         self.setObjectName("GitPDM_DockWidget")
         self.setWindowTitle("Git PDM")
         self.setMinimumWidth(300)
 
+        # Service container (Sprint 3)
+        if services is None:
+            from freecad_gitpdm.core.services import get_services
+
+            services = get_services()
+        self._services = services
+
         # Initialize git client and job runner
-        self._git_client = client.GitClient()
-        self._job_runner = jobs.get_job_runner()
+        self._git_client = self._services.git_client()
+        self._job_runner = self._services.job_runner()
         self._job_runner.job_finished.connect(self._on_job_finished)
 
         # State tracking
@@ -4494,12 +4501,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         Called on startup to restore connection state.
         """
         try:
-            from freecad_gitpdm.auth.token_store_wincred import (
-                WindowsCredentialStore
-            )
-            from freecad_gitpdm.auth import config as auth_config
-            
-            store = WindowsCredentialStore()
+            store = self._services.token_store()
             host = settings.load_github_host()
             account = settings.load_github_login()
             
@@ -4756,14 +4758,10 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         Stores it in credential manager and updates UI.
         """
         try:
-            from freecad_gitpdm.auth.token_store_wincred import (
-                WindowsCredentialStore
-            )
-            
             log.info("Token received successfully")
             
             # Store token in Windows Credential Manager
-            store = WindowsCredentialStore()
+            store = self._services.token_store()
             host = settings.load_github_host()
             account = settings.load_github_login()
             
@@ -4872,14 +4870,10 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             return
         
         try:
-            from freecad_gitpdm.auth.token_store_wincred import (
-                WindowsCredentialStore
-            )
-            
             log.info("Disconnecting GitHub")
             
             # Delete token from credential manager
-            store = WindowsCredentialStore()
+            store = self._services.token_store()
             host = settings.load_github_host()
             account = settings.load_github_login()
             
@@ -4919,23 +4913,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     def _create_github_client(self):
         """Construct a GitHubApiClient using stored token; returns None if not connected."""
         try:
-            from freecad_gitpdm.auth.token_store_wincred import WindowsCredentialStore
-            from freecad_gitpdm.github.api_client import GitHubApiClient
-
-            host = settings.load_github_host()
-            account = settings.load_github_login()
-            # Username may not be known yet right after OAuth completes.
-            # Tokens are still valid and may be stored under a non-account key.
-            if not host:
-                return None
-
-            store = WindowsCredentialStore()
-            token_resp = store.load(host, account)
-            if not token_resp:
-                return None
-
-            ua = "GitPDM/1.0"
-            return GitHubApiClient("api.github.com", token_resp.access_token, ua)
+            return self._services.github_api_client()
         except Exception as e:
             log.debug(f"Failed to create GitHub client: {e}")
             return None
@@ -4949,8 +4927,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     def _maybe_auto_verify_identity(self):
         """Auto-verify identity on panel open with 10-minute cooldown."""
         try:
-            from freecad_gitpdm.auth.token_store_wincred import WindowsCredentialStore
-            store = WindowsCredentialStore()
+            store = self._services.token_store()
             host = settings.load_github_host()
             account = settings.load_github_login()
             token = store.load(host, account)
@@ -4975,15 +4952,10 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     def _verify_identity_async(self, force: bool = False):
         """Run identity verification in a worker thread and update UI."""
         try:
-            from freecad_gitpdm.auth.token_store_wincred import WindowsCredentialStore
-            from freecad_gitpdm.github.api_client import GitHubApiClient
             from freecad_gitpdm.github.identity import fetch_viewer_identity
 
-            host = settings.load_github_host()
-            account = settings.load_github_login()
-            store = WindowsCredentialStore()
-            token_resp = store.load(host, account)
-            if not token_resp:
+            client = self._services.github_api_client()
+            if not client:
                 self.github_status_label.setText("GitHub: Not connected")
                 self._set_strong_label(self.github_status_label, "gray")
                 # Ensure buttons reflect current state
@@ -4994,10 +4966,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self.github_status_label.setText("GitHub: Verifying…")
             self._set_strong_label(self.github_status_label, "orange")
             self.github_refresh_btn.setEnabled(False)
-
-            # Construct client
-            ua = "GitPDM/1.0"
-            client = GitHubApiClient("api.github.com", token_resp.access_token, ua)
 
             # Run in background
             self._job_runner.run_callable(

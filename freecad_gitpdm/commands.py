@@ -50,7 +50,9 @@ class GitPDMTogglePanelCommand:
         if dock is None:
             # Create the dock widget if it doesn't exist
             log.info("Creating GitPDM dock panel")
-            dock = panel.GitPDMDockWidget()
+            from freecad_gitpdm.core.services import get_services
+
+            dock = panel.GitPDMDockWidget(services=get_services())
             mw.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
             dock.show()
         else:

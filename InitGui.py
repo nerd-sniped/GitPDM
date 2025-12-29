@@ -52,6 +52,7 @@ class GitPDMWorkbench(FreeCADGui.Workbench):
         try:
             import FreeCADGui
             from freecad_gitpdm.ui import panel
+            from freecad_gitpdm.core.services import get_services
             
             try:
                 from PySide6 import QtCore, QtWidgets
@@ -64,7 +65,7 @@ class GitPDMWorkbench(FreeCADGui.Workbench):
             )
             
             if dock is None:
-                dock = panel.GitPDMDockWidget()
+                dock = panel.GitPDMDockWidget(services=get_services())
                 mw.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
             
             if not dock.isVisible():
