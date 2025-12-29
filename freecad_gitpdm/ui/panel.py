@@ -28,6 +28,8 @@ from freecad_gitpdm.ui.github_auth import GitHubAuthHandler
 from freecad_gitpdm.ui.file_browser import FileBrowserHandler
 from freecad_gitpdm.ui.fetch_pull import FetchPullHandler
 from freecad_gitpdm.ui.commit_push import CommitPushHandler
+from freecad_gitpdm.ui.repo_validator import RepoValidationHandler
+from freecad_gitpdm.ui.branch_ops import BranchOperationsHandler
 from freecad_gitpdm.export import exporter, mapper
 from freecad_gitpdm.core import paths as core_paths
 from freecad_gitpdm.core import publish
@@ -133,6 +135,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._file_browser = FileBrowserHandler(self, self._git_client, self._job_runner)
         self._fetch_pull = FetchPullHandler(self, self._git_client, self._job_runner)
         self._commit_push = CommitPushHandler(self, self._git_client, self._job_runner)
+        self._repo_validator = RepoValidationHandler(self, self._git_client)
+        self._branch_ops = BranchOperationsHandler(self, self._git_client, self._job_runner)
 
         # State tracking
         self._current_repo_root = None
@@ -161,11 +165,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._actions_extra_container = None
         self._repo_browser_container = None
         self._is_compact = False
-        self._is_switching_branch = False
         self._branch_combo_updating = False  # Prevent recursive combo change events
-        self._local_branches = []
-        # Auto-publish tracking for newly created branches
-        self._pending_publish_new_branch = None
 
         # Font sizes for labels
         self._meta_font_size = 9
@@ -762,7 +762,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             QtWidgets.QSizePolicy.Preferred
         )
         self.branch_combo.currentIndexChanged.connect(
-            self._on_branch_combo_changed
+            self._branch_ops.branch_combo_changed
         )
         selector_layout.addWidget(self.branch_combo)
         
@@ -773,15 +773,15 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         actions_layout.setSpacing(4)
 
         self.new_branch_btn = QtWidgets.QPushButton("New Branch…")
-        self.new_branch_btn.clicked.connect(self._on_new_branch_clicked)
+        self.new_branch_btn.clicked.connect(self._branch_ops.new_branch_clicked)
         actions_layout.addWidget(self.new_branch_btn)
 
         self.switch_branch_btn = QtWidgets.QPushButton("Switch")
-        self.switch_branch_btn.clicked.connect(self._on_switch_branch_clicked)
+        self.switch_branch_btn.clicked.connect(self._branch_ops.switch_branch_clicked)
         actions_layout.addWidget(self.switch_branch_btn)
 
         self.delete_branch_btn = QtWidgets.QPushButton("Delete…")
-        self.delete_branch_btn.clicked.connect(self._on_delete_branch_clicked)
+        self.delete_branch_btn.clicked.connect(self._branch_ops.delete_branch_clicked)
         actions_layout.addWidget(self.delete_branch_btn)
 
         group_layout.addLayout(actions_layout)
@@ -792,7 +792,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.worktree_help_btn.setToolTip(
             "Use per-branch worktrees so each branch has its own folder."
         )
-        self.worktree_help_btn.clicked.connect(self._on_worktree_help_clicked)
+        self.worktree_help_btn.clicked.connect(self._branch_ops.worktree_help_clicked)
         worktree_help_layout.addWidget(self.worktree_help_btn)
         group_layout.addLayout(worktree_help_layout)
 
@@ -1168,124 +1168,12 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         )
 
     def _validate_repo_path(self, path):
-        """
-        Validate that path is inside a git repository.
-        Run validation in background to keep UI responsive.
-        
-        Args:
-            path: str - path to validate
-        """
-        if not path:
-            self.validate_label.setText("Not checked")
-            self.validate_label.setStyleSheet(
-                "color: gray; font-style: italic;"
-            )
-            self.repo_root_label.setText("—")
-            self.branch_label.setText("—")
-            self.working_tree_label.setText("—")
-            self.upstream_label.setText("—")
-            self.ahead_behind_label.setText("—")
-            self.last_fetch_label.setText("—")
-            self._set_meta_label(self.branch_label, "gray")
-            self._set_strong_label(self.working_tree_label, "black")
-            self._set_meta_label(self.upstream_label, "gray")
-            self._set_strong_label(self.ahead_behind_label, "gray")
-            self._set_meta_label(self.last_fetch_label, "gray")
-            self.root_toggle_btn.setEnabled(False)
-            self.root_toggle_btn.setChecked(False)
-            self.repo_root_row.setVisible(False)
-            self.root_toggle_btn.setArrowType(QtCore.Qt.RightArrow)
-            self.root_toggle_btn.setText("Show root")
-            self.browser_window_btn.setEnabled(False)
-            self._update_button_states()
-            return
-
-        # Show "Checking..." status
-        self.validate_label.setText("Checking…")
-        self.validate_label.setStyleSheet(
-            "color: orange; font-style: italic;"
-        )
-
-        # Run validation in background
-        repo_root = self._git_client.get_repo_root(path)
-
-        if repo_root:
-            # Valid repo
-            self.validate_label.setText("OK")
-            self.validate_label.setStyleSheet("color: green;")
-            self.repo_root_label.setText(repo_root)
-            self._current_repo_root = repo_root
-
-            self.root_toggle_btn.setEnabled(True)
-            self.repo_root_row.setVisible(
-                self.root_toggle_btn.isChecked()
-            )
-            self.browser_window_btn.setEnabled(True)
-
-            # Set FreeCAD working directory to repo folder
-            # This ensures Save As dialog defaults to repo folder
-            self._set_freecad_working_directory(repo_root)
-
-            # Fetch branch and status
-            self._fetch_branch_and_status(repo_root)
-            # Refresh repo browser
-            self._file_browser.refresh_files()
-            # Update preview status area
-            self._update_preview_status_labels()
-            
-            # Update button states (including branch buttons)
-            self._update_button_states()
-            
-            # Explicitly ensure branch buttons are updated
-            QtCore.QTimer.singleShot(100, self._update_branch_button_states)
-            
-            log.info(f"Validated repo: {repo_root}")
-        else:
-            # Invalid repo
-            self.validate_label.setText("Invalid")
-            self.validate_label.setStyleSheet("color: red;")
-            self.repo_root_label.setText("—")
-            self.branch_label.setText("—")
-            self.working_tree_label.setText("—")
-            self.upstream_label.setText("—")
-            self.ahead_behind_label.setText("—")
-            self.last_fetch_label.setText("—")
-            self._set_meta_label(self.branch_label, "gray")
-            self._set_strong_label(self.working_tree_label, "black")
-            self._set_meta_label(self.upstream_label, "gray")
-            self._set_strong_label(self.ahead_behind_label, "gray")
-            self._set_meta_label(self.last_fetch_label, "gray")
-            self._current_repo_root = None
-            self.root_toggle_btn.setEnabled(False)
-            self.root_toggle_btn.setChecked(False)
-            self.repo_root_row.setVisible(False)
-            self.root_toggle_btn.setArrowType(QtCore.Qt.RightArrow)
-            self.root_toggle_btn.setText("Show root")
-            self.browser_window_btn.setEnabled(False)
-            self._update_button_states()
-            # Clear browser section
-            self._file_browser.clear_browser()
-            # Do not overwrite saved path - just show typed text in UI
-            log.warning(
-                f"Not a git repository: {path}"
-            )
+        """Validate repository path - delegated to RepoValidationHandler."""
+        self._repo_validator.validate_repo_path(path)
 
     def _fetch_branch_and_status(self, repo_root):
-        """
-        Fetch current branch and working tree status for repo_root.
-        
-        Args:
-            repo_root: str - repository root path
-        """
-        branch = self._git_client.current_branch(repo_root)
-        self.branch_label.setText(branch)
-
-        self._refresh_status_views(repo_root)
-
-        self._update_upstream_info(repo_root)
-
-        # Display last fetch time
-        self._fetch_pull.display_last_fetch()
+        """Fetch branch and status - delegated to RepoValidationHandler."""
+        self._repo_validator.fetch_branch_and_status(repo_root)
 
     def _update_upstream_info(self, repo_root):
         """
@@ -1555,266 +1443,16 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     # Browser UI creation and management delegated to self._file_browser
 
     def _refresh_branch_list(self):
-        """Refresh the list of local branches in the combo box."""
-        if not self._current_repo_root:
-            self._local_branches = []
-            self.branch_combo.clear()
-            return
-        
-        self._local_branches = self._git_client.list_local_branches(
-            self._current_repo_root
-        )
-        current_branch = self._git_client.current_branch(
-            self._current_repo_root
-        )
-        
-        # Update combo box
-        self._branch_combo_updating = True
-        self.branch_combo.clear()
-        self.branch_combo.addItems(self._local_branches)
-        
-        # Select current branch
-        if current_branch and current_branch in self._local_branches:
-            idx = self._local_branches.index(current_branch)
-            self.branch_combo.setCurrentIndex(idx)
-        
-        self._branch_combo_updating = False
-        
-        # Update button states
-        self._update_branch_button_states()
+        """Update the branch list in the combo box (delegates to handler)."""
+        self._branch_ops.refresh_branch_list()
 
     def _update_branch_button_states(self):
-        """Update enabled/disabled state of branch action buttons."""
-        # Safety check: ensure widgets exist
-        if not hasattr(self, "new_branch_btn"):
-            return
-        
-        repo_ok = self._current_repo_root is not None
-        has_branches = len(self._local_branches) > 0
-        busy = (
-            self._fetch_pull.is_busy()
-            or self._commit_push.is_busy()
-            or self._is_switching_branch
-            or self._job_runner.is_busy()
-        )
-        
-        # Debug logging
-        from freecad_gitpdm.core import log
-        log.debug(f"Branch button states - repo_ok: {repo_ok}, busy: {busy}, has_branches: {has_branches}")
-        
-        self.new_branch_btn.setEnabled(repo_ok and not busy)
-        self.switch_branch_btn.setEnabled(
-            repo_ok and has_branches and not busy
-        )
-        
-        # Can't delete current branch
-        current_branch = self._git_client.current_branch(
-            self._current_repo_root
-        ) if self._current_repo_root else None
-        selected_idx = self.branch_combo.currentIndex()
-        selected_branch = (
-            self._local_branches[selected_idx]
-            if 0 <= selected_idx < len(self._local_branches)
-            else None
-        )
-        can_delete = (
-            repo_ok
-            and has_branches
-            and not busy
-            and selected_branch
-            and selected_branch != current_branch
-        )
-        self.delete_branch_btn.setEnabled(can_delete)
+        """Update enabled/disabled state of branch action buttons (delegates to handler)."""
+        self._branch_ops.update_branch_button_states()
 
-    def _on_branch_combo_changed(self, index):
-        """Handle branch combo box selection change."""
-        if self._branch_combo_updating:
-            return
-        # Just update delete button state
-        self._update_branch_button_states()
 
-    def _on_new_branch_clicked(self):
-        """Handle New Branch button click - show dialog and create branch."""
-        if not self._current_repo_root:
-            return
-        
-        if self._is_switching_branch or self._job_runner.is_busy():
-            log.debug("Job running, new branch ignored")
-            return
-        
-        # CRITICAL: Check for ANY open .FCStd files (not just from current repo)
-        # Git operations can corrupt files in other worktrees too
-        open_docs = self._get_all_open_fcstd_documents()
-        lock_files = self._find_repo_lock_files()
-        
-        # Get default branch as start point
-        default_upstream = self._git_client.default_upstream_ref(
-            self._current_repo_root, self._remote_name
-        )
-        if not default_upstream:
-            default_upstream = "HEAD"
-        
-        # Show dialog with open files information
-        dialog = dialogs.NewBranchDialog(
-            parent=self,
-            default_start_point=default_upstream,
-            open_docs=open_docs,
-            lock_files=lock_files
-        )
-        if not dialog.exec():
-            return
-        
-        branch_name = dialog.branch_name
-        start_point = dialog.start_point
-        
-        if not branch_name:
-            return
-        
-        # Double-check before actual branch creation (user might have opened files after dialog)
-        open_docs_recheck = self._get_all_open_fcstd_documents()
-        lock_files_recheck = self._find_repo_lock_files()
-        if open_docs_recheck or lock_files_recheck:
-            QtWidgets.QMessageBox.critical(
-                self,
-                "Files Opened",
-                "FreeCAD files were opened after the dialog. Please close ALL documents "
-                "and try again to prevent corruption."
-            )
-            return
-        
-        # Validate branch name
-        if not self._validate_branch_name(branch_name):
-            return
-        
-        # Create branch
-        log.info(f"Creating branch: {branch_name} from {start_point}")
-        result = self._git_client.create_branch(
-            self._current_repo_root,
-            branch_name,
-            start_point
-        )
-        
-        if not result.ok:
-            QtWidgets.QMessageBox.warning(
-                self,
-                "Create Branch Failed",
-                f"Failed to create branch '{branch_name}':\n\n{result.stderr}"
-            )
-            return
-        
-        log.info(f"Branch '{branch_name}' created, now switching to it")
-        
-        # Switch to new branch
-        # Mark to auto-publish (push -u) after successful switch
-        self._pending_publish_new_branch = branch_name
-        self._switch_to_branch(branch_name)
 
-    def _validate_branch_name(self, name):
-        """
-        Validate branch name according to git rules.
-        Returns True if valid, shows error and returns False otherwise.
-        """
-        if not name:
-            QtWidgets.QMessageBox.warning(
-                self,
-                "Invalid Branch Name",
-                "Branch name cannot be empty."
-            )
-            return False
-        
-        if name.startswith("-"):
-            QtWidgets.QMessageBox.warning(
-                self,
-                "Invalid Branch Name",
-                "Branch name cannot start with a dash."
-            )
-            return False
-        
-        if " " in name:
-            QtWidgets.QMessageBox.warning(
-                self,
-                "Invalid Branch Name",
-                "Branch name cannot contain spaces."
-            )
-            return False
-        
-        # Check for invalid characters
-        invalid_chars = ["~", "^", ":", "?", "*", "[", "\\", "..", "@{"]
-        for char in invalid_chars:
-            if char in name:
-                QtWidgets.QMessageBox.warning(
-                    self,
-                    "Invalid Branch Name",
-                    f"Branch name cannot contain '{char}'."
-                )
-                return False
-        
-        return True
 
-    def _on_switch_branch_clicked(self):
-        """Handle Switch button click - switch to selected branch."""
-        if not self._current_repo_root:
-            return
-        
-        selected_idx = self.branch_combo.currentIndex()
-        if selected_idx < 0 or selected_idx >= len(self._local_branches):
-            return
-        
-        target_branch = self._local_branches[selected_idx]
-        current_branch = self._git_client.current_branch(
-            self._current_repo_root
-        )
-        
-        if target_branch == current_branch:
-            log.debug("Already on selected branch")
-            return
-        
-        self._switch_to_branch(target_branch)
-
-    def _on_worktree_help_clicked(self):
-        """Show quick guidance for setting up per-branch git worktrees."""
-        example_path = os.path.normpath(os.path.join(self._current_repo_root or "..", "repo-feature"))
-        msg = (
-            "Use git worktree to give each branch its own folder. This avoids FCStd corruption "
-            "from branch switches while files are open.\n\n"
-            "Example commands:\n"
-            f"  git worktree add {example_path} feature\n"
-            "  git worktree add ../repo-main main\n\n"
-            "Open the matching worktree folder in FreeCAD for the branch you are editing."
-        )
-        QtWidgets.QMessageBox.information(self, "Use Git Worktrees", msg)
-
-    def _show_worktree_success_dialog(self, worktree_path: str, branch_name: str):
-        """Show success dialog with option to open worktree folder."""
-        msg_box = QtWidgets.QMessageBox(self)
-        msg_box.setWindowTitle("Worktree Created Successfully")
-        msg_box.setIcon(QtWidgets.QMessageBox.Information)
-        
-        msg = (
-            f"✓ Worktree created for '{branch_name}'\n\n"
-            f"Path: {worktree_path}\n\n"
-            "⚠️ IMPORTANT: To avoid file corruption, you must now "
-            "open files from this new worktree folder, not from the main repo.\n\n"
-            "Click 'Open Folder' below to view the worktree directory in File Explorer."
-        )
-        msg_box.setText(msg)
-        
-        # Add custom buttons
-        open_btn = msg_box.addButton("Open Folder", QtWidgets.QMessageBox.AcceptRole)
-        close_btn = msg_box.addButton("Close", QtWidgets.QMessageBox.RejectRole)
-        msg_box.setDefaultButton(open_btn)
-        
-        msg_box.exec_()
-        
-        if msg_box.clickedButton() == open_btn:
-            self._open_folder_in_explorer(worktree_path)
-        
-        # Show persistent status
-        self._show_status_message(
-            f"Opened worktree: {os.path.basename(worktree_path)}",
-            is_error=False
-        )
-        QtCore.QTimer.singleShot(5000, self._clear_status_message)
 
     def _show_repo_opened_dialog(self, repo_path: str, action: str, repo_name: str = None):
         """
@@ -1866,23 +1504,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         if msg_box.clickedButton() == open_btn:
             self._open_folder_in_explorer(repo_path)
 
-    def _open_folder_in_explorer(self, folder_path: str):
-        """Open folder in Windows Explorer or equivalent."""
-        try:
-            if sys.platform == "win32":
-                os.startfile(folder_path)
-            elif sys.platform == "darwin":
-                subprocess.Popen(["open", folder_path])
-            else:
-                subprocess.Popen(["xdg-open", folder_path])
-            log.info(f"Opened folder in explorer: {folder_path}")
-        except Exception as e:
-            log.error(f"Failed to open folder: {e}")
-            QtWidgets.QMessageBox.warning(
-                self,
-                "Cannot Open Folder",
-                f"Could not open folder in file explorer:\n{e}"
-            )
+
 
     def _check_for_wrong_folder_editing(self):
         """Check if user has FreeCAD documents open from a different folder than current repo root."""
@@ -1937,212 +1559,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         except Exception as e:
             log.debug(f"Could not check for wrong folder editing: {e}")
 
-    def _switch_to_branch(self, branch_name):
-        """
-        Switch to the specified branch, with dirty working tree check.
-        
-        Args:
-            branch_name: str - branch to switch to
-        """
-        if not self._current_repo_root:
-            return
-        
-        if self._is_switching_branch or self._job_runner.is_busy():
-            log.debug("Job running, branch switch ignored")
-            return
-
-        # CRITICAL Guard: block ALL branch operations while ANY FreeCAD files are open
-        # This prevents corruption that can occur when:
-        # - Git operations modify files that are open in FreeCAD
-        # - Switching between worktrees while files from other worktrees are open
-        # - Creating new worktrees that share git objects with open files
-        open_docs = self._get_all_open_fcstd_documents()
-        lock_files = self._find_repo_lock_files()
-        if open_docs or lock_files:
-            details_lines = []
-            if open_docs:
-                details_lines.append("Open documents:")
-                details_lines.extend([f"  - {p}" for p in open_docs])
-            if lock_files:
-                details_lines.append("Lock files (close FreeCAD):")
-                details_lines.extend([f"  - {p}" for p in lock_files])
-
-            advice = (
-                "CRITICAL: Close ALL FreeCAD documents before any branch operations!\n\n"
-                "Git operations can corrupt .FCStd files that are currently open in FreeCAD, "
-                "even if they're in a different worktree folder. This is a known limitation "
-                "of how FreeCAD handles binary files.\n\n"
-                "Please close ALL FreeCAD documents (File -> Close All) and try again."
-            )
-            QtWidgets.QMessageBox.critical(
-                self,
-                "Close ALL Files First",
-                advice + ("\n\n" + "\n".join(details_lines) if details_lines else ""),
-            )
-            log.warning("Branch switch blocked - open FreeCAD documents detected")
-            return
-        
-        # Check for uncommitted changes
-        has_changes = self._git_client.has_uncommitted_changes(
-            self._current_repo_root
-        )
-        
-        if has_changes:
-            reply = QtWidgets.QMessageBox.question(
-                self,
-                "Uncommitted Changes",
-                "You have uncommitted changes in your working tree.\n\n"
-                "Switching branches may fail or overwrite your changes.\n"
-                "Consider committing or stashing your changes first.\n\n"
-                "Do you want to switch anyway?",
-                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-                QtWidgets.QMessageBox.No
-            )
-            if reply != QtWidgets.QMessageBox.Yes:
-                log.info("User cancelled branch switch due to uncommitted changes")
-                return
-        
-        # Prefer per-branch worktree to avoid FCStd corruption
-        worktree_path = self._compute_worktree_path_for_branch(branch_name)
-        if worktree_path:
-            create_msg = (
-                "To avoid CAD file corruption, GitPDM can create a per-branch worktree "
-                "folder and open it instead of switching in-place.\n\n"
-                f"Worktree path:\n  {worktree_path}\n\n"
-                "Proceed to create and open the worktree?"
-            )
-            reply = QtWidgets.QMessageBox.question(
-                self,
-                "Use Per-Branch Worktree",
-                create_msg,
-                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-                QtWidgets.QMessageBox.Yes,
-            )
-            if reply == QtWidgets.QMessageBox.Yes:
-                self._create_and_open_worktree(branch_name, worktree_path)
-                return
-
-        # Fallback: perform in-place checkout (riskier)
-        self._is_switching_branch = True
-        self._start_busy_feedback(f"Switching to {branch_name}…")
-        self._update_branch_button_states()
-        
-        log.info(f"Switching to branch: {branch_name}")
-        
-        git_cmd = self._git_client._get_git_command()
-        args = [git_cmd, "-C", self._current_repo_root, "switch", branch_name]
-        
-        self._job_runner.run_job(
-            "switch_branch",
-            args,
-            callback=lambda job: self._on_switch_branch_completed(job, branch_name)
-        )
-
-    def _on_switch_branch_completed(self, job, branch_name):
-        """Callback when branch switch completes."""
-        result = job.get("result", {})
-        success = result.get("success", False)
-        stderr = result.get("stderr", "")
-        
-        self._is_switching_branch = False
-        self._stop_busy_feedback()
-        
-        if not success:
-            # Check if 'switch' is not recognized and retry with checkout
-            if "switch" in stderr.lower() and "not a git command" in stderr.lower():
-                log.debug("'git switch' not available, retrying with checkout")
-                self._switch_to_branch_with_checkout(branch_name)
-                return
-            
-            QtWidgets.QMessageBox.warning(
-                self,
-                "Switch Branch Failed",
-                f"Failed to switch to branch '{branch_name}':\n\n{stderr}"
-            )
-            self._update_branch_button_states()
-            return
-        
-        log.info(f"Switched to branch: {branch_name}")
-        
-        # Show success message for new branch creation
-        self._show_status_message(
-            f"Switched to '{branch_name}'",
-            is_error=False
-        )
-        QtCore.QTimer.singleShot(3000, self._clear_status_message)
-        
-        # If this switch follows a new branch creation, publish it to origin
-        if self._pending_publish_new_branch == branch_name:
-            log.info(f"Publishing new branch to remote: {branch_name}")
-            # Clear flag before pushing to avoid re-entrancy
-            self._pending_publish_new_branch = None
-            # Use explicit branch name to ensure remote branch is created
-            # and set as upstream regardless of HEAD state.
-            self._retry_push_with_branch_name()
-
-        # Refresh UI
-        if self._current_repo_root:
-            self._refresh_after_branch_operation()
-
-    def _compute_worktree_path_for_branch(self, branch_name: str) -> str:
-        """Compute a suggested worktree path for the given branch."""
-        try:
-            base = os.path.basename(os.path.normpath(self._current_repo_root or ""))
-            parent = os.path.dirname(os.path.normpath(self._current_repo_root or ""))
-            if not parent:
-                return ""
-            candidate = f"{base}-{branch_name}"
-            return os.path.join(parent, candidate)
-        except Exception:
-            return ""
-
-    def _create_and_open_worktree(self, branch_name: str, worktree_path: str):
-        """Create git worktree and open it as the active repo root."""
-        git_cmd = self._git_client._get_git_command()
-        if not git_cmd:
-            QtWidgets.QMessageBox.warning(
-                self,
-                "Git Not Found",
-                "Git is not available. Install Git or GitHub Desktop and retry.",
-            )
-            return
-
-        self._is_switching_branch = True
-        self._start_busy_feedback(f"Creating worktree for {branch_name}…")
-        self._update_branch_button_states()
-
-        args = [git_cmd, "-C", self._current_repo_root, "worktree", "add", worktree_path, branch_name]
-        self._job_runner.run_job(
-            "add_worktree",
-            args,
-            callback=lambda job: self._on_worktree_created(job, worktree_path, branch_name)
-        )
-
-    def _on_worktree_created(self, job, worktree_path: str, branch_name: str):
-        """Handle completion of adding a worktree."""
-        result = job.get("result", {})
-        success = result.get("success", False)
-        stderr = result.get("stderr", "")
-        self._is_switching_branch = False
-        self._stop_busy_feedback()
-
-        if not success:
-            QtWidgets.QMessageBox.warning(
-                self,
-                "Worktree Creation Failed",
-                f"Failed to create worktree for '{branch_name}':\n\n{stderr}"
-            )
-            self._update_branch_button_states()
-            return
-
-        # Update repo root to new worktree and refresh
-        log.info(f"Worktree created: {worktree_path}")
-        settings.save_repo_path(worktree_path)
-        self._validate_repo_path(worktree_path)
-        
-        # Show success dialog with "Open Folder" button
-        self._show_worktree_success_dialog(worktree_path, branch_name)
-
     def _get_open_repo_documents(self):
         """
         Return list of open FreeCAD documents that live inside the current repo.
@@ -2178,84 +1594,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             return []
         return open_paths
 
-    def _get_all_open_fcstd_documents(self):
-        """
-        Return list of ALL open .FCStd files in FreeCAD, regardless of location.
-        
-        This is used for worktree safety - we need to ensure NO FreeCAD files are open
-        when performing any git operations, since git worktree operations can affect
-        files in other worktrees indirectly.
-        
-        Returns:
-            List of absolute paths to open .FCStd files
-        """
-        try:
-            import FreeCAD
-            list_docs = getattr(FreeCAD, "listDocuments", None)
-            if not callable(list_docs):
-                return []
-        except Exception:
-            return []
 
-        open_paths = []
-        try:
-            for doc in list_docs().values():
-                path = getattr(doc, "FileName", "") or ""
-                if path and path.lower().endswith(".fcstd"):
-                    try:
-                        open_paths.append(os.path.abspath(os.path.normpath(path)))
-                    except Exception:
-                        continue
-        except Exception:
-            return []
-        return open_paths
 
-    def _find_repo_lock_files(self):
-        """Return list of FreeCAD lock files inside the current repo."""
-        if not self._current_repo_root:
-            return []
-        pattern = os.path.join(self._current_repo_root, "*.FCStd.lock")
-        try:
-            return glob.glob(pattern)
-        except Exception:
-            return []
 
-    def _set_freecad_working_directory(self, directory: str):
-        """
-        Set FreeCAD's working directory to ensure Save As dialog defaults to repo folder.
-        
-        This prevents users from accidentally saving files outside the repo, which would
-        cause repo health issues.
-        
-        Args:
-            directory: Absolute path to set as working directory
-        """
-        if not directory or not os.path.isdir(directory):
-            log.debug(f"Cannot set working directory, invalid path: {directory}")
-            return
-        
-        try:
-            # Normalize the path
-            directory = os.path.abspath(os.path.normpath(directory))
-            
-            # Method 1: Change Python's current working directory
-            # FreeCAD's file dialogs often respect this
-            os.chdir(directory)
-            log.info(f"Set Python working directory: {directory}")
-            
-            # Method 2: Set FreeCAD's parameter for last file dialog directory
-            try:
-                import FreeCAD
-                param_grp = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/General")
-                if param_grp:
-                    # These parameters control FreeCAD's file dialog defaults
-                    param_grp.SetString("FileOpenSavePath", directory)
-                    log.info(f"Set FreeCAD FileOpenSavePath parameter: {directory}")
-            except Exception as e:
-                log.debug(f"Could not set FreeCAD file path parameter: {e}")
-                    
-        except Exception as e:
-            log.error(f"Failed to set working directory to {directory}: {e}")
 
     def _start_working_directory_refresh(self):
         """Start periodic timer to maintain repo folder as FreeCAD's working directory."""
@@ -2281,124 +1622,13 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             except Exception as e:
                 log.debug(f"Working directory refresh error: {e}")
 
-    def _switch_to_branch_with_checkout(self, branch_name):
-        """Fallback to git checkout if git switch is not available."""
-        if not self._current_repo_root:
-            return
-        
-        self._is_switching_branch = True
-        self._start_busy_feedback(f"Switching to {branch_name}…")
-        
-        git_cmd = self._git_client._get_git_command()
-        args = [git_cmd, "-C", self._current_repo_root, "checkout", branch_name]
-        
-        self._job_runner.run_job(
-            "checkout_branch",
-            args,
-            callback=lambda job: self._on_switch_branch_completed(job, branch_name)
-        )
 
-    def _on_delete_branch_clicked(self):
-        """Handle Delete Branch button click."""
-        if not self._current_repo_root:
-            return
-        
-        selected_idx = self.branch_combo.currentIndex()
-        if selected_idx < 0 or selected_idx >= len(self._local_branches):
-            return
-        
-        branch_name = self._local_branches[selected_idx]
-        current_branch = self._git_client.current_branch(
-            self._current_repo_root
-        )
-        
-        if branch_name == current_branch:
-            QtWidgets.QMessageBox.warning(
-                self,
-                "Cannot Delete Branch",
-                f"Cannot delete the current branch '{branch_name}'.\n"
-                "Switch to another branch first."
-            )
-            return
-        
-        # Confirm deletion
-        reply = QtWidgets.QMessageBox.question(
-            self,
-            "Delete Branch",
-            f"Are you sure you want to delete branch '{branch_name}'?\n\n"
-            "This operation cannot be undone.",
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-            QtWidgets.QMessageBox.No
-        )
-        if reply != QtWidgets.QMessageBox.Yes:
-            return
-        
-        # Delete branch
-        log.info(f"Deleting branch: {branch_name}")
-        result = self._git_client.delete_local_branch(
-            self._current_repo_root,
-            branch_name,
-            force=False
-        )
-        
-        if not result.ok:
-            # Check if branch needs force delete
-            if "not fully merged" in result.stderr.lower():
-                reply = QtWidgets.QMessageBox.question(
-                    self,
-                    "Force Delete Branch",
-                    f"Branch '{branch_name}' is not fully merged.\n\n"
-                    "Do you want to force delete it? "
-                    "Unmerged changes will be lost.",
-                    QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-                    QtWidgets.QMessageBox.No
-                )
-                if reply == QtWidgets.QMessageBox.Yes:
-                    result = self._git_client.delete_local_branch(
-                        self._current_repo_root,
-                        branch_name,
-                        force=True
-                    )
-                    if not result.ok:
-                        QtWidgets.QMessageBox.warning(
-                            self,
-                            "Delete Branch Failed",
-                            f"Failed to delete branch '{branch_name}':\n\n{result.stderr}"
-                        )
-                        return
-                else:
-                    return
-            else:
-                QtWidgets.QMessageBox.warning(
-                    self,
-                    "Delete Branch Failed",
-                    f"Failed to delete branch '{branch_name}':\n\n{result.stderr}"
-                )
-                return
-        
-        log.info(f"Deleted branch: {branch_name}")
-        
-        # Refresh branch list
-        self._refresh_branch_list()
+
+
 
     def _refresh_after_branch_operation(self):
-        """Refresh UI after branch operations (switch, create, etc.)."""
-        if not self._current_repo_root:
-            return
-        
-        # Update branch name display
-        branch = self._git_client.current_branch(self._current_repo_root)
-        self.branch_label.setText(branch)
-        
-        # Refresh branch list
-        self._refresh_branch_list()
-        
-        # Refresh status and upstream
-        self._refresh_status_views(self._current_repo_root)
-        self._update_upstream_info(self._current_repo_root)
-        
-        # Refresh repo browser
-        self._refresh_repo_browser_files()
+        """Refresh UI after branch operations (delegates to handler)."""
+        self._branch_ops.refresh_after_branch_operation()
 
     # Fetch/pull button handlers delegated to self._fetch_pull
 
@@ -2471,14 +1701,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 self._update_operation_status(status_text)
         QtCore.QTimer.singleShot(delay_ms, _to_ready)
 
-    def _do_refresh(self, path):
-        """Execute the refresh operation (runs after brief delay)."""
-        try:
-            self._validate_repo_path(path)
-        finally:
-            self._stop_busy_feedback()
-            self._show_status_message("Refresh complete", is_error=False)
-            QtCore.QTimer.singleShot(2000, self._clear_status_message)
+
 
     def _display_working_tree_status(self, status):
         """
@@ -2570,202 +1793,16 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
 
     def _on_refresh_clicked(self):
-        """
-        Handle Refresh Status button click.
-        Re-validate current repo path and refresh status.
-        """
-        current_path = self.repo_path_field.text()
-        if not current_path:
-            log.warning("No repository path set")
-            return
-        
-        # Show busy feedback immediately
-        self._start_busy_feedback("Refreshing…")
-        self._update_operation_status("Refreshing…")
-        
-        # Defer the actual work to keep UI responsive
-        QtCore.QTimer.singleShot(50, lambda: self._do_refresh(current_path))
+        """Handle Refresh Status button click."""
+        self._repo_validator.refresh_clicked()
 
     def _on_create_repo_clicked(self):
-        """
-        Handle Create Repo button click.
-        Initialize a new git repository in the selected path.
-        """
-        current_path = self.repo_path_field.text()
-        if not current_path:
-            log.warning("No path specified for repo creation")
-            self._show_status_message(
-                "Error: Please specify a folder path first",
-                is_error=True
-            )
-            return
-        
-        # Normalize the path
-        import os
-        current_path = os.path.normpath(os.path.expanduser(current_path))
-        
-        # Check if path exists
-        if not os.path.isdir(current_path):
-            log.warning(f"Path does not exist: {current_path}")
-            self._show_status_message(
-                f"Error: Folder does not exist: {current_path}",
-                is_error=True
-            )
-            return
-        
-        # Show confirmation dialog
-        dlg = QtWidgets.QMessageBox(self)
-        dlg.setWindowTitle("Create Repository")
-        dlg.setText(f"Create a new git repository at:\n{current_path}")
-        dlg.setStandardButtons(
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.Cancel
-        )
-        dlg.setDefaultButton(QtWidgets.QMessageBox.Cancel)
-        dlg.setIcon(QtWidgets.QMessageBox.Question)
-        
-        if dlg.exec() != QtWidgets.QMessageBox.Yes:
-            log.info("Repository creation cancelled by user")
-            return
-        
-        # Show busy feedback
-        self._start_busy_feedback("Creating repository…")
-        self._update_operation_status("Creating repository…")
-        
-        # Perform the actual init in a deferred call to keep UI responsive
-        QtCore.QTimer.singleShot(50, lambda: self._do_create_repo(current_path))
-
-    def _do_create_repo(self, path):
-        """Execute the actual repo creation."""
-        try:
-            log.info(f"Creating repository at: {path}")
-            result = self._git_client.init_repo(path)
-            
-            if result.ok:
-                log.info("Repository created successfully")
-                self._show_status_message(
-                    "Repository created successfully!",
-                    is_error=False
-                )
-                
-                # Show helpful next steps dialog
-                dlg = QtWidgets.QMessageBox(self)
-                dlg.setWindowTitle("Repository Created")
-                dlg.setText(
-                    "Your local repository has been created successfully!\n\n"
-                    "Next steps:\n"
-                    "1. Create a repository on GitHub/GitLab\n"
-                    "2. Copy the repository URL\n"
-                    "3. Run in a terminal:\n"
-                    "   git -C \"" + path + "\" remote add origin <your-repo-url>\n\n"
-                    "Then you'll be able to commit and publish your changes."
-                )
-                dlg.setStandardButtons(
-                    QtWidgets.QMessageBox.Ok | QtWidgets.QMessageBox.Yes
-                )
-                dlg.button(QtWidgets.QMessageBox.Yes).setText(
-                    "Connect Remote Now"
-                )
-                dlg.setIcon(QtWidgets.QMessageBox.Information)
-                choice = dlg.exec()
-                if choice == QtWidgets.QMessageBox.Yes:
-                    # Launch remote connect flow immediately
-                    QtCore.QTimer.singleShot(50, self._on_connect_remote_clicked)
-                
-                # Refresh the repo validation with the new repo
-                QtCore.QTimer.singleShot(500, lambda: self._validate_repo_path(path))
-            else:
-                log.error(f"Repository creation failed: {result.stderr}")
-                self._show_status_message(
-                    f"Error: Failed to create repository",
-                    is_error=True
-                )
-        except Exception as e:
-            log.error(f"Exception during repo creation: {e}")
-            self._show_status_message(
-                f"Error: {str(e)}",
-                is_error=True
-            )
-        finally:
-            self._stop_busy_feedback()
+        """Handle Create Repo button click."""
+        self._repo_validator.create_repo_clicked()
 
     def _on_connect_remote_clicked(self):
-        """Entry point for Connect Remote button or prompt."""
-        if not self._current_repo_root:
-            self._show_status_message(
-                "No repository selected", is_error=True
-            )
-            return
-        self._start_connect_remote_flow()
-
-    def _start_connect_remote_flow(self, url_hint=""):
-        """Prompt user for remote URL and start add-remote operation."""
-        remote_name = getattr(self, "_remote_name", "origin") or "origin"
-        prompt_title = "Connect Remote"
-        prompt_label = (
-            f"Add remote '{remote_name}'.\n"
-            "Paste the repository URL (GitHub Desktop will handle auth):"
-        )
-        url, ok = QtWidgets.QInputDialog.getText(
-            self,
-            prompt_title,
-            prompt_label,
-            text=url_hint
-        )
-        if not ok:
-            log.info("Connect Remote cancelled")
-            return
-
-        url = url.strip()
-        if not url:
-            self._show_status_message("Remote URL required", is_error=True)
-            return
-
-        # Run asynchronously to keep UI responsive
-        self._start_busy_feedback("Connecting remote…")
-        self._update_operation_status("Connecting remote…")
-        QtCore.QTimer.singleShot(
-            50,
-            lambda: self._do_connect_remote(remote_name, url)
-        )
-
-    def _do_connect_remote(self, remote_name, url):
-        """Execute remote add and refresh UI."""
-        try:
-            if not self._current_repo_root:
-                self._show_status_message(
-                    "No repository selected", is_error=True
-                )
-                return
-
-            result = self._git_client.add_remote(
-                self._current_repo_root, remote_name, url
-            )
-
-            if result.ok:
-                self._show_status_message(
-                    "Remote connected. You can publish now.",
-                    is_error=False
-                )
-                self._cached_has_remote = True
-                # Refresh labels/status to pick up remote
-                self._validate_repo_path(self._current_repo_root)
-            else:
-                msg = result.stderr or "Failed to add remote"
-                QtWidgets.QMessageBox.critical(
-                    self,
-                    "Connect Remote Failed",
-                    msg
-                )
-                self._show_status_message(
-                    f"Error: {msg}", is_error=True
-                )
-        except Exception as e:
-            log.error(f"Exception during connect remote: {e}")
-            self._show_status_message(
-                f"Error: {str(e)}", is_error=True
-            )
-        finally:
-            self._stop_busy_feedback()
+        """Handle Connect Remote button click."""
+        self._repo_validator.connect_remote_clicked()
 
     def _on_job_finished(self, job):
         """
