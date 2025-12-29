@@ -24,6 +24,10 @@ import subprocess
 from freecad_gitpdm.core import log, settings, jobs
 from freecad_gitpdm.git import client
 from freecad_gitpdm.ui import dialogs
+from freecad_gitpdm.ui.github_auth import GitHubAuthHandler
+from freecad_gitpdm.ui.file_browser import FileBrowserHandler
+from freecad_gitpdm.ui.fetch_pull import FetchPullHandler
+from freecad_gitpdm.ui.commit_push import CommitPushHandler
 from freecad_gitpdm.export import exporter, mapper
 from freecad_gitpdm.core import paths as core_paths
 from freecad_gitpdm.core import publish
@@ -124,19 +128,18 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._job_runner = self._services.job_runner()
         self._job_runner.job_finished.connect(self._on_job_finished)
 
+        # Initialize handlers (Sprint 4)
+        self._github_auth = GitHubAuthHandler(self, self._services)
+        self._file_browser = FileBrowserHandler(self, self._git_client, self._job_runner)
+        self._fetch_pull = FetchPullHandler(self, self._git_client, self._job_runner)
+        self._commit_push = CommitPushHandler(self, self._git_client, self._job_runner)
+
         # State tracking
         self._current_repo_root = None
-        self._is_fetching = False
-        self._is_pulling = False
-        self._is_committing = False
-        self._is_pushing = False
         self._upstream_ref = None
         self._ahead_count = 0
         self._behind_count = 0
         self._file_statuses = []
-        self._pending_commit_message = ""
-        self._all_cad_files = []
-        self._is_listing_files = False
         self._busy_timer = QtCore.QTimer(self)
         self._busy_timer.setInterval(5000)
         self._busy_timer.timeout.connect(self._on_busy_timer_tick)
@@ -149,8 +152,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         )
         self._cached_has_remote = False
         self._doc_observer = None
-        self._browser_dock = None
-        self._browser_content = None
         self._group_git_check = None
         self._group_repo_selector = None
         self._group_status = None
@@ -165,11 +166,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._local_branches = []
         # Auto-publish tracking for newly created branches
         self._pending_publish_new_branch = None
-
-        # OAuth state tracking (Sprint OAUTH-1)
-        self._oauth_dialog = None
-        self._oauth_cancel_token = None
-        self._oauth_in_progress = False
 
         # Font sizes for labels
         self._meta_font_size = 9
@@ -239,7 +235,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         self.compact_commit_btn = QtWidgets.QPushButton("Commit")
         self.compact_commit_btn.setEnabled(False)
-        self.compact_commit_btn.clicked.connect(self._on_compact_commit_clicked)
+        self.compact_commit_btn.clicked.connect(self._commit_push.commit_clicked)
         row.addWidget(self.compact_commit_btn)
 
         container.setVisible(False)
@@ -317,9 +313,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self._register_document_observer()
             
             # Load GitHub connection status (Sprint OAUTH-1)
-            self._refresh_github_connection_status()
+            self._github_auth.refresh_connection_status()
             # Sprint OAUTH-2: Auto-verify identity in background with cooldown
-            QtCore.QTimer.singleShot(50, self._maybe_auto_verify_identity)
+            QtCore.QTimer.singleShot(50, self._github_auth.maybe_auto_verify_identity)
             
             # Check if user is editing from wrong folder (worktree mismatch)
             QtCore.QTimer.singleShot(1000, self._check_for_wrong_folder_editing)
@@ -864,12 +860,12 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         row1_layout.setSpacing(4)
         self.fetch_btn = QtWidgets.QPushButton("Fetch")
         self.fetch_btn.setEnabled(False)
-        self.fetch_btn.clicked.connect(self._on_fetch_clicked)
+        self.fetch_btn.clicked.connect(self._fetch_pull.fetch_clicked)
         row1_layout.addWidget(self.fetch_btn)
 
         self.pull_btn = QtWidgets.QPushButton("Pull")
         self.pull_btn.setEnabled(False)
-        self.pull_btn.clicked.connect(self._on_pull_clicked)
+        self.pull_btn.clicked.connect(self._fetch_pull.pull_clicked)
         row1_layout.addWidget(self.pull_btn)
 
         group_layout.addLayout(row1_layout)
@@ -902,7 +898,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.commit_push_btn = QtWidgets.QPushButton("Commit & Push")
         self.commit_push_btn.setEnabled(False)
         self.commit_push_btn.clicked.connect(
-            self._on_commit_push_clicked
+            self._commit_push.commit_push_clicked
         )
         
         # Dropdown menu for workflow selection
@@ -1038,7 +1034,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
     def _build_repo_browser_section(self, layout):
         """Build launcher row for the dockable repository browser."""
-        self._ensure_browser_host()
+        self._file_browser.ensure_browser_host()
 
         container = QtWidgets.QWidget()
         row = QtWidgets.QHBoxLayout()
@@ -1056,7 +1052,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         )
         self.browser_window_btn.setEnabled(False)
         self.browser_window_btn.clicked.connect(
-            self._open_repo_browser
+            self._file_browser.open_browser
         )
         row.addWidget(self.browser_window_btn)
 
@@ -1233,7 +1229,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             # Fetch branch and status
             self._fetch_branch_and_status(repo_root)
             # Refresh repo browser
-            self._refresh_repo_browser_files()
+            self._file_browser.refresh_files()
             # Update preview status area
             self._update_preview_status_labels()
             
@@ -1268,7 +1264,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self.browser_window_btn.setEnabled(False)
             self._update_button_states()
             # Clear browser section
-            self._clear_repo_browser()
+            self._file_browser.clear_browser()
             # Do not overwrite saved path - just show typed text in UI
             log.warning(
                 f"Not a git repository: {path}"
@@ -1289,10 +1285,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._update_upstream_info(repo_root)
 
         # Display last fetch time
-        self._display_last_fetch()
-        
-        # Refresh branch list
-        self._refresh_branch_list()
+        self._fetch_pull.display_last_fetch()
 
     def _update_upstream_info(self, repo_root):
         """
@@ -1373,23 +1366,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         self._update_button_states()
 
-    def _display_last_fetch(self):
-        """Display the last fetch timestamp"""
-        last_fetch = settings.load_last_fetch_at()
-        if last_fetch:
-            # Parse ISO timestamp and format for display
-            try:
-                from datetime import datetime
-                dt = datetime.fromisoformat(last_fetch)
-                display_time = dt.strftime("%Y-%m-%d %H:%M:%S")
-                self.last_fetch_label.setText(display_time)
-                self._set_meta_label(self.last_fetch_label, "#4db6ac")
-            except (ValueError, AttributeError):
-                self.last_fetch_label.setText(last_fetch)
-                self._set_meta_label(self.last_fetch_label, "#4db6ac")
-        else:
-            self.last_fetch_label.setText("(never)")
-            self._set_meta_label(self.last_fetch_label, "gray")
+    # ========== Fetch/Pull Operations (Sprint 4: Delegated to FetchPullHandler) ==========
+    # Fetch and pull operations fully delegated to self._fetch_pull handler
 
     def _update_button_states(self):
         """Update enabled/disabled state of action buttons (full checks)."""
@@ -1401,10 +1379,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         upstream_ok = self._upstream_ref is not None
         changes_present = len(self._file_statuses) > 0
         busy = (
-            self._is_fetching
-            or self._is_pulling
-            or self._is_committing
-            or self._is_pushing
+            self._fetch_pull.is_busy()
+            or self._commit_push.is_busy()
             or self._job_runner.is_busy()
         )
 
@@ -1433,10 +1409,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         changes_present = len(self._file_statuses) > 0
         commit_msg_ok = False
         busy = (
-            self._is_fetching
-            or self._is_pulling
-            or self._is_committing
-            or self._is_pushing
+            self._fetch_pull.is_busy()
+            or self._commit_push.is_busy()
             or self._job_runner.is_busy()
         )
 
@@ -1450,16 +1424,15 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         fetch_enabled = (
             git_ok and repo_ok and self._cached_has_remote
-            and not self._is_fetching
-            and not self._is_pulling and not busy
+            and not busy
         )
         self.fetch_btn.setEnabled(fetch_enabled)
 
         pull_enabled = (
             git_ok and repo_ok and self._cached_has_remote
             and upstream_ok
-            and self._behind_count > 0 and not self._is_fetching
-            and not self._is_pulling and not busy
+            and self._behind_count > 0
+            and not busy
         )
         self.pull_btn.setEnabled(pull_enabled)
         commit_enabled = (
@@ -1578,126 +1551,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
     # --- Repository browser window/dock ---
 
-    def _create_browser_content(self):
-        """Create the shared browser content widget once."""
-        if self._browser_content:
-            return self._browser_content
-
-        container = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout()
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(6)
-        container.setLayout(layout)
-
-        # Add branch/worktree indicator at top
-        self.repo_branch_indicator = QtWidgets.QLabel("—")
-        self.repo_branch_indicator.setWordWrap(True)
-        self.repo_branch_indicator.setStyleSheet(
-            "color: #2196F3; font-weight: bold; padding: 4px; "
-            "background-color: #E3F2FD; border-radius: 3px;"
-        )
-        layout.addWidget(self.repo_branch_indicator)
-
-        self.repo_info_label = QtWidgets.QLabel("Repo not selected.")
-        self.repo_info_label.setWordWrap(True)
-        self.repo_info_label.setStyleSheet(
-            "color: gray; font-style: italic;"
-        )
-        layout.addWidget(self.repo_info_label)
-
-        top_row = QtWidgets.QHBoxLayout()
-        self.repo_search = QtWidgets.QLineEdit()
-        self.repo_search.setPlaceholderText("Filter files…")
-        self.repo_search.textChanged.connect(
-            self._on_repo_search_changed
-        )
-        top_row.addWidget(self.repo_search)
-
-        self.repo_refresh_btn = QtWidgets.QPushButton("Refresh Files")
-        self.repo_refresh_btn.clicked.connect(
-            self._on_repo_refresh_files_clicked
-        )
-        top_row.addWidget(self.repo_refresh_btn)
-        layout.addLayout(top_row)
-
-        self.repo_list = QtWidgets.QListWidget()
-        self.repo_list.setContextMenuPolicy(
-            QtCore.Qt.CustomContextMenu
-        )
-        self.repo_list.customContextMenuRequested.connect(
-            self._on_repo_list_context_menu
-        )
-        self.repo_list.itemDoubleClicked.connect(
-            self._on_repo_item_double_clicked
-        )
-        self.repo_list.currentItemChanged.connect(
-            self._on_repo_item_selected
-        )
-        layout.addWidget(self.repo_list)
-
-        self.repo_preview_label = QtWidgets.QLabel("Select a file to preview")
-        self.repo_preview_label.setAlignment(
-            QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter
-        )
-        self.repo_preview_label.setMinimumHeight(180)
-        self.repo_preview_label.setStyleSheet(
-            "color: gray; border: 1px dashed #ccc;"
-        )
-        layout.addWidget(self.repo_preview_label)
-
-        # Initial disabled state
-        self.repo_search.setEnabled(False)
-        self.repo_refresh_btn.setEnabled(False)
-        self.repo_list.setEnabled(False)
-
-        self._browser_content = container
-        return container
-
-    def _ensure_browser_host(self):
-        """Create the dockable browser host; fallback to floating if needed."""
-        if self._browser_dock:
-            return self._browser_dock
-
-        content = self._create_browser_content()
-
-        dock = QtWidgets.QDockWidget("Repository Browser", self)
-        dock.setObjectName("GitPDM_RepoBrowserDock")
-        dock.setAllowedAreas(
-            QtCore.Qt.LeftDockWidgetArea
-            | QtCore.Qt.RightDockWidgetArea
-            | QtCore.Qt.BottomDockWidgetArea
-        )
-        dock.setFeatures(
-            QtWidgets.QDockWidget.DockWidgetClosable
-            | QtWidgets.QDockWidget.DockWidgetMovable
-            | QtWidgets.QDockWidget.DockWidgetFloatable
-        )
-        dock.setWidget(content)
-
-        main_window = None
-        try:
-            import FreeCADGui
-            main_window = FreeCADGui.getMainWindow()
-        except Exception:
-            main_window = None
-
-        if main_window:
-            main_window.addDockWidget(
-                QtCore.Qt.RightDockWidgetArea, dock
-            )
-        else:
-            dock.setParent(self)
-            dock.setFloating(True)
-
-        self._browser_dock = dock
-        return dock
-
-    def _open_repo_browser(self):
-        """Show the dockable repository browser (dock or floating)."""
-        dock = self._ensure_browser_host()
-        dock.show()
-        dock.raise_()
-        dock.activateWindow()
+    # ========== File Browser (Sprint 4: Delegated to FileBrowserHandler) ==========
+    # Browser UI creation and management delegated to self._file_browser
 
     def _refresh_branch_list(self):
         """Refresh the list of local branches in the combo box."""
@@ -1737,10 +1592,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         repo_ok = self._current_repo_root is not None
         has_branches = len(self._local_branches) > 0
         busy = (
-            self._is_fetching
-            or self._is_pulling
-            or self._is_committing
-            or self._is_pushing
+            self._fetch_pull.is_busy()
+            or self._commit_push.is_busy()
             or self._is_switching_branch
             or self._job_runner.is_busy()
         )
@@ -2547,585 +2400,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # Refresh repo browser
         self._refresh_repo_browser_files()
 
-    def _on_fetch_clicked(self):
-        """
-        Handle Fetch button click.
-        Run fetch in background via job runner.
-        """
-        if not self._current_repo_root:
-            log.warning("No repository to fetch")
-            return
-        
-        if self._is_fetching:
-            log.debug("Fetch already in progress, ignoring click")
-            return
-        
-        # Clear previous messages
-        self._clear_status_message()
-        
-        # Set fetching state
-        self._is_fetching = True
-        self.fetch_btn.setText("Fetching…")
-        self.fetch_btn.setEnabled(False)
-        self._start_busy_feedback("Fetching…")
-        
-        log.info(f"Starting fetch from {self._remote_name}")
-        
-        # Build command
-        git_cmd = self._git_client._get_git_command()
-        command = [
-            git_cmd, "-C", self._current_repo_root,
-            "fetch", self._remote_name
-        ]
-        
-        # Run via job runner
-        self._job_runner.run_job(
-            "fetch",
-            command,
-            callback=self._on_fetch_job_finished
-        )
-
-    def _on_fetch_job_finished(self, job):
-        """
-        Callback when fetch job finishes
-        
-        Args:
-            job: dict - job result from job runner
-        """
-        # This callback runs in addition to _on_job_finished signal
-        # We'll do most work in _on_job_finished to avoid duplication
-        pass
-
-    def _on_pull_clicked(self):
-        """
-        Handle Pull button click.
-        Check for uncommitted changes; if present, show warning.
-        Then run pull sequence: fetch -> pull -> refresh.
-        """
-        log.info("Pull button clicked!")
-        
-        if not self._current_repo_root:
-            log.warning("No repository to pull")
-            return
-        
-        if self._is_pulling or self._is_fetching:
-            log.debug("Pull/fetch already in progress")
-            return
-        
-        # CRITICAL Guard: block pull while ANY FreeCAD files are open
-        # Pull can modify working tree files, corrupting open .FCStd files
-        open_docs = self._get_all_open_fcstd_documents()
-        if open_docs:
-            details_lines = ["Open FreeCAD documents:"]
-            details_lines.extend([f"  - {p}" for p in open_docs[:10]])
-            if len(open_docs) > 10:
-                details_lines.append(f"  ... and {len(open_docs) - 10} more")
-            
-            QtWidgets.QMessageBox.critical(
-                self,
-                "Close ALL Files First",
-                "⚠️ CRITICAL: Close ALL FreeCAD documents before pulling!\n\n"
-                "Git pull can modify files in the working tree, which will corrupt "
-                ".FCStd files that are currently open in FreeCAD.\n\n"
-                "Please close ALL FreeCAD documents (File → Close All) and try again.\n\n" +
-                "\n".join(details_lines)
-            )
-            log.warning("Pull blocked - open FreeCAD documents detected")
-            return
-        
-        log.info(f"Starting pull for repo: {self._current_repo_root}")
-        
-        # Clear previous messages
-        self._clear_status_message()
-        
-        # Check for uncommitted changes
-        has_changes = (
-            self._git_client.has_uncommitted_changes(
-                self._current_repo_root
-            )
-        )
-        
-        log.info(f"Has uncommitted changes: {has_changes}")
-        
-        if has_changes:
-            # Show warning dialog
-            dlg = dialogs.UncommittedChangesWarningDialog(self)
-            if not dlg.show_and_ask():
-                log.info("User cancelled pull due to changes")
-                return
-        
-        # Start pull sequence
-        self._start_pull_sequence()
-
-    def _start_pull_sequence(self):
-        """
-        Start the pull sequence: fetch -> pull -> refresh.
-        This is an async workflow that keeps UI responsive.
-        """
-        if not self._current_repo_root or not self._upstream_ref:
-            log.warning("Cannot start pull sequence")
-            return
-        
-        self._is_pulling = True
-        self.pull_btn.setEnabled(False)
-        self.fetch_btn.setEnabled(False)
-        self._update_operation_status("Pulling…")
-        self._start_busy_feedback("Pulling…")
-        
-        # Step 1: Fetch from origin
-        git_cmd = self._git_client._get_git_command()
-        command = [
-            git_cmd, "-C", self._current_repo_root,
-            "fetch", self._remote_name
-        ]
-        
-        log.info("Pull sequence: starting fetch")
-        self._job_runner.run_job(
-            "pull_fetch",
-            command,
-            callback=self._on_pull_fetch_completed
-        )
-
-    def _on_pull_fetch_completed(self, job):
-        """
-        Callback when fetch completes in pull sequence.
-        If successful, proceed to pull; otherwise abort.
-        """
-        result = job.get("result", {})
-        if not result.get("success"):
-            # Fetch failed - abort pull sequence
-            stderr = result.get("stderr", "")
-            log.warning(
-                f"Pull sequence aborted: fetch failed: {stderr}"
-            )
-            self._handle_pull_failed("Fetch failed before pull")
-            return
-        
-        log.info("Pull sequence: fetch completed, starting pull")
-        
-        # Step 2: Pull with ff-only
-        if not self._current_repo_root or not self._upstream_ref:
-            self._handle_pull_failed("Repository lost during pull")
-            return
-        
-        git_cmd = self._git_client._get_git_command()
-        # Extract branch from upstream (e.g., origin/main -> main)
-        if "/" in self._upstream_ref:
-            branch = self._upstream_ref.split("/", 1)[1]
-        else:
-            branch = self._upstream_ref
-        
-        command = [
-            git_cmd, "-C", self._current_repo_root,
-            "pull", "--ff-only", self._remote_name, branch
-        ]
-        
-        self._job_runner.run_job(
-            "pull_main",
-            command,
-            callback=self._on_pull_main_completed
-        )
-
-    def _on_pull_main_completed(self, job):
-        """
-        Callback when main pull command completes.
-        Refresh status if successful.
-        """
-        result = job.get("result", {})
-        success = result.get("success", False)
-        stderr = result.get("stderr", "")
-        
-        if not success:
-            # Pull failed - classify error and show dialog
-            error_code = (
-                self._git_client._classify_pull_error(stderr)
-            )
-            log.warning(
-                f"Pull failed with error {error_code}: {stderr}"
-            )
-            self._show_pull_error_dialog(error_code, stderr)
-            self._is_pulling = False
-            self._update_operation_status("Error")
-            self._stop_busy_feedback()
-            self._update_button_states()
-            return
-        
-        log.info("Pull completed successfully")
-        self._update_operation_status("Synced")
-        self._stop_busy_feedback()
-        
-        if self._current_repo_root:
-            branch = self._git_client.current_branch(
-                self._current_repo_root
-            )
-            self.branch_label.setText(branch)
-            
-            self._refresh_status_views(self._current_repo_root)
-            
-            self._update_upstream_info(self._current_repo_root)
-            # Refresh repo browser after pull
-            self._refresh_repo_browser_files()
-            
-            from datetime import datetime, timezone
-            pull_time = datetime.now(timezone.utc).isoformat()
-            settings.save_last_pull_at(pull_time)
-        
-        self._is_pulling = False
-        self._show_status_message(
-            "Synced to latest",
-            is_error=False
-        )
-        
-        # Clear success message after 3 seconds
-        QtCore.QTimer.singleShot(
-            3000, self._clear_status_message
-        )
-        
-        self._update_button_states()
-
-    def _handle_pull_failed(self, message):
-        """
-        Handle pull failure.
-        
-        Args:
-            message: str - failure message
-        """
-        self._is_pulling = False
-        self._update_operation_status("Error")
-        self._show_status_message(message, is_error=True)
-        self._stop_busy_feedback()
-        self._update_button_states()
-
-    # --- Sprint 5: Repo Browser logic ---
-
-    def _clear_repo_browser(self):
-        """Reset repo browser UI to empty state."""
-        self._ensure_browser_host()
-        self._all_cad_files = []
-        self.repo_list.clear()
-        self.repo_info_label.setText("Repo not selected.")
-        self.repo_info_label.setStyleSheet(
-            "color: gray; font-style: italic;"
-        )
-        self.repo_branch_indicator.setText("—")
-        self.repo_search.setEnabled(False)
-        self.repo_refresh_btn.setEnabled(False)
-        self.repo_list.setEnabled(False)
-
-    def _on_repo_refresh_files_clicked(self):
-        """Manual refresh of repo browser files."""
-        self._ensure_browser_host()
-        self._refresh_repo_browser_files()
-
-    def _refresh_repo_browser_files(self):
-        """
-        Load tracked CAD files asynchronously using git ls-files.
-        Always uses self._current_repo_root to ensure correct worktree/branch files.
-        """
-        self._ensure_browser_host()
-        if not self._git_client.is_git_available():
-            self.repo_info_label.setText("Git not available.")
-            self.repo_info_label.setStyleSheet(
-                "color: red; font-style: italic;"
-            )
-            self.repo_branch_indicator.setText("—")
-            self.repo_search.setEnabled(False)
-            self.repo_refresh_btn.setEnabled(False)
-            self.repo_list.setEnabled(False)
-            return
-
-        if not self._current_repo_root:
-            self._clear_repo_browser()
-            return
-
-        if self._is_listing_files or self._job_runner.is_busy():
-            # Avoid overlapping jobs; user can re-click later
-            return
-
-        # Update branch/worktree indicator
-        current_branch = self._git_client.current_branch(self._current_repo_root)
-        repo_name = os.path.basename(os.path.normpath(self._current_repo_root))
-        if current_branch:
-            self.repo_branch_indicator.setText(
-                f"📂 {repo_name}  •  🌿 {current_branch}"
-            )
-        else:
-            self.repo_branch_indicator.setText(f"📂 {repo_name}")
-
-        self._is_listing_files = True
-        self.repo_info_label.setText("Loading…")
-        self.repo_info_label.setStyleSheet(
-            "color: orange; font-style: italic;"
-        )
-        self.repo_search.setEnabled(False)
-        self.repo_refresh_btn.setEnabled(False)
-        self.repo_refresh_btn.setText("Loading…")
-        self.repo_list.setEnabled(False)
-        self.repo_list.clear()
-
-        git_cmd = self._git_client._get_git_command()
-        # CRITICAL: Always use self._current_repo_root to list files from correct worktree
-        args = [git_cmd, "-C", self._current_repo_root,
-                "ls-files", "-z"]
-
-        log.info(f"Listing files from: {self._current_repo_root} (branch: {current_branch})")
-
-        self._job_runner.run_job(
-            "list_files",
-            args,
-            callback=self._on_list_files_job_finished,
-        )
-
-    def _on_list_files_job_finished(self, job):
-        """Process ls-files output and populate browser."""
-        self._ensure_browser_host()
-        self._is_listing_files = False
-
-        result = job.get("result", {})
-        success = result.get("success", False)
-        stdout = result.get("stdout", "")
-
-        self.repo_refresh_btn.setText("Refresh Files")
-
-        if not success:
-            err = result.get("stderr", "")
-            self.repo_info_label.setText("Failed to list files.")
-            self.repo_info_label.setStyleSheet(
-                "color: red; font-style: italic;"
-            )
-            log.warning(f"ls-files failed: {err}")
-            self.repo_search.setEnabled(True)
-            self.repo_refresh_btn.setEnabled(True)
-            self.repo_list.setEnabled(True)
-            return
-
-        # Parse NUL-separated entries
-        tokens = [t for t in stdout.split("\0") if t]
-
-        # Filter strictly to FreeCAD native files; the browser only opens .FCStd
-        fcstd_set = []
-        for p in tokens:
-            name = p.rsplit("/", 1)[-1]
-            name = name.rsplit("\\", 1)[-1]
-            if name.lower().endswith(".fcstd"):
-                fcstd_set.append(p)
-
-        self._all_cad_files = fcstd_set
-        self._apply_repo_filter_and_populate()
-
-        self.repo_search.setEnabled(True)
-        self.repo_refresh_btn.setEnabled(True)
-        self.repo_list.setEnabled(True)
-
-        if not self._all_cad_files:
-            self.repo_info_label.setText("No FCStd files found.")
-            self.repo_info_label.setStyleSheet(
-                "color: gray; font-style: italic;"
-            )
-        else:
-            self.repo_info_label.setText(
-                f"Found {len(self._all_cad_files)} FCStd files."
-            )
-            self.repo_info_label.setStyleSheet(
-                "color: #4db6ac; font-style: italic;"
-            )
-
-    def _on_repo_search_changed(self, _text):
-        """Filter list on search text change (in-memory)."""
-        self._ensure_browser_host()
-        self._apply_repo_filter_and_populate()
-
-    def _apply_repo_filter_and_populate(self):
-        """Apply filter and update list widget."""
-        self._ensure_browser_host()
-        self.repo_list.clear()
-        self._clear_repo_preview()
-        q = self.repo_search.text().strip().lower()
-        if not self._all_cad_files:
-            return
-        for rel in self._all_cad_files:
-            if not q or q in rel.lower():
-                self.repo_list.addItem(rel)
-
-    def _on_repo_item_double_clicked(self, item):
-        """Open double-clicked file if it's a .FCStd."""
-        self._ensure_browser_host()
-        rel = item.text()
-        self._open_repo_file(rel)
-
-    def _on_repo_item_selected(self, current, _previous):
-        """Show preview for the selected repository item."""
-        if not current:
-            self._clear_repo_preview()
-            return
-        rel = current.text()
-        self._show_repo_preview(rel)
-
-    def _on_repo_list_context_menu(self, pos):
-        """Show context menu for repo list items."""
-        self._ensure_browser_host()
-        item = self.repo_list.itemAt(pos)
-        menu = QtWidgets.QMenu(self)
-
-        act_open = menu.addAction("Open")
-        act_reveal = menu.addAction("Reveal in Explorer/Finder")
-        act_copy = menu.addAction("Copy Relative Path")
-
-        chosen = menu.exec_(self.repo_list.mapToGlobal(pos))
-        if not chosen:
-            return
-
-        rel = item.text() if item else None
-        if chosen == act_copy and rel:
-            QtWidgets.QApplication.clipboard().setText(rel)
-            return
-
-        if not rel:
-            return
-
-        if chosen == act_open:
-            self._open_repo_file(rel)
-        elif chosen == act_reveal:
-            self._reveal_in_file_manager(rel)
-
-    def _open_repo_file(self, rel):
-        """Open the given repo-relative path in FreeCAD."""
-        self._ensure_browser_host()
-        if not self._current_repo_root:
-            log.warning("Cannot open file: no repo root set")
-            return
-        import os
-        abs_path = os.path.normpath(
-            os.path.join(self._current_repo_root, rel)
-        )
-
-        # Log which file we're opening and from which root
-        log.info(f"Opening file from repo browser: {rel}")
-        log.info(f"  Absolute path: {abs_path}")
-        log.info(f"  Current repo root: {self._current_repo_root}")
-
-        # Only allow opening FCStd files
-        name = abs_path.rsplit("/", 1)[-1]
-        name = name.rsplit("\\", 1)[-1]
-        is_fcstd = name.lower().endswith(".fcstd")
-        if not is_fcstd:
-            msg = QtWidgets.QMessageBox(self)
-            msg.setIcon(QtWidgets.QMessageBox.Information)
-            msg.setWindowTitle("Unsupported File Type")
-            msg.setText("Only .FCStd files can be opened directly.")
-            msg.exec()
-            return
-
-        if not os.path.isfile(abs_path):
-            log.error(f"File does not exist: {abs_path}")
-            msg = QtWidgets.QMessageBox(self)
-            msg.setIcon(QtWidgets.QMessageBox.Warning)
-            msg.setWindowTitle("File Missing")
-            msg.setText(
-                "File not present in working tree. Try Pull/Fetch."
-            )
-            msg.exec()
-            return
-
-        # Show preview (if available) even before opening
-        self._show_repo_preview(rel)
-
-        # Check for unsaved documents (MVP best-effort)
-        try:
-            import FreeCAD
-            docs = FreeCAD.listDocuments()
-            has_dirty = False
-            for d in docs.values():
-                # Document.Modified may exist; ignore if missing
-                try:
-                    if getattr(d, "Modified", False):
-                        has_dirty = True
-                        break
-                except Exception:
-                    pass
-            if has_dirty:
-                ask = QtWidgets.QMessageBox(self)
-                ask.setIcon(QtWidgets.QMessageBox.Warning)
-                ask.setWindowTitle("Unsaved Changes")
-                ask.setText(
-                    "There are unsaved changes. Open another file?"
-                )
-                ask.setStandardButtons(
-                    QtWidgets.QMessageBox.No | QtWidgets.QMessageBox.Yes
-                )
-                res = ask.exec()
-                if res != QtWidgets.QMessageBox.Yes:
-                    return
-        except Exception:
-            # If FreeCAD API differs, proceed without blocking
-            pass
-
-        # Set working directory to repo folder before opening
-        # This ensures "Save As" dialog defaults to the repo folder
-        self._set_freecad_working_directory(self._current_repo_root)
-        
-        # Open document in FreeCAD
-        try:
-            import FreeCAD
-            FreeCAD.open(abs_path)
-            log.info(f"Opened file in FreeCAD: {abs_path}")
-            
-            # Re-confirm working directory after opening (some FreeCAD versions reset it)
-            self._set_freecad_working_directory(self._current_repo_root)
-        except Exception:
-            try:
-                import FreeCADGui
-                FreeCADGui.open(abs_path)
-                log.info(f"Opened file via FreeCADGui: {abs_path}")
-                
-                # Re-confirm working directory
-                self._set_freecad_working_directory(self._current_repo_root)
-            except Exception as e:
-                log.error(f"Failed to open file: {e}")
-                msg = QtWidgets.QMessageBox(self)
-                msg.setIcon(QtWidgets.QMessageBox.Critical)
-                msg.setWindowTitle("Open Failed")
-                msg.setText("Could not open the file in FreeCAD.")
-                msg.exec()
-
-    def _reveal_in_file_manager(self, rel):
-        """Reveal the file in the OS file manager (MVP)."""
-        if not self._current_repo_root:
-            return
-        import os
-        import sys
-        import subprocess as sp
-        abs_path = os.path.normpath(
-            os.path.join(self._current_repo_root, rel)
-        )
-        folder = os.path.dirname(abs_path)
-
-        if sys.platform.startswith("win"):
-            try:
-                os.startfile(folder)
-            except Exception as e:
-                log.error(f"Reveal failed: {e}")
-        elif sys.platform == "darwin":
-            try:
-                sp.run(["open", "-R", abs_path], timeout=10)
-            except Exception as e:
-                log.error(f"Reveal failed: {e}")
-        else:
-            try:
-                sp.run(["xdg-open", folder], timeout=10)
-            except Exception as e:
-                log.error(f"Reveal failed: {e}")
-
-    def _show_pull_error_dialog(self, error_code, stderr):
-        """
-        Show detailed error dialog for pull failure.
-        
-        Args:
-            error_code: str - error classification
-            stderr: str - raw error output
-        """
-        dlg = dialogs.PullErrorDialog(error_code, stderr, self)
-        dlg.exec()
+    # Fetch/pull button handlers delegated to self._fetch_pull
 
     def _update_operation_status(self, status_text):
         """
@@ -3189,10 +2464,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         """Return UI to Ready after a short delay if idle."""
         def _to_ready():
             if not (
-                self._is_fetching
-                or self._is_pulling
-                or self._is_committing
-                or self._is_pushing
+                self._fetch_pull.is_busy()
+                or self._commit_push.is_busy()
                 or self._job_runner.is_busy()
             ):
                 self._update_operation_status(status_text)
@@ -3286,516 +2559,15 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
     def _update_commit_push_button_default_label(self):
         """Set the combined button label based on workflow mode."""
-        if self._workflow_mode == 'commit':
-            self.commit_push_btn.setText("Commit")
-        elif self._workflow_mode == 'push':
-            self.commit_push_btn.setText("Push")
-        elif self._workflow_mode == 'publish':
-            self.commit_push_btn.setText("Publish Branch")
-        else:
-            self.commit_push_btn.setText("Commit & Push")
+        self._commit_push.update_commit_push_button_label()
 
     def _on_commit_message_changed(self):
         """Called when commit message text changes (debounced)."""
         self._button_update_timer.stop()
         self._button_update_timer.start()
 
-    def _on_compact_commit_clicked(self):
-        """Commit handler for the compact mode button."""
-        # If compact message has text, sync it to the main editor for reuse
-        try:
-            if hasattr(self, "compact_commit_message") and hasattr(self, "commit_message"):
-                text = self.compact_commit_message.text().strip()
-                if text:
-                    self.commit_message.setPlainText(text)
-        except Exception:
-            pass
-        # Route to regular commit flow
-        self._on_commit_clicked()
 
-    def _on_commit_push_clicked(self):
-        """Handle Commit & Push / Publish button click (routes to appropriate flow)."""
-        if self._workflow_mode == 'both':
-            self._start_commit_push_sequence()
-        elif self._workflow_mode == 'commit':
-            self._on_commit_clicked()
-        elif self._workflow_mode == 'push':
-            self._on_push_clicked()
-        elif self._workflow_mode == 'publish':
-            self._on_publish_clicked()
-    
-    def _start_commit_push_sequence(self):
-        """Start combined commit & push workflow."""
-        if not self._current_repo_root:
-            log.warning("No repository to commit+push")
-            return
 
-        if (
-            self._is_committing
-            or self._is_pushing
-            or self._job_runner.is_busy()
-        ):
-            log.debug("Job running, commit+push ignored")
-            return
-
-        message = self.commit_message.toPlainText().strip()
-        if not message:
-            self._show_status_message(
-                "Commit message required", is_error=True
-            )
-            return
-
-        self._clear_status_message()
-        self._is_committing = True
-        self.commit_push_btn.setText("Committing…")
-        self._pending_commit_message = message
-        self._update_button_states()
-        self._start_busy_feedback("Committing…")
-
-        log.info("Starting commit & push sequence")
-
-        git_cmd = self._git_client._get_git_command()
-        args = [git_cmd, "-C", self._current_repo_root, "add", "-A"]
-
-        self._job_runner.run_job(
-            "commit_push_stage",
-            args,
-            callback=self._on_commit_push_stage_completed,
-        )
-
-    def _on_commit_push_stage_completed(self, job):
-        """Callback after staging in commit & push sequence."""
-        result = job.get("result", {})
-        if not result.get("success"):
-            log.warning(
-                f"Stage failed: {result.get('stderr', '')}"
-            )
-            self._handle_commit_push_failed("Stage failed")
-            return
-
-        log.debug("Stage completed, running commit")
-
-        if not self._current_repo_root:
-            self._handle_commit_push_failed("Repository lost")
-            return
-
-        message = self._pending_commit_message
-        if not message:
-            self._handle_commit_push_failed("No commit message")
-            return
-
-        git_cmd = self._git_client._get_git_command()
-        args = [
-            git_cmd, "-C", self._current_repo_root, "commit", "-m", message
-        ]
-
-        self._job_runner.run_job(
-            "commit_push_commit",
-            args,
-            callback=self._on_commit_push_commit_completed,
-        )
-
-    def _on_commit_push_commit_completed(self, job):
-        """Callback after commit in commit & push sequence."""
-        result = job.get("result", {})
-        success = result.get("success", False)
-        stderr = result.get("stderr", "")
-
-        if not success:
-            code = self._git_client._classify_commit_error(stderr)
-            if code == "NOTHING_TO_COMMIT":
-                self._show_status_message(
-                    "No changes to commit", is_error=False
-                )
-            elif code == "MISSING_IDENTITY":
-                self._show_commit_identity_error_dialog()
-            else:
-                self._show_status_message(
-                    f"Commit failed: {stderr[:80]}", is_error=True
-                )
-            log.warning(f"Commit failed: {code}")
-            self._handle_commit_push_failed(
-                "Commit failed, skipping push"
-            )
-            return
-
-        log.info("Commit succeeded, now pushing")
-        self.commit_push_btn.setText("Pushing…")
-        self._is_committing = False
-        self._is_pushing = True
-        self._show_status_message("Pushing…", is_error=False)
-
-        git_cmd = self._git_client._get_git_command()
-
-        has_upstream = self._git_client.has_upstream(
-            self._current_repo_root
-        )
-
-        if has_upstream:
-            args = [git_cmd, "-C", self._current_repo_root, "push"]
-        else:
-            args = [
-                git_cmd, "-C", self._current_repo_root, "push", "-u",
-                self._remote_name, "HEAD"
-            ]
-
-        self._job_runner.run_job(
-            "commit_push_push",
-            args,
-            callback=self._on_commit_push_push_completed,
-        )
-
-    def _on_commit_push_push_completed(self, job):
-        """Callback after push in commit & push sequence."""
-        result = job.get("result", {})
-        success = result.get("success", False)
-        stderr = result.get("stderr", "")
-
-        self._is_pushing = False
-        self._update_commit_push_button_default_label()
-        self._stop_busy_feedback()
-
-        if not success:
-            code = self._git_client._classify_push_error(stderr)
-            self._show_push_error_dialog(code, stderr)
-            log.warning(f"Push failed: {code}")
-            self._update_button_states()
-            return
-
-        log.info("Commit & push completed successfully")
-
-        if hasattr(self, "commit_message"):
-            self.commit_message.clear()
-        if hasattr(self, "compact_commit_message"):
-            self.compact_commit_message.clear()
-
-        if self._current_repo_root:
-            branch = self._git_client.current_branch(
-                self._current_repo_root
-            )
-            self.branch_label.setText(branch)
-
-            self._refresh_status_views(self._current_repo_root)
-
-            self._update_upstream_info(self._current_repo_root)
-
-        self._show_status_message("Commit & push completed", is_error=False)
-
-        QtCore.QTimer.singleShot(2000, self._clear_status_message)
-
-        self._update_button_states()
-
-    def _handle_commit_push_failed(self, message):
-        """Handle commit & push failure."""
-        self._is_committing = False
-        self._is_pushing = False
-        self.commit_push_btn.setText("Commit & Push")
-        self._pending_commit_message = ""
-        self._stop_busy_feedback()
-        self._show_status_message(message, is_error=True)
-        self._update_button_states()
-
-    def _on_commit_clicked(self):
-        """Handle Commit button click."""
-        if not self._current_repo_root:
-            log.warning("No repository to commit")
-            return
-
-        if self._is_committing or self._job_runner.is_busy():
-            log.debug("Job running, commit ignored")
-            return
-
-        # Prefer message from main editor; fallback to compact field
-        message = self.commit_message.toPlainText().strip() if hasattr(self, "commit_message") else ""
-        if not message and hasattr(self, "compact_commit_message"):
-            message = self.compact_commit_message.text().strip()
-        if not message:
-            self._show_status_message(
-                "Commit message required", is_error=True
-            )
-            return
-
-        if self._behind_count > 0:
-            behind_msg = (
-                f"You're {self._behind_count} commits behind upstream. "
-                "Consider Pull before pushing."
-            )
-            self._show_status_message(behind_msg, is_error=False)
-
-        self._clear_status_message()
-        self._is_committing = True
-        self.commit_push_btn.setText("Committing…")
-        self._pending_commit_message = message
-        self._update_button_states()
-        self._start_busy_feedback("Committing…")
-
-        log.info("Starting commit sequence")
-
-        git_cmd = self._git_client._get_git_command()
-        args = [git_cmd, "-C", self._current_repo_root, "add", "-A"]
-
-        self._job_runner.run_job(
-            "commit_stage",
-            args,
-            callback=self._on_commit_stage_completed,
-        )
-
-    def _on_commit_stage_completed(self, job):
-        """Callback after staging completes."""
-        result = job.get("result", {})
-        if not result.get("success"):
-            log.warning(
-                f"Stage failed: {result.get('stderr', '')}"
-            )
-            self._handle_commit_failed("Stage failed")
-            return
-
-        log.debug("Stage completed, running commit")
-
-        if not self._current_repo_root:
-            self._handle_commit_failed("Repository lost")
-            return
-
-        message = self._pending_commit_message
-        if not message:
-            self._handle_commit_failed("No commit message")
-            return
-
-        git_cmd = self._git_client._get_git_command()
-        args = [git_cmd, "-C", self._current_repo_root, "commit", "-m", message]
-
-        self._job_runner.run_job(
-            "commit_main",
-            args,
-            callback=self._on_commit_main_completed,
-        )
-
-    def _on_commit_main_completed(self, job):
-        """Callback after commit completes."""
-        result = job.get("result", {})
-        success = result.get("success", False)
-        stderr = result.get("stderr", "")
-
-        self._is_committing = False
-        self._update_commit_push_button_default_label()
-        self._pending_commit_message = ""
-        self._stop_busy_feedback()
-
-        if not success:
-            code = self._git_client._classify_commit_error(stderr)
-            if code == "NOTHING_TO_COMMIT":
-                self._show_status_message(
-                    "No changes to commit", is_error=False
-                )
-            elif code == "MISSING_IDENTITY":
-                self._show_commit_identity_error_dialog()
-            else:
-                self._show_status_message(
-                    f"Commit failed: {stderr[:80]}", is_error=True
-                )
-            log.warning(f"Commit failed: {code}")
-            self._update_button_states()
-            return
-
-        log.info("Commit created successfully")
-        if hasattr(self, "commit_message"):
-            self.commit_message.clear()
-        if hasattr(self, "compact_commit_message"):
-            self.compact_commit_message.clear()
-
-        if self._current_repo_root:
-            branch = self._git_client.current_branch(
-                self._current_repo_root
-            )
-            self.branch_label.setText(branch)
-            self._refresh_status_views(self._current_repo_root)
-            self._update_upstream_info(self._current_repo_root)
-
-        self._show_status_message(
-            "Commit created", is_error=False
-        )
-
-        QtCore.QTimer.singleShot(2000, self._clear_status_message)
-        self._update_button_states()
-
-    def _handle_commit_failed(self, message):
-        """Handle commit failure."""
-        self._is_committing = False
-        self._update_commit_push_button_default_label()
-        self._show_status_message(message, is_error=True)
-        self._stop_busy_feedback()
-        self._update_button_states()
-
-    def _show_commit_identity_error_dialog(self):
-        """Show error about missing git identity."""
-        msg_box = QtWidgets.QMessageBox(self)
-        msg_box.setIcon(QtWidgets.QMessageBox.Warning)
-        msg_box.setWindowTitle("Git Identity Not Configured")
-        msg_box.setText(
-            "Git needs your name and email before committing."
-        )
-        details = (
-            "Configure in GitHub Desktop or run:\n\n"
-            "git config --global user.name \"Your Name\"\n"
-            "git config --global user.email \"you@example.com\""
-        )
-        msg_box.setInformativeText(details)
-        msg_box.setStandardButtons(QtWidgets.QMessageBox.Ok)
-        msg_box.exec()
-
-    def _on_push_clicked(self):
-        """Handle Push button click."""
-        if not self._current_repo_root:
-            log.warning("No repository to push")
-            return
-
-        if self._is_pushing or self._job_runner.is_busy():
-            log.debug("Job running, push ignored")
-            return
-
-        if self._behind_count > 0:
-            should_continue = self._show_push_behind_warning()
-            if not should_continue:
-                log.info("User cancelled push due to being behind")
-                return
-
-        self._clear_status_message()
-        self._is_pushing = True
-        self.commit_push_btn.setText("Pushing…")
-        self._update_button_states()
-        self._start_busy_feedback("Pushing…")
-
-        log.info("Starting push")
-
-        git_cmd = self._git_client._get_git_command()
-
-        has_upstream = self._git_client.has_upstream(
-            self._current_repo_root
-        )
-
-        if has_upstream:
-            args = [git_cmd, "-C", self._current_repo_root, "push"]
-        else:
-            args = [
-                git_cmd, "-C", self._current_repo_root, "push", "-u",
-                self._remote_name, "HEAD"
-            ]
-
-        self._job_runner.run_job(
-            "push_main",
-            args,
-            callback=self._on_push_main_completed,
-        )
-
-    def _on_push_main_completed(self, job):
-        """Callback when push completes."""
-        result = job.get("result", {})
-        success = result.get("success", False)
-        stderr = result.get("stderr", "")
-
-        self._is_pushing = False
-        self._update_commit_push_button_default_label()
-
-        if not success:
-            # Check for upstream mismatch error
-            if "upstream branch" in stderr.lower() and "does not match" in stderr.lower():
-                # Upstream mismatch - offer to use current branch name
-                reply = QtWidgets.QMessageBox.question(
-                    self,
-                    "Upstream Branch Mismatch",
-                    f"The current upstream configuration doesn't match your branch name.\\n\\n"
-                    f"Do you want to push to 'origin/{self._git_client.current_branch(self._current_repo_root)}' "
-                    f"and set it as upstream?\\n\\n"
-                    f"This will create a new remote branch with the same name.",
-                    QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-                    QtWidgets.QMessageBox.Yes
-                )
-                if reply == QtWidgets.QMessageBox.Yes:
-                    # Retry with explicit branch name
-                    self._retry_push_with_branch_name()
-                    return
-            
-            code = self._git_client._classify_push_error(stderr)
-            self._show_push_error_dialog(code, stderr)
-            log.warning(f"Push failed: {code}")
-            self._stop_busy_feedback()
-            self._update_button_states()
-            return
-
-        log.info("Push completed successfully")
-
-        # Clear any leftover commit message after a successful push
-        if hasattr(self, "commit_message"):
-            self.commit_message.clear()
-
-        if self._current_repo_root:
-            self._update_upstream_info(self._current_repo_root)
-
-        self._show_status_message("Push completed", is_error=False)
-
-        QtCore.QTimer.singleShot(2000, self._clear_status_message)
-
-        self._stop_busy_feedback()
-
-        self._update_button_states()
-
-    def _retry_push_with_branch_name(self):
-        """Retry push using current branch name explicitly."""
-        if not self._current_repo_root:
-            return
-        
-        current_branch = self._git_client.current_branch(self._current_repo_root)
-        if not current_branch or current_branch.startswith("("):
-            QtWidgets.QMessageBox.warning(
-                self,
-                "Cannot Push",
-                "Cannot determine current branch name."
-            )
-            return
-        
-        self._is_pushing = True
-        self._start_busy_feedback("Pushing…")
-        
-        git_cmd = self._git_client._get_git_command()
-        # Use: git push -u origin <branch>:<branch>
-        # This explicitly pushes to a branch with the same name
-        args = [
-            git_cmd, "-C", self._current_repo_root,
-            "push", "-u", self._remote_name, f"{current_branch}:{current_branch}"
-        ]
-        
-        log.info(f"Retrying push with explicit branch: {current_branch}")
-        
-        self._job_runner.run_job(
-            "push_retry",
-            args,
-            callback=self._on_push_main_completed,
-        )
-
-    def _show_push_behind_warning(self):
-        """Show warning if behind upstream."""
-        msg_box = QtWidgets.QMessageBox(self)
-        msg_box.setIcon(QtWidgets.QMessageBox.Warning)
-        msg_box.setWindowTitle("Behind Upstream")
-        msg_box.setText(
-            f"You're {self._behind_count} commits behind upstream. "
-            "Push may be rejected."
-        )
-        msg_box.setInformativeText(
-            "Consider Pull first to sync with upstream."
-        )
-        msg_box.setStandardButtons(
-            QtWidgets.QMessageBox.Cancel
-            | QtWidgets.QMessageBox.Ok
-        )
-        msg_box.setDefaultButton(QtWidgets.QMessageBox.Cancel)
-        result = msg_box.exec()
-        return result == QtWidgets.QMessageBox.Ok
-
-    def _show_push_error_dialog(self, error_code, stderr):
-        """Show error dialog for push failure."""
-        dlg = dialogs.PushErrorDialog(error_code, stderr, self)
-        dlg.exec()
 
     def _on_refresh_clicked(self):
         """
@@ -4007,67 +2779,11 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         log.debug(f"Job finished: {job_type}")
         
         if job_type == "fetch":
-            self._handle_fetch_result(job)
+            self._fetch_pull.handle_fetch_result(job)
         elif job_type == "stage_previews":
             self._handle_stage_previews_result(job)
 
-    def _handle_fetch_result(self, job):
-        """
-        Handle fetch job completion
-        
-        Args:
-            job: dict - job result from job runner
-        """
-        result = job.get("result", {})
-        success = result.get("success", False)
-        
-        # Reset fetching state
-        self._is_fetching = False
-        self.fetch_btn.setText("Fetch")
-        self._stop_busy_feedback()
-        
-        if success:
-            # Fetch succeeded
-            from datetime import datetime, timezone
-            fetch_time = datetime.now(timezone.utc).isoformat()
-            settings.save_last_fetch_at(fetch_time)
-            
-            # Update UI
-            self._display_last_fetch()
-            
-            # Re-evaluate upstream and ahead/behind
-            if self._current_repo_root:
-                self._update_upstream_info(self._current_repo_root)
-            
-            self._show_status_message(
-                "Fetch completed successfully", is_error=False
-            )
-            log.info("Fetch completed successfully")
-            
-            # Clear success message after 3 seconds
-            QtCore.QTimer.singleShot(
-                3000, self._clear_status_message
-            )
-        else:
-            # Fetch failed
-            stderr = result.get("stderr", "")
-            exit_code = result.get("exit_code", -1)
-            
-            # Create user-friendly error message
-            if "could not resolve host" in stderr.lower():
-                error_msg = "Fetch failed: Network error"
-            elif "permission denied" in stderr.lower():
-                error_msg = "Fetch failed: Permission denied"
-            elif exit_code == -1:
-                error_msg = "Fetch failed: Process error"
-            else:
-                error_msg = f"Fetch failed (exit {exit_code})"
-            
-            self._show_status_message(error_msg, is_error=True)
-            log.warning(f"Fetch failed: {stderr}")
-        
-        # Update button states
-        self._update_button_states()
+    # Fetch result handling delegated to self._fetch_pull handler
 
     # --- Sprint 6: Generate Previews ---
 
@@ -4390,54 +3106,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # Refresh status views
         self._refresh_status_views(self._current_repo_root)
 
-    def _show_repo_preview(self, rel):
-        """Load and display preview.png for the given repo-relative file."""
-        try:
-            if not hasattr(self, "repo_preview_label"):
-                return
-            if not self._current_repo_root:
-                self._clear_repo_preview()
-                return
-            rel = (rel or "").strip()
-            if not rel:
-                self._clear_repo_preview()
-                return
-
-            preview_dir = mapper.to_preview_dir_rel(rel)
-            png_rel = preview_dir + "preview.png"
-            abs_png = core_paths.safe_join_repo(
-                self._current_repo_root, png_rel
-            )
-            if not abs_png or not abs_png.exists():
-                self.repo_preview_label.setText("No preview found")
-                self.repo_preview_label.setPixmap(QtGui.QPixmap())
-                return
-
-            pix = QtGui.QPixmap(str(abs_png))
-            if pix.isNull():
-                self.repo_preview_label.setText("Preview could not be loaded")
-                self.repo_preview_label.setPixmap(QtGui.QPixmap())
-                return
-
-            target = self.repo_preview_label.size() - QtCore.QSize(8, 8)
-            scaled = pix.scaled(
-                max(16, target.width()),
-                max(16, target.height()),
-                QtCore.Qt.KeepAspectRatio,
-                QtCore.Qt.SmoothTransformation,
-            )
-            self.repo_preview_label.setPixmap(scaled)
-            self.repo_preview_label.setText("")
-        except Exception as e:
-            log.warning(f"Failed to load preview: {e}")
-            self.repo_preview_label.setText("Preview error")
-            self.repo_preview_label.setPixmap(QtGui.QPixmap())
-
-    def _clear_repo_preview(self):
-        if hasattr(self, "repo_preview_label"):
-            self.repo_preview_label.setPixmap(QtGui.QPixmap())
-            self.repo_preview_label.setText("Select a file to preview")
-        QtCore.QTimer.singleShot(3000, self._clear_status_message)
+    # Preview operations delegated to self._file_browser handler
     
     def _handle_publish_error(self, result):
         """Display publish error to user."""
@@ -4493,422 +3162,23 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             )
         # Initialize preview status area
         self._update_preview_status_labels()
-    # ========== OAuth Device Flow Handlers (Sprint OAUTH-1) ==========
-
-    def _refresh_github_connection_status(self):
-        """
-        Check if GitHub token exists in credential store and update UI.
-        Called on startup to restore connection state.
-        """
-        try:
-            store = self._services.token_store()
-            host = settings.load_github_host()
-            account = settings.load_github_login()
-            
-            token = store.load(host, account)
-            is_connected = token is not None
-            
-            settings.save_github_connected(is_connected)
-            self._update_github_ui_state()
-            
-            if is_connected:
-                log.info(f"GitHub token found in credential store")
-            else:
-                log.debug(f"No GitHub token in credential store")
-        except Exception as e:
-            log.debug(f"Failed to refresh GitHub status: {e}")
-            self._update_github_ui_state()
-
-    def _update_github_ui_state(self):
-        """
-        Update GitHub UI buttons and status label based on connection state.
-        """
-        is_connected = settings.load_github_connected()
-        login = settings.load_github_login()
-        
-        if is_connected and login:
-            self.github_status_label.setText(f"GitHub: Signed in as {login}")
-            self._set_strong_label(self.github_status_label, "green")
-        elif is_connected:
-            self.github_status_label.setText("GitHub: Connected")
-            self._set_strong_label(self.github_status_label, "green")
-        else:
-            self.github_status_label.setText("GitHub: Not connected")
-            self._set_strong_label(self.github_status_label, "gray")
-        
-        # Enable/disable buttons
-        self.github_connect_btn.setEnabled(
-            not self._oauth_in_progress and not is_connected
-        )
-        self.github_disconnect_btn.setEnabled(
-            not self._oauth_in_progress and is_connected
-        )
-        self.github_refresh_btn.setEnabled(not self._oauth_in_progress)
+    # ========== GitHub OAuth/Auth (Sprint 4: Delegated to GitHubAuthHandler) ==========
 
     def _on_github_connect_clicked(self):
         """Handle Connect GitHub button click."""
-        if self._oauth_in_progress:
-            log.warning("OAuth flow already in progress")
-            return
-        
-        try:
-            from freecad_gitpdm.auth import config as auth_config
-            
-            # Check if OAuth is configured
-            client_id = auth_config.get_client_id()
-            if not client_id:
-                QtWidgets.QMessageBox.warning(
-                    self,
-                    "GitHub OAuth Not Configured",
-                    "Client ID not found. Please check docs/OAUTH_DEVICE_FLOW.md"
-                )
-                return
-            
-            log.info("Starting GitHub OAuth Device Flow")
-            self._oauth_in_progress = True
-            self._update_github_ui_state()
-            
-            # Start request_device_code in background
-            self._job_runner.run_callable(
-                "request_device_code",
-                lambda: self._request_device_code_sync(client_id, auth_config),
-                on_success=self._on_device_code_received,
-                on_error=self._on_oauth_error
-            )
-        except Exception as e:
-            log.error(f"Connect button error: {e}")
-            self._oauth_in_progress = False
-            self._update_github_ui_state()
-            QtWidgets.QMessageBox.critical(
-                self,
-                "GitHub Connection Error",
-                f"Failed to start OAuth flow: {str(e)}"
-            )
-
-    def _request_device_code_sync(self, client_id, auth_config):
-        """Sync wrapper for request_device_code (runs in worker thread)."""
-        from freecad_gitpdm.auth.oauth_device_flow import request_device_code
-        
-        return request_device_code(
-            client_id,
-            auth_config.DEFAULT_SCOPES,
-            auth_config.DEVICE_CODE_URL
-        )
-
-    def _on_device_code_received(self, device_code_response):
-        """
-        Called when device code is received.
-        Shows dialog with verification code and starts token polling.
-        """
-        try:
-            log.info(f"Device code received: {device_code_response.user_code}")
-            
-            # Create and show dialog
-            self._show_oauth_dialog(device_code_response)
-            
-            # Start polling for token
-            self._start_token_polling(device_code_response)
-        except Exception as e:
-            log.error(f"Error processing device code: {e}")
-            self._on_oauth_error(e)
-
-    def _show_oauth_dialog(self, device_code_response):
-        """
-        Create and show the OAuth authorization dialog.
-        Shows user code, offers Copy and Open GitHub buttons.
-        """
-        self._oauth_dialog = QtWidgets.QDialog(self)
-        self._oauth_dialog.setWindowTitle("Connect GitHub")
-        self._oauth_dialog.setMinimumWidth(400)
-        self._oauth_dialog.setModal(True)
-        
-        layout = QtWidgets.QVBoxLayout()
-        layout.setSpacing(12)
-        layout.setContentsMargins(12, 12, 12, 12)
-        
-        # Instructions
-        instructions = QtWidgets.QLabel()
-        instructions.setWordWrap(True)
-        instructions.setText(
-            "We opened a GitHub page in your browser.\n"
-            "Enter this code on the GitHub page:"
-        )
-        layout.addWidget(instructions)
-        
-        # Code display (large, monospace)
-        code_label = QtWidgets.QLabel(device_code_response.user_code)
-        code_font = QtGui.QFont("Courier")
-        code_font.setPointSize(16)
-        code_font.setBold(True)
-        code_label.setFont(code_font)
-        code_label.setAlignment(QtCore.Qt.AlignCenter)
-        code_label.setStyleSheet("color: darkblue; border: 1px solid gray; padding: 8px;")
-        code_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        layout.addWidget(code_label)
-        
-        # Status label (initially shows "Waiting...")
-        self._oauth_status_label = QtWidgets.QLabel("Waiting for authorization…")
-        self._oauth_status_label.setStyleSheet("color: orange; font-style: italic;")
-        self._oauth_status_label.setAlignment(QtCore.Qt.AlignCenter)
-        layout.addWidget(self._oauth_status_label)
-        
-        # Buttons
-        buttons_layout = QtWidgets.QHBoxLayout()
-        buttons_layout.setSpacing(6)
-        
-        copy_btn = QtWidgets.QPushButton("Copy Code")
-        copy_btn.clicked.connect(
-            lambda: self._copy_to_clipboard(device_code_response.user_code)
-        )
-        buttons_layout.addWidget(copy_btn)
-        
-        open_btn = QtWidgets.QPushButton("Open GitHub Page")
-        open_btn.clicked.connect(
-            lambda: self._open_verification_uri(
-                device_code_response.verification_uri
-            )
-        )
-        buttons_layout.addWidget(open_btn)
-        
-        cancel_btn = QtWidgets.QPushButton("Cancel")
-        cancel_btn.clicked.connect(self._on_oauth_dialog_cancel)
-        buttons_layout.addWidget(cancel_btn)
-        
-        layout.addLayout(buttons_layout)
-        layout.addStretch()
-        
-        self._oauth_dialog.setLayout(layout)
-        
-        # Auto-copy code to clipboard
-        self._copy_to_clipboard(device_code_response.user_code)
-        
-        # Open GitHub page in browser
-        self._open_verification_uri(device_code_response.verification_uri)
-        
-        self._oauth_dialog.show()
-
-    def _copy_to_clipboard(self, text):
-        """Copy text to clipboard."""
-        try:
-            clipboard = QtWidgets.QApplication.clipboard()
-            clipboard.setText(text)
-            log.debug(f"Copied to clipboard")
-        except Exception as e:
-            log.warning(f"Failed to copy to clipboard: {e}")
-
-    def _open_verification_uri(self, uri):
-        """Open verification URI in default browser."""
-        try:
-            QtGui.QDesktopServices.openUrl(QtCore.QUrl(uri))
-            log.debug(f"Opened browser to {uri}")
-        except Exception as e:
-            log.warning(f"Failed to open browser: {e}")
-
-    def _on_oauth_dialog_cancel(self):
-        """Handle Cancel button in OAuth dialog."""
-        if self._oauth_cancel_token:
-            self._oauth_cancel_token.cancel()
-        if self._oauth_dialog:
-            self._oauth_dialog.close()
-        self._oauth_in_progress = False
-        self._update_github_ui_state()
-        log.info("OAuth flow cancelled by user")
-
-    def _start_token_polling(self, device_code_response):
-        """Start polling for token in background thread."""
-        try:
-            from freecad_gitpdm.auth import config as auth_config
-            
-            client_id = auth_config.get_client_id()
-            
-            # Create cancel token
-            self._oauth_cancel_token = _CancelToken()
-            
-            # Start polling
-            self._job_runner.run_callable(
-                "poll_for_token",
-                lambda: self._poll_for_token_sync(
-                    client_id,
-                    device_code_response,
-                    auth_config
-                ),
-                on_success=self._on_token_received,
-                on_error=self._on_token_poll_error
-            )
-        except Exception as e:
-            log.error(f"Failed to start token polling: {e}")
-            self._on_oauth_error(e)
-
-    def _poll_for_token_sync(self, client_id, device_code_response, auth_config):
-        """Sync wrapper for poll_for_token (runs in worker thread)."""
-        from freecad_gitpdm.auth.oauth_device_flow import poll_for_token
-        
-        return poll_for_token(
-            client_id,
-            device_code_response.device_code,
-            device_code_response.interval,
-            device_code_response.expires_in,
-            cancel_cb=lambda: self._oauth_cancel_token.is_cancelled if self._oauth_cancel_token else False,
-            token_url=auth_config.TOKEN_URL
-        )
-
-    def _on_token_received(self, token_response):
-        """
-        Called when token is successfully received.
-        Stores it in credential manager and updates UI.
-        """
-        try:
-            log.info("Token received successfully")
-            
-            # Store token in Windows Credential Manager
-            store = self._services.token_store()
-            host = settings.load_github_host()
-            account = settings.load_github_login()
-            
-            store.save(host, account, token_response)
-            log.info(f"Token stored in credential manager")
-            
-            # Update settings
-            settings.save_github_connected(True)
-            
-            # Update UI
-            self._update_github_ui_state()
-            
-            # Close dialog
-            if self._oauth_dialog:
-                self._oauth_dialog.close()
-            
-            # Show success message
-            QtWidgets.QMessageBox.information(
-                self,
-                "GitHub Connected",
-                "Successfully connected to GitHub!"
-            )
-            
-            log.info("GitHub OAuth flow completed successfully")
-        except Exception as e:
-            log.error(f"Error storing token: {e}")
-            self._on_oauth_error(e)
-        finally:
-            self._oauth_in_progress = False
-            self._oauth_cancel_token = None
-            self._update_github_ui_state()
-            # Trigger identity verification immediately after connect
-            try:
-                QtCore.QTimer.singleShot(50, self._verify_identity_async)
-            except Exception:
-                pass
-
-    def _on_token_poll_error(self, error):
-        """Called if token polling fails."""
-        from freecad_gitpdm.auth.oauth_device_flow import DeviceFlowError
-        
-        try:
-            self._oauth_in_progress = False
-            
-            # Close dialog if open
-            if self._oauth_dialog:
-                self._oauth_dialog.close()
-            
-            # Show appropriate error message
-            if isinstance(error, DeviceFlowError):
-                if error.error_code == "user_cancelled":
-                    log.info("OAuth flow cancelled")
-                    return
-                elif error.error_code == "expired_token":
-                    msg = "Device code expired. Please try again."
-                elif error.error_code == "access_denied":
-                    msg = "GitHub access was denied. Please try again."
-                else:
-                    msg = f"GitHub error: {error.error_code}"
-            else:
-                msg = f"Connection error: {str(error)}"
-            
-            log.error(f"OAuth error: {msg}")
-            QtWidgets.QMessageBox.warning(
-                self,
-                "GitHub Connection Failed",
-                msg
-            )
-        except Exception as e:
-            log.error(f"Error handling token poll error: {e}")
-        finally:
-            self._update_github_ui_state()
-            self._oauth_cancel_token = None
-
-    def _on_oauth_error(self, error):
-        """General error handler for OAuth flow."""
-        try:
-            self._oauth_in_progress = False
-            
-            # Close dialog if open
-            if self._oauth_dialog:
-                self._oauth_dialog.close()
-            
-            log.error(f"OAuth flow error: {error}")
-            QtWidgets.QMessageBox.critical(
-                self,
-                "GitHub Connection Error",
-                f"An error occurred: {str(error)}"
-            )
-        except Exception as e:
-            log.error(f"Error handling OAuth error: {e}")
-        finally:
-            self._update_github_ui_state()
-            self._oauth_cancel_token = None
+        self._github_auth.connect_clicked()
 
     def _on_github_disconnect_clicked(self):
         """Handle Disconnect GitHub button click."""
-        reply = QtWidgets.QMessageBox.question(
-            self,
-            "Disconnect GitHub",
-            "Remove GitHub credentials from this computer?",
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No
-        )
-        
-        if reply != QtWidgets.QMessageBox.Yes:
-            return
-        
-        try:
-            log.info("Disconnecting GitHub")
-            
-            # Delete token from credential manager
-            store = self._services.token_store()
-            host = settings.load_github_host()
-            account = settings.load_github_login()
-            
-            store.delete(host, account)
-            log.info(f"Token deleted from credential manager")
-            
-            # Update settings
-            settings.save_github_connected(False)
-            settings.save_github_login(None)
-            settings.save_github_user_id(None)
-            settings.save_last_verified_at(None)
-            settings.save_last_api_error(None, None)
-            
-            # Update UI
-            self._update_github_ui_state()
-            
-            # Show success message
-            QtWidgets.QMessageBox.information(
-                self,
-                "GitHub Disconnected",
-                "GitHub credentials have been removed."
-            )
-            
-            log.info("GitHub disconnected")
-        except Exception as e:
-            log.error(f"Error disconnecting GitHub: {e}")
-            QtWidgets.QMessageBox.critical(
-                self,
-                "Disconnect Failed",
-                f"Failed to disconnect: {str(e)}"
-            )
+        self._github_auth.disconnect_clicked()
 
     def _on_github_refresh_clicked(self):
         """Legacy refresh handler: route to verify."""
-        self._on_github_verify_clicked()
+        self._github_auth.verify_clicked()
+
+    def _on_github_verify_clicked(self):
+        """Handle Verify / Refresh Account button click."""
+        self._github_auth.verify_clicked()
 
     def _create_github_client(self):
         """Construct a GitHubApiClient using stored token; returns None if not connected."""
@@ -4917,126 +3187,3 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         except Exception as e:
             log.debug(f"Failed to create GitHub client: {e}")
             return None
-
-    # ========== Sprint OAUTH-2: Identity verification ==========
-
-    def _on_github_verify_clicked(self):
-        """Handle Verify / Refresh Account button click."""
-        self._verify_identity_async(force=True)
-
-    def _maybe_auto_verify_identity(self):
-        """Auto-verify identity on panel open with 10-minute cooldown."""
-        try:
-            store = self._services.token_store()
-            host = settings.load_github_host()
-            account = settings.load_github_login()
-            token = store.load(host, account)
-            if not token:
-                return
-            last_verified = settings.load_last_verified_at() or ""
-            if not last_verified:
-                self._verify_identity_async(force=False)
-                return
-            from datetime import datetime, timezone
-            try:
-                dt = datetime.fromisoformat(last_verified)
-                now = datetime.now(timezone.utc)
-                age_s = (now - dt).total_seconds()
-                if age_s > 10 * 60:
-                    self._verify_identity_async(force=False)
-            except Exception:
-                self._verify_identity_async(force=False)
-        except Exception as e:
-            log.debug(f"Auto verify skipped: {e}")
-
-    def _verify_identity_async(self, force: bool = False):
-        """Run identity verification in a worker thread and update UI."""
-        try:
-            from freecad_gitpdm.github.identity import fetch_viewer_identity
-
-            client = self._services.github_api_client()
-            if not client:
-                self.github_status_label.setText("GitHub: Not connected")
-                self._set_strong_label(self.github_status_label, "gray")
-                # Ensure buttons reflect current state
-                self._update_github_ui_state()
-                return
-
-            # Show verifying state
-            self.github_status_label.setText("GitHub: Verifying…")
-            self._set_strong_label(self.github_status_label, "orange")
-            self.github_refresh_btn.setEnabled(False)
-
-            # Run in background
-            self._job_runner.run_callable(
-                "github_verify",
-                lambda: fetch_viewer_identity(client),
-                on_success=self._on_identity_result,
-                on_error=self._on_identity_error,
-            )
-        except Exception as e:
-            log.error(f"Verify failed to start: {e}")
-            self.github_refresh_btn.setEnabled(True)
-            self._update_github_ui_state()
-
-    def _on_identity_result(self, result):
-        """Handle identity verification result on UI thread."""
-        from datetime import datetime, timezone
-        try:
-            if not result or not getattr(result, "ok", False):
-                settings.save_last_api_error(result.error_code if result else "UNKNOWN", result.message if result else "")
-                if result and result.error_code == "UNAUTHORIZED":
-                    settings.save_github_connected(False)
-                    self.github_status_label.setText("GitHub: Session expired; please reconnect")
-                    self._set_strong_label(self.github_status_label, "red")
-                elif result and result.error_code == "RATE_LIMITED":
-                    self.github_status_label.setText("GitHub: Rate limit reached; try later")
-                    self._set_strong_label(self.github_status_label, "orange")
-                elif result and result.error_code == "NETWORK_ERROR":
-                    self.github_status_label.setText("GitHub: Network error; retry")
-                    self._set_strong_label(self.github_status_label, "orange")
-                else:
-                    self.github_status_label.setText("GitHub: Verification failed")
-                    self._set_strong_label(self.github_status_label, "red")
-                self.github_refresh_btn.setEnabled(True)
-                self._update_github_ui_state()
-                return
-
-            # Success: persist non-secret metadata
-            login = result.login or ""
-            uid = result.user_id
-            settings.save_github_login(login or None)
-            settings.save_github_user_id(uid)
-            settings.save_github_connected(True)
-            settings.save_last_api_error(None, None)
-            settings.save_last_verified_at(datetime.now(timezone.utc).isoformat())
-
-            # Update UI
-            if login:
-                self.github_status_label.setText(f"GitHub: Signed in as {login}")
-            else:
-                self.github_status_label.setText("GitHub: Connected")
-            self._set_strong_label(self.github_status_label, "green")
-            self.github_refresh_btn.setEnabled(True)
-            self._update_github_ui_state()
-        except Exception as e:
-            log.error(f"Identity result handling failed: {e}")
-            self.github_refresh_btn.setEnabled(True)
-
-    def _on_identity_error(self, error):
-        """Handle unexpected verification error."""
-        settings.save_last_api_error("UNKNOWN", str(error))
-        self.github_status_label.setText("GitHub: Verification error")
-        self._set_strong_label(self.github_status_label, "red")
-        self.github_refresh_btn.setEnabled(True)
-        self._update_github_ui_state()
-
-
-class _CancelToken:
-    """Simple cancel token for OAuth polling."""
-    
-    def __init__(self):
-        self.is_cancelled = False
-    
-    def cancel(self):
-        self.is_cancelled = True
