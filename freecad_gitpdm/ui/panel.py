@@ -4924,7 +4924,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
             host = settings.load_github_host()
             account = settings.load_github_login()
-            if not host or not account:
+            # Username may not be known yet right after OAuth completes.
+            # Tokens are still valid and may be stored under a non-account key.
+            if not host:
                 return None
 
             store = WindowsCredentialStore()

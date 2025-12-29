@@ -201,60 +201,78 @@ class WindowsCredentialStore(TokenStore):
             return None
         
         from freecad_gitpdm.core import log
-        
-        target_name = credential_target_name(host, account)
-        
-        # Read credential
-        pCred = ctypes.POINTER(CREDENTIAL)()
-        log.debug(f"Loading token for {target_name} from Windows Credential Manager")
-        
-        # Clear any previous error state
-        ctypes.set_last_error(0)
-        
-        result = self._cred_read(
-            ctypes.c_wchar_p(target_name),
-            CRED_TYPE_GENERIC,
-            0,
-            ctypes.byref(pCred)
-        )
-        
-        if not result:
-            error_code = ctypes.get_last_error()
-            # ERROR_NOT_FOUND = 1168, but also treat 0 as "not found"
-            # (Windows sometimes returns 0 instead of 1168)
-            if error_code == 1168 or error_code == 0:
-                log.debug(f"Token not found for {target_name} (error code: {error_code})")
-                return None
-            log.error(f"CredReadW failed: {error_code}")
-            raise OSError(f"CredReadW failed: {error_code}")
-        
-        try:
-            # Extract credential blob
-            cred = pCred.contents
-            token_bytes = bytes(
-                cred.CredentialBlob[i]
-                for i in range(cred.CredentialBlobSize)
+
+        def _read_target(target_name: str) -> TokenResponse | None:
+            """Read a token from a specific Windows Credential Manager target."""
+            pCred = ctypes.POINTER(CREDENTIAL)()
+            log.debug(
+                f"Loading token for {target_name} from Windows Credential Manager"
             )
-            token_json = token_bytes.decode("utf-8")
-            token_data = json.loads(token_json)
-            
-            log.debug(f"Token loaded successfully for {target_name}")
-            
-            return TokenResponse(
-                access_token=token_data.get("access_token", ""),
-                token_type=token_data.get("token_type", "bearer"),
-                scope=token_data.get("scope", ""),
-                refresh_token=token_data.get("refresh_token"),
-                expires_in=token_data.get("expires_in"),
-                refresh_token_expires_in=token_data.get(
-                    "refresh_token_expires_in"
-                ),
-                obtained_at_utc=token_data.get("obtained_at_utc", ""),
+
+            # Clear any previous error state
+            ctypes.set_last_error(0)
+
+            result = self._cred_read(
+                ctypes.c_wchar_p(target_name),
+                CRED_TYPE_GENERIC,
+                0,
+                ctypes.byref(pCred),
             )
-        finally:
-            # Free credential
-            if pCred:
-                self._cred_free(ctypes.cast(pCred, wintypes.LPVOID))
+
+            if not result:
+                error_code = ctypes.get_last_error()
+                # ERROR_NOT_FOUND = 1168, but also treat 0 as "not found"
+                # (Windows sometimes returns 0 instead of 1168)
+                if error_code == 1168 or error_code == 0:
+                    log.debug(
+                        f"Token not found for {target_name} (error code: {error_code})"
+                    )
+                    return None
+                log.error(f"CredReadW failed: {error_code}")
+                raise OSError(f"CredReadW failed: {error_code}")
+
+            try:
+                # Extract credential blob
+                cred = pCred.contents
+                token_bytes = bytes(
+                    cred.CredentialBlob[i]
+                    for i in range(cred.CredentialBlobSize)
+                )
+                token_json = token_bytes.decode("utf-8")
+                token_data = json.loads(token_json)
+
+                log.debug(f"Token loaded successfully for {target_name}")
+
+                return TokenResponse(
+                    access_token=token_data.get("access_token", ""),
+                    token_type=token_data.get("token_type", "bearer"),
+                    scope=token_data.get("scope", ""),
+                    refresh_token=token_data.get("refresh_token"),
+                    expires_in=token_data.get("expires_in"),
+                    refresh_token_expires_in=token_data.get(
+                        "refresh_token_expires_in"
+                    ),
+                    obtained_at_utc=token_data.get("obtained_at_utc", ""),
+                )
+            finally:
+                # Free credential
+                if pCred:
+                    self._cred_free(ctypes.cast(pCred, wintypes.LPVOID))
+
+        # Primary lookup: account-specific key (if account provided)
+        primary_target = credential_target_name(host, account)
+        token = _read_target(primary_target)
+        if token is not None:
+            return token
+
+        # Back-compat / migration path: if the token was saved before the
+        # username was known, it is stored under the host-only key.
+        if account:
+            fallback_target = credential_target_name(host, None)
+            if fallback_target != primary_target:
+                return _read_target(fallback_target)
+
+        return None
     
     def delete(
         self,
@@ -277,27 +295,38 @@ class WindowsCredentialStore(TokenStore):
             raise OSError("Windows Credential Manager not available")
         
         from freecad_gitpdm.core import log
-        
-        target_name = credential_target_name(host, account)
-        
-        log.debug(f"Deleting token for {target_name} from Windows Credential Manager")
-        
-        # Clear any previous error state
-        ctypes.set_last_error(0)
-        
-        result = self._cred_delete(
-            ctypes.c_wchar_p(target_name),
-            CRED_TYPE_GENERIC,
-            0
-        )
-        
-        if not result:
-            error_code = ctypes.get_last_error()
-            # ERROR_NOT_FOUND = 1168, but also treat 0 as "not found"
-            if error_code == 1168 or error_code == 0:
-                log.debug(f"Token not found for {target_name} (error code: {error_code})")
-                return
-            log.error(f"CredDeleteW failed: {error_code}")
-            raise OSError(f"CredDeleteW failed: {error_code}")
-        
-        log.debug(f"Token deleted successfully for {target_name}")
+
+        targets = [credential_target_name(host, account)]
+        if account:
+            targets.append(credential_target_name(host, None))
+
+        # De-dup while preserving order
+        seen = set()
+        targets = [t for t in targets if not (t in seen or seen.add(t))]
+
+        for target_name in targets:
+            log.debug(
+                f"Deleting token for {target_name} from Windows Credential Manager"
+            )
+
+            # Clear any previous error state
+            ctypes.set_last_error(0)
+
+            result = self._cred_delete(
+                ctypes.c_wchar_p(target_name),
+                CRED_TYPE_GENERIC,
+                0,
+            )
+
+            if not result:
+                error_code = ctypes.get_last_error()
+                # ERROR_NOT_FOUND = 1168, but also treat 0 as "not found"
+                if error_code == 1168 or error_code == 0:
+                    log.debug(
+                        f"Token not found for {target_name} (error code: {error_code})"
+                    )
+                    continue
+                log.error(f"CredDeleteW failed: {error_code}")
+                raise OSError(f"CredDeleteW failed: {error_code}")
+
+            log.debug(f"Token deleted successfully for {target_name}")
