@@ -2,6 +2,7 @@
 """
 GitHub Identity Fetcher
 Sprint OAUTH-2: Verify current viewer identity via REST API.
+Sprint OAUTH-6: Structured error handling
 """
 
 from __future__ import annotations
@@ -9,10 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from freecad_gitpdm.github.api_client import (
-    GitHubApiClient,
-    GitHubApiNetworkError,
-)
+from freecad_gitpdm.github.api_client import GitHubApiClient
+from freecad_gitpdm.github.errors import GitHubApiNetworkError
 
 
 @dataclass

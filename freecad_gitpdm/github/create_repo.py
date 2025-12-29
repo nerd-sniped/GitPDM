@@ -2,6 +2,7 @@
 """
 GitHub Repository Creation
 Sprint OAUTH-4: Create user repositories on GitHub
+Sprint OAUTH-6: Structured error handling
 
 Implements POST /user/repos via GitHub REST API with error handling.
 """
@@ -13,11 +14,8 @@ from dataclasses import dataclass
 from typing import Optional
 
 from freecad_gitpdm.core import log
-from freecad_gitpdm.github.api_client import (
-    GitHubApiClient,
-    GitHubApiError,
-    GitHubApiNetworkError,
-)
+from freecad_gitpdm.github.api_client import GitHubApiClient
+from freecad_gitpdm.github.errors import GitHubApiError, GitHubApiNetworkError
 
 
 @dataclass

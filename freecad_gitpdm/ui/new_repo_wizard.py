@@ -2,6 +2,7 @@
 """
 GitPDM New Repository Wizard
 Sprint OAUTH-4: Dialog to create GitHub repo + local scaffold + push
+Sprint OAUTH-6: Error handling, token invalidation detection
 
 Guides user through:
   1. Selecting local folder
@@ -23,22 +24,27 @@ except ImportError:
 
 import os
 import re
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Callable
 
 from freecad_gitpdm.core import log, scaffold
 from freecad_gitpdm.github.create_repo import (
     create_user_repo,
     CreateRepoRequest,
-    GitHubApiError,
 )
 from freecad_gitpdm.github.api_client import GitHubApiClient
+from freecad_gitpdm.github.errors import GitHubApiError
 from freecad_gitpdm.git import client as git_client_module
 
 
 class NewRepoWizard(QtWidgets.QWizard):
     """Multi-step wizard to create a new GitHub repo + local scaffold."""
 
-    def __init__(self, api_client: Optional[GitHubApiClient] = None, parent=None):
+    def __init__(
+        self,
+        api_client: Optional[GitHubApiClient] = None,
+        parent=None,
+        on_session_expired: Optional[Callable[[], None]] = None,
+    ):
         super().__init__(parent)
         self.setWindowTitle("Create New Repository")
         self.setMinimumWidth(600)
@@ -46,6 +52,7 @@ class NewRepoWizard(QtWidgets.QWizard):
 
         self._api_client = api_client
         self._git_client = git_client_module.GitClient()
+        self._on_session_expired = on_session_expired
 
         # Wizard steps
         self._input_page = _InputPage(self)
@@ -452,6 +459,14 @@ class _ProgressPage(QtWidgets.QWizardPage):
                 log.info(f"GitHub repo created: {repo_info.full_name}")
                 self._update_step_success(1, f"GitHub repo created: {repo_info.full_name}")
             except GitHubApiError as e:
+                # Check if session expired (401)
+                if hasattr(e, 'code') and e.code == "UNAUTHORIZED":
+                    log.error(f"GitHub session expired: {e}")
+                    self._update_step_error(1, "Session expired. Please reconnect.")
+                    if self._parent_wizard._on_session_expired:
+                        self._parent_wizard._on_session_expired()
+                    return
+                
                 log.error(f"GitHub repo creation failed: {e}")
                 self._update_step_error(1, str(e))
                 return

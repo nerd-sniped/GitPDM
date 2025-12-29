@@ -92,7 +92,7 @@ def get_diagnostics():
         diagnostics["oauth_client_id_configured"] = False
         log.warning(f"Failed to load OAuth config: {e}")
     
-    # GitHub connection status (Sprint OAUTH-0)
+    # GitHub connection status (Sprint OAUTH-0, Sprint OAUTH-6)
     try:
         diagnostics["github_connected"] = (
             settings.load_github_connected()
@@ -114,9 +114,23 @@ def get_diagnostics():
             diagnostics["token_present"] = token_present
         except Exception:
             diagnostics["token_present"] = False
+        
+        # Last API error (Sprint OAUTH-6)
         code, msg = settings.load_last_api_error()
         diagnostics["last_api_error_code"] = code or None
         diagnostics["last_api_error_message"] = msg or None
+        
+        # Cache statistics (Sprint OAUTH-6)
+        try:
+            from freecad_gitpdm.github.cache import get_github_api_cache
+            cache = get_github_api_cache()
+            stats = cache.get_stats()
+            diagnostics["cache_hits"] = stats.get("hits", 0)
+            diagnostics["cache_misses"] = stats.get("misses", 0)
+        except Exception:
+            diagnostics["cache_hits"] = 0
+            diagnostics["cache_misses"] = 0
+            
     except Exception as e:
         diagnostics["github_connected"] = False
         diagnostics["github_login"] = None
@@ -126,6 +140,8 @@ def get_diagnostics():
         diagnostics["token_present"] = False
         diagnostics["last_api_error_code"] = None
         diagnostics["last_api_error_message"] = None
+        diagnostics["cache_hits"] = 0
+        diagnostics["cache_misses"] = 0
         log.warning(f"Failed to load GitHub settings: {e}")
     
     return diagnostics
@@ -207,8 +223,13 @@ def format_diagnostics(diagnostics=None):
     if lec or lem:
         lines.append("  Last API error:")
         lines.append(f"    Code: {lec if lec else 'Unknown'}")
-        # Message may already be redacted by log module when printed
         lines.append(f"    Message: {lem if lem else ''}")
+    
+    # Cache statistics (Sprint OAUTH-6)
+    lines.append("Cache:")
+    lines.append(f"  Hits: {diagnostics.get('cache_hits', 0)}")
+    lines.append(f"  Misses: {diagnostics.get('cache_misses', 0)}")
+    
     lines.append("")
     
     lines.append("=== End Diagnostics ===")

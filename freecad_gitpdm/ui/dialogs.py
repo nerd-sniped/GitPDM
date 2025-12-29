@@ -263,7 +263,7 @@ class PushErrorDialog(QtWidgets.QDialog):
 class NewBranchDialog(QtWidgets.QDialog):
     """Dialog for creating a new branch."""
 
-    def __init__(self, parent=None, default_start_point="HEAD"):
+    def __init__(self, parent=None, default_start_point="HEAD", open_docs=None, lock_files=None):
         super().__init__(parent)
         self.setWindowTitle("Create New Branch")
         self.setModal(True)
@@ -271,9 +271,66 @@ class NewBranchDialog(QtWidgets.QDialog):
 
         self.branch_name = ""
         self.start_point = default_start_point
+        self._open_docs = open_docs or []
+        self._lock_files = lock_files or []
+        self._has_open_files = bool(self._open_docs or self._lock_files)
 
         layout = QtWidgets.QVBoxLayout()
         self.setLayout(layout)
+
+        # Warning if files are open
+        if self._has_open_files:
+            warning_frame = QtWidgets.QFrame()
+            warning_frame.setFrameShape(QtWidgets.QFrame.StyledPanel)
+            warning_frame.setStyleSheet(
+                "QFrame { background-color: #fff3cd; border: 1px solid #ffc107; "
+                "border-radius: 4px; padding: 8px; }"
+            )
+            warning_layout = QtWidgets.QVBoxLayout()
+            warning_frame.setLayout(warning_layout)
+            
+            warning_icon_label = QtWidgets.QLabel("⚠️  Files Must Be Closed")
+            warning_icon_label.setStyleSheet("font-weight: bold; color: #856404;")
+            warning_layout.addWidget(warning_icon_label)
+            
+            warning_text = QtWidgets.QLabel(
+                "CRITICAL: Git operations can corrupt .FCStd files that are open in FreeCAD!\n\n"
+                "All FreeCAD documents must be closed before creating and switching to a new branch. "
+                "This includes files from other worktrees or folders.\n\n"
+                "Please close ALL FreeCAD files (File -> Close All) before proceeding:"
+            )
+            warning_text.setWordWrap(True)
+            warning_text.setStyleSheet("color: #856404;")
+            warning_layout.addWidget(warning_text)
+            
+            # List open files
+            files_text = ""
+            if self._open_docs:
+                files_text += "Open documents:\n"
+                for doc in self._open_docs[:5]:
+                    import os
+                    files_text += f"  • {os.path.basename(doc)}\n"
+                if len(self._open_docs) > 5:
+                    files_text += f"  ... and {len(self._open_docs) - 5} more\n"
+            
+            if self._lock_files:
+                if files_text:
+                    files_text += "\n"
+                files_text += "Lock files detected:\n"
+                for lock in self._lock_files[:5]:
+                    import os
+                    files_text += f"  • {os.path.basename(lock)}\n"
+                if len(self._lock_files) > 5:
+                    files_text += f"  ... and {len(self._lock_files) - 5} more\n"
+            
+            files_label = QtWidgets.QLabel(files_text.strip())
+            files_label.setStyleSheet(
+                "font-family: monospace; font-size: 9px; color: #856404; "
+                "background-color: #fffbf0; padding: 4px; border-radius: 2px;"
+            )
+            warning_layout.addWidget(files_label)
+            
+            layout.addWidget(warning_frame)
 
         # Branch name
         name_layout = QtWidgets.QFormLayout()
@@ -322,11 +379,15 @@ class NewBranchDialog(QtWidgets.QDialog):
         self.ok_button.setEnabled(False)
 
         self.name_edit.setFocus()
+        
+        # Update button state based on initial conditions
+        self._on_name_changed()
 
     def _on_name_changed(self):
-        """Enable OK button only if name is not empty."""
+        """Enable OK button only if name is not empty AND no files are open."""
         has_name = bool(self.name_edit.text().strip())
-        self.ok_button.setEnabled(has_name)
+        # OK button is only enabled if there's a name AND no files are open
+        self.ok_button.setEnabled(has_name and not self._has_open_files)
 
     def _on_accept(self):
         """Handle OK button click."""

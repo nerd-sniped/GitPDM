@@ -16,6 +16,11 @@ except ImportError:
             "FreeCAD installation may be incomplete."
         ) from e
 
+import os
+import glob
+import sys
+import subprocess
+
 from freecad_gitpdm.core import log, settings, jobs
 from freecad_gitpdm.git import client
 from freecad_gitpdm.ui import dialogs
@@ -29,7 +34,8 @@ class _DocumentObserver:
     
     def __init__(self, panel):
         self._panel = panel
-        self._refresh_timer = QtCore.QTimer()
+        # Bind timer to the panel (Qt QObject) so it lives on the UI thread
+        self._refresh_timer = QtCore.QTimer(panel)
         self._refresh_timer.setSingleShot(True)
         self._refresh_timer.setInterval(500)
         self._refresh_timer.timeout.connect(self._do_refresh)
@@ -45,6 +51,7 @@ class _DocumentObserver:
         
         try:
             import os
+            import glob
             filename = os.path.normpath(filename)
             repo_root = os.path.normpath(self._panel._current_repo_root)
             
@@ -52,8 +59,27 @@ class _DocumentObserver:
             
             if filename.startswith(repo_root):
                 log.info(f"Document saved in repo, scheduling refresh")
-                self._refresh_timer.stop()
-                self._refresh_timer.start()
+                # Stop/start the timer on its owning thread to avoid
+                # cross-thread timer operations (Qt enforces thread affinity)
+                try:
+                    QtCore.QMetaObject.invokeMethod(
+                        self._refresh_timer,
+                        "stop",
+                        QtCore.Qt.QueuedConnection,
+                    )
+                    QtCore.QMetaObject.invokeMethod(
+                        self._refresh_timer,
+                        "start",
+                        QtCore.Qt.QueuedConnection,
+                    )
+                except Exception as e:
+                    # Fallback: best-effort direct calls
+                    log.debug(f"Queued timer restart failed, using direct: {e}")
+                    try:
+                        self._refresh_timer.stop()
+                        self._refresh_timer.start()
+                    except Exception as e2:
+                        log.error(f"Failed to restart refresh timer: {e2}")
                 # Also schedule automatic preview generation for saved FCStd
                 self._panel._schedule_auto_preview_generation(filename)
             else:
@@ -142,13 +168,12 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._meta_font_size = 9
         self._strong_font_size = 11
 
-        # Create main widget and layout
-        main_widget = QtWidgets.QWidget()
+        # Create main content widget and layout
+        content_widget = QtWidgets.QWidget()
         main_layout = QtWidgets.QVBoxLayout()
-        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setContentsMargins(6, 6, 6, 6)
         main_layout.setSpacing(6)
-        main_widget.setLayout(main_layout)
-        self.setWidget(main_widget)
+        content_widget.setLayout(main_layout)
 
         # Build UI sections
         self._build_view_toggle(main_layout)
@@ -161,11 +186,24 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._build_buttons_section(main_layout)
         self._build_repo_browser_section(main_layout)
 
+        # Compact-mode commit mini section (hidden by default)
+        self._build_compact_commit_section(main_layout)
+
         # Default to collapsed view
         self._set_compact_mode(True)
 
         # Add stretch at bottom to push everything up
         main_layout.addStretch()
+
+        # Wrap content in a scroll area for smaller screens
+        scroll_area = QtWidgets.QScrollArea()
+        scroll_area.setWidget(content_widget)
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QtWidgets.QFrame.NoFrame)
+        scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        
+        self.setWidget(scroll_area)
 
         # Load remote name
         self._remote_name = settings.load_remote_name()
@@ -174,6 +212,32 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         QtCore.QTimer.singleShot(100, self._deferred_initialization)
         
         log.info("GitPDM dock panel created")
+
+    def _build_compact_commit_section(self, layout):
+        """Build a minimal commit UI shown only in collapsed mode."""
+        container = QtWidgets.QWidget()
+        row = QtWidgets.QHBoxLayout()
+        row.setContentsMargins(6, 4, 6, 0)
+        row.setSpacing(6)
+        container.setLayout(row)
+
+        msg_label = QtWidgets.QLabel("Commit message:")
+        self._set_meta_label(msg_label, "gray")
+        row.addWidget(msg_label)
+
+        self.compact_commit_message = QtWidgets.QLineEdit()
+        self.compact_commit_message.setPlaceholderText("Describe your changes")
+        self.compact_commit_message.textChanged.connect(self._on_commit_message_changed)
+        row.addWidget(self.compact_commit_message, 1)
+
+        self.compact_commit_btn = QtWidgets.QPushButton("Commit")
+        self.compact_commit_btn.setEnabled(False)
+        self.compact_commit_btn.clicked.connect(self._on_compact_commit_clicked)
+        row.addWidget(self.compact_commit_btn)
+
+        container.setVisible(False)
+        layout.addWidget(container)
+        self._compact_commit_container = container
 
     def _set_meta_label(self, label, color="gray"):
         label.setStyleSheet(
@@ -217,17 +281,21 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 "Expand" if compact else "Collapse"
             )
         show_full = not compact
+        # Only toggle visibility for sections meant to be user-toggleable.
+        # System and Branch sections are permanently hidden per current UX.
         for w in [
-            getattr(self, "_group_git_check", None),
             getattr(self, "_group_repo_selector", None),
             getattr(self, "_group_github_account", None),
-            getattr(self, "_group_branch", None),
+            getattr(self, "_group_status", None),
             getattr(self, "_group_changes", None),
             getattr(self, "_actions_extra_container", None),
             getattr(self, "_repo_browser_container", None),
         ]:
             if w is not None:
                 w.setVisible(show_full)
+        # Show compact commit mini section only when collapsed
+        if hasattr(self, "_compact_commit_container"):
+            self._compact_commit_container.setVisible(compact)
     
     def _deferred_initialization(self):
         """Run heavy initialization after panel is shown."""
@@ -245,6 +313,12 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self._refresh_github_connection_status()
             # Sprint OAUTH-2: Auto-verify identity in background with cooldown
             QtCore.QTimer.singleShot(50, self._maybe_auto_verify_identity)
+            
+            # Check if user is editing from wrong folder (worktree mismatch)
+            QtCore.QTimer.singleShot(1000, self._check_for_wrong_folder_editing)
+            
+            # Start periodic working directory refresh to maintain repo folder as default
+            self._start_working_directory_refresh()
             
             log.info("GitPDM dock panel initialized")
         except Exception as e:
@@ -349,6 +423,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         group_layout.addRow("Git", self.git_label)
 
         layout.addWidget(group)
+        # Hide the System section per request
+        group.setVisible(False)
         self._group_git_check = group
 
     def _check_git_available(self):
@@ -415,6 +491,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.root_toggle_btn.toggled.connect(
             self._on_root_toggle
         )
+        # Hide the Show root dropdown entirely
+        self.root_toggle_btn.setVisible(False)
         group_layout.addWidget(self.root_toggle_btn)
 
         self.repo_root_row = QtWidgets.QWidget()
@@ -439,7 +517,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # Validation status row
         validation_layout = QtWidgets.QHBoxLayout()
         validation_layout.setSpacing(4)
-        validation_layout.addWidget(QtWidgets.QLabel("Validate:"))
+        # Hide the Validate row
+        self.validate_caption = QtWidgets.QLabel("Validate:")
+        validation_layout.addWidget(self.validate_caption)
         self.validate_label = QtWidgets.QLabel("Not checked")
         self.validate_label.setStyleSheet(
             "color: gray; font-style: italic;"
@@ -474,8 +554,13 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             QtWidgets.QSizePolicy.Preferred,
         )
         refresh_btn.clicked.connect(self._on_refresh_clicked)
+        # Hide refresh button
+        refresh_btn.setVisible(False)
         validation_layout.addWidget(refresh_btn)
 
+        # Hide Validate caption and value
+        self.validate_caption.setVisible(False)
+        self.validate_label.setVisible(False)
         group_layout.addLayout(validation_layout)
 
         layout.addWidget(group)
@@ -698,7 +783,19 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         group_layout.addLayout(actions_layout)
 
+        worktree_help_layout = QtWidgets.QHBoxLayout()
+        worktree_help_layout.addStretch()
+        self.worktree_help_btn = QtWidgets.QPushButton("Worktree Help")
+        self.worktree_help_btn.setToolTip(
+            "Use per-branch worktrees so each branch has its own folder."
+        )
+        self.worktree_help_btn.clicked.connect(self._on_worktree_help_clicked)
+        worktree_help_layout.addWidget(self.worktree_help_btn)
+        group_layout.addLayout(worktree_help_layout)
+
         layout.addWidget(group)
+        # Hide the entire Branch section per request
+        group.setVisible(False)
         self._group_branch = group
 
     def _build_changes_section(self, layout):
@@ -723,7 +820,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         group_layout.addWidget(info_label)
 
         self.changes_list = QtWidgets.QListWidget()
-        self.changes_list.setMaximumHeight(80)
+        # Reduce the size of the changes list
+        self.changes_list.setMaximumHeight(50)
         self.changes_list.setEnabled(False)
         group_layout.addWidget(self.changes_list)
 
@@ -914,6 +1012,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         status_row.addWidget(self.open_preview_folder_btn)
         pg_layout.addLayout(status_row)
 
+        # Hide the entire Previews area per request
+        previews_group.setVisible(False)
         extra_layout.addWidget(previews_group)
 
         # Busy indicator (indeterminate)
@@ -994,6 +1094,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                     settings.save_repo_path(cloned_path)
                     self.repo_path_field.setText(cloned_path)
                     self._validate_repo_path(cloned_path)
+                    
+                    # Offer to open the cloned folder
+                    self._show_repo_opened_dialog(cloned_path, "cloned")
         except Exception as e:
             log.error(f"Open/Clone flow failed: {e}")
             QtWidgets.QMessageBox.warning(
@@ -1031,14 +1134,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                     settings.save_repo_path(repo_path)
                     self.repo_path_field.setText(repo_path)
                     self._validate_repo_path(repo_path)
-                    # Show success message with repo URL
-                    QtWidgets.QMessageBox.information(
-                        self,
-                        "Repository Created",
-                        f"Repository '{repo_name}' has been created!\n\n"
-                        f"Local folder: {repo_path}\n\n"
-                        f"GitPDM is now configured to work with this repository.",
-                    )
+                    
+                    # Show success dialog with option to open folder
+                    self._show_repo_opened_dialog(repo_path, "created", repo_name)
         except Exception as e:
             log.error(f"New repo wizard failed: {e}")
             QtWidgets.QMessageBox.critical(
@@ -1120,6 +1218,10 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 self.root_toggle_btn.isChecked()
             )
             self.browser_window_btn.setEnabled(True)
+
+            # Set FreeCAD working directory to repo folder
+            # This ensures Save As dialog defaults to repo folder
+            self._set_freecad_working_directory(repo_root)
 
             # Fetch branch and status
             self._fetch_branch_and_status(repo_root)
@@ -1335,6 +1437,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             commit_msg_ok = bool(
                 self.commit_message.toPlainText().strip()
             )
+        # Also consider compact commit message when present
+        if hasattr(self, "compact_commit_message") and not commit_msg_ok:
+            commit_msg_ok = bool(self.compact_commit_message.text().strip())
 
         fetch_enabled = (
             git_ok and repo_ok and self._cached_has_remote
@@ -1354,7 +1459,11 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             git_ok and repo_ok and changes_present and commit_msg_ok
             and not busy
         )
-        # No separate commit button anymore; enabling handled by commit_push_btn
+        # Enable compact commit button in collapsed mode
+        if hasattr(self, "compact_commit_btn"):
+            self.compact_commit_btn.setEnabled(
+                git_ok and repo_ok and changes_present and commit_msg_ok and not busy
+            )
 
         commit_push_enabled = (
             git_ok and repo_ok and self._cached_has_remote and not busy
@@ -1472,6 +1581,15 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
         container.setLayout(layout)
+
+        # Add branch/worktree indicator at top
+        self.repo_branch_indicator = QtWidgets.QLabel("—")
+        self.repo_branch_indicator.setWordWrap(True)
+        self.repo_branch_indicator.setStyleSheet(
+            "color: #2196F3; font-weight: bold; padding: 4px; "
+            "background-color: #E3F2FD; border-radius: 3px;"
+        )
+        layout.addWidget(self.repo_branch_indicator)
 
         self.repo_info_label = QtWidgets.QLabel("Repo not selected.")
         self.repo_info_label.setWordWrap(True)
@@ -1664,6 +1782,11 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             log.debug("Job running, new branch ignored")
             return
         
+        # CRITICAL: Check for ANY open .FCStd files (not just from current repo)
+        # Git operations can corrupt files in other worktrees too
+        open_docs = self._get_all_open_fcstd_documents()
+        lock_files = self._find_repo_lock_files()
+        
         # Get default branch as start point
         default_upstream = self._git_client.default_upstream_ref(
             self._current_repo_root, self._remote_name
@@ -1671,8 +1794,13 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         if not default_upstream:
             default_upstream = "HEAD"
         
-        # Show dialog
-        dialog = dialogs.NewBranchDialog(self, default_upstream)
+        # Show dialog with open files information
+        dialog = dialogs.NewBranchDialog(
+            parent=self,
+            default_start_point=default_upstream,
+            open_docs=open_docs,
+            lock_files=lock_files
+        )
         if not dialog.exec():
             return
         
@@ -1680,6 +1808,18 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         start_point = dialog.start_point
         
         if not branch_name:
+            return
+        
+        # Double-check before actual branch creation (user might have opened files after dialog)
+        open_docs_recheck = self._get_all_open_fcstd_documents()
+        lock_files_recheck = self._find_repo_lock_files()
+        if open_docs_recheck or lock_files_recheck:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Files Opened",
+                "FreeCAD files were opened after the dialog. Please close ALL documents "
+                "and try again to prevent corruption."
+            )
             return
         
         # Validate branch name
@@ -1771,6 +1911,172 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         
         self._switch_to_branch(target_branch)
 
+    def _on_worktree_help_clicked(self):
+        """Show quick guidance for setting up per-branch git worktrees."""
+        example_path = os.path.normpath(os.path.join(self._current_repo_root or "..", "repo-feature"))
+        msg = (
+            "Use git worktree to give each branch its own folder. This avoids FCStd corruption "
+            "from branch switches while files are open.\n\n"
+            "Example commands:\n"
+            f"  git worktree add {example_path} feature\n"
+            "  git worktree add ../repo-main main\n\n"
+            "Open the matching worktree folder in FreeCAD for the branch you are editing."
+        )
+        QtWidgets.QMessageBox.information(self, "Use Git Worktrees", msg)
+
+    def _show_worktree_success_dialog(self, worktree_path: str, branch_name: str):
+        """Show success dialog with option to open worktree folder."""
+        msg_box = QtWidgets.QMessageBox(self)
+        msg_box.setWindowTitle("Worktree Created Successfully")
+        msg_box.setIcon(QtWidgets.QMessageBox.Information)
+        
+        msg = (
+            f"✓ Worktree created for '{branch_name}'\n\n"
+            f"Path: {worktree_path}\n\n"
+            "⚠️ IMPORTANT: To avoid file corruption, you must now "
+            "open files from this new worktree folder, not from the main repo.\n\n"
+            "Click 'Open Folder' below to view the worktree directory in File Explorer."
+        )
+        msg_box.setText(msg)
+        
+        # Add custom buttons
+        open_btn = msg_box.addButton("Open Folder", QtWidgets.QMessageBox.AcceptRole)
+        close_btn = msg_box.addButton("Close", QtWidgets.QMessageBox.RejectRole)
+        msg_box.setDefaultButton(open_btn)
+        
+        msg_box.exec_()
+        
+        if msg_box.clickedButton() == open_btn:
+            self._open_folder_in_explorer(worktree_path)
+        
+        # Show persistent status
+        self._show_status_message(
+            f"Opened worktree: {os.path.basename(worktree_path)}",
+            is_error=False
+        )
+        QtCore.QTimer.singleShot(5000, self._clear_status_message)
+
+    def _show_repo_opened_dialog(self, repo_path: str, action: str, repo_name: str = None):
+        """
+        Show success dialog after cloning or creating a repo, with option to open folder.
+        
+        Args:
+            repo_path: Absolute path to the repo
+            action: "cloned" or "created"
+            repo_name: Repository name (optional, for created repos)
+        """
+        msg_box = QtWidgets.QMessageBox(self)
+        
+        if action == "created":
+            title = "Repository Created"
+            if repo_name:
+                msg = (
+                    f"✓ Repository '{repo_name}' has been created!\n\n"
+                    f"Path: {repo_path}\n\n"
+                    "GitPDM is now configured to work with this repository.\n\n"
+                    "Click 'Open Folder' below to view the repository in File Explorer."
+                )
+            else:
+                msg = (
+                    f"✓ Repository has been created!\n\n"
+                    f"Path: {repo_path}\n\n"
+                    "GitPDM is now configured to work with this repository.\n\n"
+                    "Click 'Open Folder' below to view the repository in File Explorer."
+                )
+        else:  # cloned
+            title = "Repository Cloned"
+            msg = (
+                f"✓ Repository has been cloned successfully!\n\n"
+                f"Path: {repo_path}\n\n"
+                "GitPDM is now configured to work with this repository.\n\n"
+                "Click 'Open Folder' below to view the repository in File Explorer."
+            )
+        
+        msg_box.setWindowTitle(title)
+        msg_box.setIcon(QtWidgets.QMessageBox.Information)
+        msg_box.setText(msg)
+        
+        # Add custom buttons
+        open_btn = msg_box.addButton("Open Folder", QtWidgets.QMessageBox.AcceptRole)
+        close_btn = msg_box.addButton("Close", QtWidgets.QMessageBox.RejectRole)
+        msg_box.setDefaultButton(open_btn)
+        
+        msg_box.exec_()
+        
+        if msg_box.clickedButton() == open_btn:
+            self._open_folder_in_explorer(repo_path)
+
+    def _open_folder_in_explorer(self, folder_path: str):
+        """Open folder in Windows Explorer or equivalent."""
+        try:
+            if sys.platform == "win32":
+                os.startfile(folder_path)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", folder_path])
+            else:
+                subprocess.Popen(["xdg-open", folder_path])
+            log.info(f"Opened folder in explorer: {folder_path}")
+        except Exception as e:
+            log.error(f"Failed to open folder: {e}")
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Cannot Open Folder",
+                f"Could not open folder in file explorer:\n{e}"
+            )
+
+    def _check_for_wrong_folder_editing(self):
+        """Check if user has FreeCAD documents open from a different folder than current repo root."""
+        if not self._current_repo_root:
+            return
+        
+        try:
+            import FreeCAD
+            list_docs = getattr(FreeCAD, "listDocuments", None)
+            if not callable(list_docs):
+                return
+            
+            # Get current repo root (normalized)
+            current_root = os.path.normcase(os.path.normpath(self._current_repo_root))
+            
+            # Find any open .FCStd files that are NOT in the current repo root
+            wrong_folder_docs = []
+            for doc in list_docs().values():
+                path = getattr(doc, "FileName", "") or ""
+                if not path or not path.lower().endswith(".fcstd"):
+                    continue
+                
+                path_norm = os.path.normcase(os.path.normpath(path))
+                # If document is from a different folder entirely, warn
+                if not path_norm.startswith(current_root):
+                    wrong_folder_docs.append(path)
+            
+            if wrong_folder_docs:
+                doc_list = "\n".join(f"  • {d}" for d in wrong_folder_docs[:5])
+                if len(wrong_folder_docs) > 5:
+                    doc_list += f"\n  ... and {len(wrong_folder_docs) - 5} more"
+                
+                msg = (
+                    "⚠️ WRONG FOLDER DETECTED\n\n"
+                    "You have FreeCAD documents open from a different folder than the current repo:\n\n"
+                    f"{doc_list}\n\n"
+                    f"Current GitPDM repo: {self._current_repo_root}\n\n"
+                    "This can cause file corruption when switching branches!\n\n"
+                    "To avoid corruption:\n"
+                    "1. Close these documents\n"
+                    "2. Open files from the current worktree folder shown above\n"
+                    "3. Use 'Open Folder' button after creating worktrees"
+                )
+                
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Wrong Folder - Risk of Corruption",
+                    msg
+                )
+                log.warning(f"User has {len(wrong_folder_docs)} documents open from wrong folder")
+        
+        except Exception as e:
+            log.debug(f"Could not check for wrong folder editing: {e}")
+
     def _switch_to_branch(self, branch_name):
         """
         Switch to the specified branch, with dirty working tree check.
@@ -1783,6 +2089,37 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         
         if self._is_switching_branch or self._job_runner.is_busy():
             log.debug("Job running, branch switch ignored")
+            return
+
+        # CRITICAL Guard: block ALL branch operations while ANY FreeCAD files are open
+        # This prevents corruption that can occur when:
+        # - Git operations modify files that are open in FreeCAD
+        # - Switching between worktrees while files from other worktrees are open
+        # - Creating new worktrees that share git objects with open files
+        open_docs = self._get_all_open_fcstd_documents()
+        lock_files = self._find_repo_lock_files()
+        if open_docs or lock_files:
+            details_lines = []
+            if open_docs:
+                details_lines.append("Open documents:")
+                details_lines.extend([f"  - {p}" for p in open_docs])
+            if lock_files:
+                details_lines.append("Lock files (close FreeCAD):")
+                details_lines.extend([f"  - {p}" for p in lock_files])
+
+            advice = (
+                "CRITICAL: Close ALL FreeCAD documents before any branch operations!\n\n"
+                "Git operations can corrupt .FCStd files that are currently open in FreeCAD, "
+                "even if they're in a different worktree folder. This is a known limitation "
+                "of how FreeCAD handles binary files.\n\n"
+                "Please close ALL FreeCAD documents (File -> Close All) and try again."
+            )
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Close ALL Files First",
+                advice + ("\n\n" + "\n".join(details_lines) if details_lines else ""),
+            )
+            log.warning("Branch switch blocked - open FreeCAD documents detected")
             return
         
         # Check for uncommitted changes
@@ -1805,7 +2142,27 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 log.info("User cancelled branch switch due to uncommitted changes")
                 return
         
-        # Perform checkout asynchronously
+        # Prefer per-branch worktree to avoid FCStd corruption
+        worktree_path = self._compute_worktree_path_for_branch(branch_name)
+        if worktree_path:
+            create_msg = (
+                "To avoid CAD file corruption, GitPDM can create a per-branch worktree "
+                "folder and open it instead of switching in-place.\n\n"
+                f"Worktree path:\n  {worktree_path}\n\n"
+                "Proceed to create and open the worktree?"
+            )
+            reply = QtWidgets.QMessageBox.question(
+                self,
+                "Use Per-Branch Worktree",
+                create_msg,
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                QtWidgets.QMessageBox.Yes,
+            )
+            if reply == QtWidgets.QMessageBox.Yes:
+                self._create_and_open_worktree(branch_name, worktree_path)
+                return
+
+        # Fallback: perform in-place checkout (riskier)
         self._is_switching_branch = True
         self._start_busy_feedback(f"Switching to {branch_name}…")
         self._update_branch_button_states()
@@ -1849,7 +2206,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         
         # Show success message for new branch creation
         self._show_status_message(
-            f"Created and switched to '{branch_name}'",
+            f"Switched to '{branch_name}'",
             is_error=False
         )
         QtCore.QTimer.singleShot(3000, self._clear_status_message)
@@ -1866,6 +2223,203 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # Refresh UI
         if self._current_repo_root:
             self._refresh_after_branch_operation()
+
+    def _compute_worktree_path_for_branch(self, branch_name: str) -> str:
+        """Compute a suggested worktree path for the given branch."""
+        try:
+            base = os.path.basename(os.path.normpath(self._current_repo_root or ""))
+            parent = os.path.dirname(os.path.normpath(self._current_repo_root or ""))
+            if not parent:
+                return ""
+            candidate = f"{base}-{branch_name}"
+            return os.path.join(parent, candidate)
+        except Exception:
+            return ""
+
+    def _create_and_open_worktree(self, branch_name: str, worktree_path: str):
+        """Create git worktree and open it as the active repo root."""
+        git_cmd = self._git_client._get_git_command()
+        if not git_cmd:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Git Not Found",
+                "Git is not available. Install Git or GitHub Desktop and retry.",
+            )
+            return
+
+        self._is_switching_branch = True
+        self._start_busy_feedback(f"Creating worktree for {branch_name}…")
+        self._update_branch_button_states()
+
+        args = [git_cmd, "-C", self._current_repo_root, "worktree", "add", worktree_path, branch_name]
+        self._job_runner.run_job(
+            "add_worktree",
+            args,
+            callback=lambda job: self._on_worktree_created(job, worktree_path, branch_name)
+        )
+
+    def _on_worktree_created(self, job, worktree_path: str, branch_name: str):
+        """Handle completion of adding a worktree."""
+        result = job.get("result", {})
+        success = result.get("success", False)
+        stderr = result.get("stderr", "")
+        self._is_switching_branch = False
+        self._stop_busy_feedback()
+
+        if not success:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Worktree Creation Failed",
+                f"Failed to create worktree for '{branch_name}':\n\n{stderr}"
+            )
+            self._update_branch_button_states()
+            return
+
+        # Update repo root to new worktree and refresh
+        log.info(f"Worktree created: {worktree_path}")
+        settings.save_repo_path(worktree_path)
+        self._validate_repo_path(worktree_path)
+        
+        # Show success dialog with "Open Folder" button
+        self._show_worktree_success_dialog(worktree_path, branch_name)
+
+    def _get_open_repo_documents(self):
+        """
+        Return list of open FreeCAD documents that live inside the current repo.
+        
+        CRITICAL: This checks for .FCStd files from the CURRENT repo root only.
+        For worktree safety, use _get_all_open_fcstd_documents() to check ALL open files.
+        """
+        try:
+            import FreeCAD
+            list_docs = getattr(FreeCAD, "listDocuments", None)
+            if not callable(list_docs):
+                return []
+        except Exception:
+            return []
+
+        if not self._current_repo_root:
+            return []
+
+        repo_root_norm = os.path.normcase(os.path.normpath(self._current_repo_root))
+        open_paths = []
+        try:
+            for doc in list_docs().values():
+                path = getattr(doc, "FileName", "") or ""
+                if not path:
+                    continue
+                try:
+                    path_norm = os.path.normcase(os.path.normpath(path))
+                    if path_norm.startswith(repo_root_norm):
+                        open_paths.append(path)
+                except Exception:
+                    continue
+        except Exception:
+            return []
+        return open_paths
+
+    def _get_all_open_fcstd_documents(self):
+        """
+        Return list of ALL open .FCStd files in FreeCAD, regardless of location.
+        
+        This is used for worktree safety - we need to ensure NO FreeCAD files are open
+        when performing any git operations, since git worktree operations can affect
+        files in other worktrees indirectly.
+        
+        Returns:
+            List of absolute paths to open .FCStd files
+        """
+        try:
+            import FreeCAD
+            list_docs = getattr(FreeCAD, "listDocuments", None)
+            if not callable(list_docs):
+                return []
+        except Exception:
+            return []
+
+        open_paths = []
+        try:
+            for doc in list_docs().values():
+                path = getattr(doc, "FileName", "") or ""
+                if path and path.lower().endswith(".fcstd"):
+                    try:
+                        open_paths.append(os.path.abspath(os.path.normpath(path)))
+                    except Exception:
+                        continue
+        except Exception:
+            return []
+        return open_paths
+
+    def _find_repo_lock_files(self):
+        """Return list of FreeCAD lock files inside the current repo."""
+        if not self._current_repo_root:
+            return []
+        pattern = os.path.join(self._current_repo_root, "*.FCStd.lock")
+        try:
+            return glob.glob(pattern)
+        except Exception:
+            return []
+
+    def _set_freecad_working_directory(self, directory: str):
+        """
+        Set FreeCAD's working directory to ensure Save As dialog defaults to repo folder.
+        
+        This prevents users from accidentally saving files outside the repo, which would
+        cause repo health issues.
+        
+        Args:
+            directory: Absolute path to set as working directory
+        """
+        if not directory or not os.path.isdir(directory):
+            log.debug(f"Cannot set working directory, invalid path: {directory}")
+            return
+        
+        try:
+            # Normalize the path
+            directory = os.path.abspath(os.path.normpath(directory))
+            
+            # Method 1: Change Python's current working directory
+            # FreeCAD's file dialogs often respect this
+            os.chdir(directory)
+            log.info(f"Set Python working directory: {directory}")
+            
+            # Method 2: Set FreeCAD's parameter for last file dialog directory
+            try:
+                import FreeCAD
+                param_grp = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/General")
+                if param_grp:
+                    # These parameters control FreeCAD's file dialog defaults
+                    param_grp.SetString("FileOpenSavePath", directory)
+                    log.info(f"Set FreeCAD FileOpenSavePath parameter: {directory}")
+            except Exception as e:
+                log.debug(f"Could not set FreeCAD file path parameter: {e}")
+                    
+        except Exception as e:
+            log.error(f"Failed to set working directory to {directory}: {e}")
+
+    def _start_working_directory_refresh(self):
+        """Start periodic timer to maintain repo folder as FreeCAD's working directory."""
+        if not hasattr(self, '_wd_refresh_timer'):
+            self._wd_refresh_timer = QtCore.QTimer(self)
+            self._wd_refresh_timer.timeout.connect(self._refresh_working_directory)
+            # Refresh every 10 seconds to maintain working directory
+            self._wd_refresh_timer.start(10000)
+            log.debug("Started working directory refresh timer")
+
+    def _refresh_working_directory(self):
+        """Periodic refresh of working directory to maintain repo folder as default."""
+        if self._current_repo_root:
+            try:
+                current_wd = os.getcwd()
+                repo_norm = os.path.normcase(os.path.normpath(self._current_repo_root))
+                current_norm = os.path.normcase(os.path.normpath(current_wd))
+                
+                # Only update if working directory has drifted from repo
+                if current_norm != repo_norm:
+                    log.debug(f"Working directory drifted to {current_wd}, resetting to {self._current_repo_root}")
+                    self._set_freecad_working_directory(self._current_repo_root)
+            except Exception as e:
+                log.debug(f"Working directory refresh error: {e}")
 
     def _switch_to_branch_with_checkout(self, branch_name):
         """Fallback to git checkout if git switch is not available."""
@@ -2051,6 +2605,27 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             log.debug("Pull/fetch already in progress")
             return
         
+        # CRITICAL Guard: block pull while ANY FreeCAD files are open
+        # Pull can modify working tree files, corrupting open .FCStd files
+        open_docs = self._get_all_open_fcstd_documents()
+        if open_docs:
+            details_lines = ["Open FreeCAD documents:"]
+            details_lines.extend([f"  - {p}" for p in open_docs[:10]])
+            if len(open_docs) > 10:
+                details_lines.append(f"  ... and {len(open_docs) - 10} more")
+            
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Close ALL Files First",
+                "⚠️ CRITICAL: Close ALL FreeCAD documents before pulling!\n\n"
+                "Git pull can modify files in the working tree, which will corrupt "
+                ".FCStd files that are currently open in FreeCAD.\n\n"
+                "Please close ALL FreeCAD documents (File → Close All) and try again.\n\n" +
+                "\n".join(details_lines)
+            )
+            log.warning("Pull blocked - open FreeCAD documents detected")
+            return
+        
         log.info(f"Starting pull for repo: {self._current_repo_root}")
         
         # Clear previous messages
@@ -2225,6 +2800,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.repo_info_label.setStyleSheet(
             "color: gray; font-style: italic;"
         )
+        self.repo_branch_indicator.setText("—")
         self.repo_search.setEnabled(False)
         self.repo_refresh_btn.setEnabled(False)
         self.repo_list.setEnabled(False)
@@ -2237,6 +2813,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     def _refresh_repo_browser_files(self):
         """
         Load tracked CAD files asynchronously using git ls-files.
+        Always uses self._current_repo_root to ensure correct worktree/branch files.
         """
         self._ensure_browser_host()
         if not self._git_client.is_git_available():
@@ -2244,6 +2821,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self.repo_info_label.setStyleSheet(
                 "color: red; font-style: italic;"
             )
+            self.repo_branch_indicator.setText("—")
             self.repo_search.setEnabled(False)
             self.repo_refresh_btn.setEnabled(False)
             self.repo_list.setEnabled(False)
@@ -2257,6 +2835,16 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             # Avoid overlapping jobs; user can re-click later
             return
 
+        # Update branch/worktree indicator
+        current_branch = self._git_client.current_branch(self._current_repo_root)
+        repo_name = os.path.basename(os.path.normpath(self._current_repo_root))
+        if current_branch:
+            self.repo_branch_indicator.setText(
+                f"📂 {repo_name}  •  🌿 {current_branch}"
+            )
+        else:
+            self.repo_branch_indicator.setText(f"📂 {repo_name}")
+
         self._is_listing_files = True
         self.repo_info_label.setText("Loading…")
         self.repo_info_label.setStyleSheet(
@@ -2269,8 +2857,11 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.repo_list.clear()
 
         git_cmd = self._git_client._get_git_command()
+        # CRITICAL: Always use self._current_repo_root to list files from correct worktree
         args = [git_cmd, "-C", self._current_repo_root,
                 "ls-files", "-z"]
+
+        log.info(f"Listing files from: {self._current_repo_root} (branch: {current_branch})")
 
         self._job_runner.run_job(
             "list_files",
@@ -2394,11 +2985,17 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         """Open the given repo-relative path in FreeCAD."""
         self._ensure_browser_host()
         if not self._current_repo_root:
+            log.warning("Cannot open file: no repo root set")
             return
         import os
         abs_path = os.path.normpath(
             os.path.join(self._current_repo_root, rel)
         )
+
+        # Log which file we're opening and from which root
+        log.info(f"Opening file from repo browser: {rel}")
+        log.info(f"  Absolute path: {abs_path}")
+        log.info(f"  Current repo root: {self._current_repo_root}")
 
         # Only allow opening FCStd files
         name = abs_path.rsplit("/", 1)[-1]
@@ -2413,6 +3010,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             return
 
         if not os.path.isfile(abs_path):
+            log.error(f"File does not exist: {abs_path}")
             msg = QtWidgets.QMessageBox(self)
             msg.setIcon(QtWidgets.QMessageBox.Warning)
             msg.setWindowTitle("File Missing")
@@ -2455,14 +3053,26 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             # If FreeCAD API differs, proceed without blocking
             pass
 
+        # Set working directory to repo folder before opening
+        # This ensures "Save As" dialog defaults to the repo folder
+        self._set_freecad_working_directory(self._current_repo_root)
+        
         # Open document in FreeCAD
         try:
             import FreeCAD
             FreeCAD.open(abs_path)
+            log.info(f"Opened file in FreeCAD: {abs_path}")
+            
+            # Re-confirm working directory after opening (some FreeCAD versions reset it)
+            self._set_freecad_working_directory(self._current_repo_root)
         except Exception:
             try:
                 import FreeCADGui
                 FreeCADGui.open(abs_path)
+                log.info(f"Opened file via FreeCADGui: {abs_path}")
+                
+                # Re-confirm working directory
+                self._set_freecad_working_directory(self._current_repo_root)
             except Exception as e:
                 log.error(f"Failed to open file: {e}")
                 msg = QtWidgets.QMessageBox(self)
@@ -2546,7 +3156,15 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
     def _stop_busy_feedback(self):
         """Hide progress indicator and stop timer."""
-        self._busy_timer.stop()
+        try:
+            QtCore.QMetaObject.invokeMethod(
+                self._busy_timer,
+                "stop",
+                QtCore.Qt.QueuedConnection,
+            )
+        except Exception:
+            # Fallback if queued invocation is unavailable
+            self._busy_timer.stop()
         self._busy_label = ""
         if hasattr(self, "busy_bar"):
             self.busy_bar.hide()
@@ -2674,6 +3292,19 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         """Called when commit message text changes (debounced)."""
         self._button_update_timer.stop()
         self._button_update_timer.start()
+
+    def _on_compact_commit_clicked(self):
+        """Commit handler for the compact mode button."""
+        # If compact message has text, sync it to the main editor for reuse
+        try:
+            if hasattr(self, "compact_commit_message") and hasattr(self, "commit_message"):
+                text = self.compact_commit_message.text().strip()
+                if text:
+                    self.commit_message.setPlainText(text)
+        except Exception:
+            pass
+        # Route to regular commit flow
+        self._on_commit_clicked()
 
     def _on_commit_push_clicked(self):
         """Handle Commit & Push / Publish button click (routes to appropriate flow)."""
@@ -2826,7 +3457,10 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         log.info("Commit & push completed successfully")
 
-        self.commit_message.clear()
+        if hasattr(self, "commit_message"):
+            self.commit_message.clear()
+        if hasattr(self, "compact_commit_message"):
+            self.compact_commit_message.clear()
 
         if self._current_repo_root:
             branch = self._git_client.current_branch(
@@ -2864,7 +3498,10 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             log.debug("Job running, commit ignored")
             return
 
-        message = self.commit_message.toPlainText().strip()
+        # Prefer message from main editor; fallback to compact field
+        message = self.commit_message.toPlainText().strip() if hasattr(self, "commit_message") else ""
+        if not message and hasattr(self, "compact_commit_message"):
+            message = self.compact_commit_message.text().strip()
         if not message:
             self._show_status_message(
                 "Commit message required", is_error=True
@@ -2954,7 +3591,10 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             return
 
         log.info("Commit created successfully")
-        self.commit_message.clear()
+        if hasattr(self, "commit_message"):
+            self.commit_message.clear()
+        if hasattr(self, "compact_commit_message"):
+            self.compact_commit_message.clear()
 
         if self._current_repo_root:
             branch = self._git_client.current_branch(

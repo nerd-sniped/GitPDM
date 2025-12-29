@@ -2,6 +2,7 @@
 """
 GitHub repositories listing utilities.
 Sprint OAUTH-3: List repos with pagination (stdlib-only HTTP).
+Sprint OAUTH-6: Error handling, retries, caching integration.
 """
 
 from __future__ import annotations
@@ -10,11 +11,9 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from freecad_gitpdm.core import log
-from freecad_gitpdm.github.api_client import (
-    GitHubApiClient,
-    GitHubApiError,
-    GitHubApiNetworkError,
-)
+from freecad_gitpdm.github.api_client import GitHubApiClient
+from freecad_gitpdm.github.errors import GitHubApiError, GitHubApiNetworkError
+from freecad_gitpdm.github.cache import get_github_api_cache
 
 
 @dataclass
@@ -56,34 +55,50 @@ def _extract_next_link(headers: dict) -> Optional[str]:
 
 
 def _classify_error(status: int, headers: dict) -> GitHubApiError:
-    """Return a user-friendly GitHubApiError for the status code."""
-    if status == 401:
-        return GitHubApiError("Not authorized. Reconnect GitHub and try again.")
-    if status == 403:
-        try:
-            remaining = headers.get("X-RateLimit-Remaining") or headers.get("x-ratelimit-remaining")
-            if remaining is not None and str(remaining) == "0":
-                return GitHubApiError("GitHub rate limit reached. Try again later.")
-        except Exception:
-            pass
-        return GitHubApiError("Access forbidden. Check token scopes and permissions.")
-    if status >= 500:
-        return GitHubApiError("GitHub is unavailable right now. Please retry.")
-    return GitHubApiError(f"GitHub API returned status {status}")
+    """Classify HTTP error using structured error handling."""
+    return GitHubApiError.from_http_error(status, headers or {})
 
 
 def list_repos(
     client: GitHubApiClient,
     per_page: int = 100,
     max_pages: int = 10,
+    use_cache: bool = True,
+    cache_key_user: str = "default",
 ) -> List[RepoInfo]:
     """
     List repositories the viewer can access via GitHub REST API.
 
     - Uses GET /user/repos with affiliation + visibility filters.
     - Paginates using the Link header.
+    - Checks cache first (120s TTL) if use_cache=True.
     - Raises GitHubApiError for HTTP failures with friendly messages.
+    
+    Args:
+        client: GitHubApiClient instance
+        per_page: Items per page (default 100, max 100)
+        max_pages: Maximum pages to fetch
+        use_cache: Whether to use/populate cache (default True)
+        cache_key_user: Username/ID for cache key isolation
+        
+    Returns:
+        List[RepoInfo]: List of repositories
+        
+    Raises:
+        GitHubApiError: With code (UNAUTHORIZED, RATE_LIMITED, NETWORK, etc.)
     """
+    # Check cache first
+    if use_cache:
+        cache = get_github_api_cache()
+        cached_repos, cache_hit = cache.get(
+            "api.github.com",
+            cache_key_user,
+            "repos_list"
+        )
+        if cache_hit and cached_repos is not None:
+            log.debug(f"Using cached repo list ({len(cached_repos)} repos)")
+            return cached_repos
+    
     results: List[RepoInfo] = []
 
     if per_page <= 0 or per_page > 100:
@@ -107,8 +122,11 @@ def list_repos(
             )
         except GitHubApiNetworkError:
             raise
+        except GitHubApiError:
+            raise
         except Exception as e:
-            raise GitHubApiError(f"Request failed: {e}") from e
+            # Unexpected error; wrap it
+            raise GitHubApiError.from_network_error(str(e)) from e
 
         if status < 200 or status >= 300:
             raise _classify_error(status, headers or {})
@@ -146,5 +164,16 @@ def list_repos(
                 continue
 
         url = _extract_next_link(headers or {})
+
+    # Store in cache before returning
+    if use_cache:
+        cache = get_github_api_cache()
+        cache.set(
+            "api.github.com",
+            cache_key_user,
+            "repos_list",
+            results,
+        )
+        log.debug(f"Cached repo list ({len(results)} repos)")
 
     return results

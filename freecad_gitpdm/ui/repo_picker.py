@@ -2,6 +2,7 @@
 """
 Repository picker dialog for GitPDM.
 Sprint OAUTH-3: List GitHub repos and clone asynchronously.
+Sprint OAUTH-6: Caching, error handling, token invalidation detection.
 """
 
 from __future__ import annotations
@@ -24,11 +25,9 @@ except ImportError:  # pragma: no cover
 from freecad_gitpdm.core import log, settings, jobs
 from freecad_gitpdm.git.client import GitClient
 from freecad_gitpdm.github.repos import RepoInfo, list_repos
-from freecad_gitpdm.github.api_client import (
-    GitHubApiClient,
-    GitHubApiError,
-    GitHubApiNetworkError,
-)
+from freecad_gitpdm.github.api_client import GitHubApiClient
+from freecad_gitpdm.github.errors import GitHubApiError, GitHubApiNetworkError
+from freecad_gitpdm.github.cache import get_github_api_cache
 
 
 class RepoPickerDialog(QtWidgets.QDialog):
@@ -58,6 +57,7 @@ class RepoPickerDialog(QtWidgets.QDialog):
         self._selected_repo: Optional[RepoInfo] = None
         self._is_loading = False
         self._default_clone_dir = default_clone_dir or settings.load_default_clone_dir()
+        self._bypass_cache = False  # Track if next refresh should bypass cache
 
         self._build_ui()
         QtCore.QTimer.singleShot(50, self._refresh_repos)
@@ -87,10 +87,24 @@ class RepoPickerDialog(QtWidgets.QDialog):
         self._connect_message.hide()
         layout.addWidget(self._connect_message)
 
+        self._session_expired_message = QtWidgets.QLabel(
+            "Your GitHub session has expired."
+        )
+        self._session_expired_message.setStyleSheet(
+            "color: #d32f2f; font-style: italic;"
+        )
+        self._session_expired_message.hide()
+        layout.addWidget(self._session_expired_message)
+
         self._connect_btn = QtWidgets.QPushButton("Connect GitHub")
         self._connect_btn.clicked.connect(self._on_connect_clicked)
         self._connect_btn.hide()
         layout.addWidget(self._connect_btn)
+        
+        self._reconnect_btn = QtWidgets.QPushButton("Reconnect GitHub")
+        self._reconnect_btn.clicked.connect(self._on_reconnect_clicked)
+        self._reconnect_btn.hide()
+        layout.addWidget(self._reconnect_btn)
 
         search_row = QtWidgets.QHBoxLayout()
         search_row.setSpacing(6)
@@ -100,7 +114,7 @@ class RepoPickerDialog(QtWidgets.QDialog):
         search_row.addWidget(self.search_box)
 
         self.refresh_btn = QtWidgets.QPushButton("Refresh")
-        self.refresh_btn.clicked.connect(self._refresh_repos)
+        self.refresh_btn.clicked.connect(self._on_refresh_clicked)
         search_row.addWidget(self.refresh_btn)
         layout.addLayout(search_row)
 
@@ -144,6 +158,38 @@ class RepoPickerDialog(QtWidgets.QDialog):
             log.debug(f"Repo picker could not create client: {e}")
         return None
 
+    def _on_refresh_clicked(self):
+        """Handle Refresh button click - bypass cache on next load."""
+        self._bypass_cache = True
+        self._refresh_repos()
+
+    def _on_reconnect_clicked(self):
+        """Handle Reconnect button click - same as Connect but after session expired."""
+        if self._on_connect_requested:
+            self._on_connect_requested()
+            # After reconnect, try refreshing repos
+            QtCore.QTimer.singleShot(500, self._refresh_repos)
+        else:
+            QtWidgets.QMessageBox.information(
+                self,
+                "Reconnect GitHub",
+                "Use the GitHub Account section to sign in again, then click Refresh.",
+            )
+
+    def _show_session_expired_prompt(self):
+        """Show UI when session has expired (401 error)."""
+        self._session_expired_message.show()
+        self._reconnect_btn.show()
+        self._connect_message.hide()
+        self._connect_btn.hide()
+        self.table.setRowCount(0)
+        self.clone_btn.setEnabled(False)
+        self.status_label.setText("Session expired. Click Reconnect.")
+        self.status_label.setStyleSheet("color: #d32f2f;")
+        self._is_loading = False
+        self.search_box.setEnabled(False)
+        self.refresh_btn.setEnabled(True)
+
     def _refresh_repos(self):
         if self._is_loading:
             return
@@ -155,31 +201,79 @@ class RepoPickerDialog(QtWidgets.QDialog):
 
         self._hide_connect_prompt()
         self._set_loading_state(True, "Loading…")
+        
+        # Set bypass flag for cache and reset it
+        cache = get_github_api_cache()
+        if self._bypass_cache:
+            cache.set_bypass(True)
+            self._bypass_cache = False
+        
+        # Get username for cache key
+        username = settings.load_github_login() or "default"
 
         self._job_runner.run_callable(
             "github_list_repos",
-            lambda: list_repos(client, per_page=100, max_pages=10),
+            lambda: list_repos(
+                client,
+                per_page=100,
+                max_pages=10,
+                use_cache=True,
+                cache_key_user=username,
+            ),
             on_success=self._on_repos_loaded,
             on_error=self._on_repos_error,
         )
 
     def _on_repos_loaded(self, repo_list: List[RepoInfo]):
+        # Reset cache bypass flag
+        cache = get_github_api_cache()
+        cache.set_bypass(False)
+        
         self._repos = repo_list or []
         self._apply_filter()
         count = len(self._repos)
-        self.status_label.setText(f"Loaded {count} repositories")
+        
+        # Check cache age to show cache status
+        username = settings.load_github_login() or "default"
+        age = cache.age("api.github.com", username, "repos_list")
+        if age is not None:
+            age_s = int(age)
+            self.status_label.setText(
+                f"Loaded {count} repositories (cached {age_s}s ago)"
+            )
+        else:
+            self.status_label.setText(f"Loaded {count} repositories")
+        
         self.status_label.setStyleSheet("color: gray;")
         self._set_loading_state(False)
 
     def _on_repos_error(self, error: Exception):
+        # Reset cache bypass flag
+        cache = get_github_api_cache()
+        cache.set_bypass(False)
+        
         msg = "Failed to load repositories."
-        if isinstance(error, GitHubApiNetworkError):
-            msg = "Network error. Check connection and try again."
-        elif isinstance(error, GitHubApiError):
-            msg = str(error)
+        color = "red;"
+        
+        if isinstance(error, GitHubApiError):
+            # Structured error handling with code classification
+            msg = str(error.message) if hasattr(error, 'message') else str(error)
+            
+            # Special handling for 401 UNAUTHORIZED
+            if hasattr(error, 'code') and error.code == "UNAUTHORIZED":
+                self._show_session_expired_prompt()
+                return
+            
+            # Rate limit message already in msg
+            if hasattr(error, 'retry_after_s') and error.retry_after_s:
+                msg = f"{msg} (retry in {error.retry_after_s}s)"
+        
+        elif isinstance(error, GitHubApiNetworkError):
+            msg = "Network error. Check your connection and try again."
+        
         log.warning(f"Repo picker load error: {msg}")
         self.status_label.setText(msg)
-        self.status_label.setStyleSheet("color: red;")
+        self.status_label.setStyleSheet(f"color: {color}")
         self._set_loading_state(False)
 
     def _apply_filter(self):
@@ -317,6 +411,8 @@ class RepoPickerDialog(QtWidgets.QDialog):
     def _show_connect_prompt(self):
         self._connect_message.show()
         self._connect_btn.show()
+        self._session_expired_message.hide()
+        self._reconnect_btn.hide()
         self.table.setRowCount(0)
         self.clone_btn.setEnabled(False)
         self.status_label.setText("Connect to GitHub to list repos")
@@ -328,6 +424,8 @@ class RepoPickerDialog(QtWidgets.QDialog):
     def _hide_connect_prompt(self):
         self._connect_message.hide()
         self._connect_btn.hide()
+        self._session_expired_message.hide()
+        self._reconnect_btn.hide()
         self.search_box.setEnabled(True)
 
     def _on_connect_clicked(self):
