@@ -478,6 +478,373 @@ class GitClient:
 
         return "(unknown)"
 
+    def list_local_branches(self, repo_root):
+        """
+        List all local branches in the repository.
+        
+        Args:
+            repo_root: Repository root path (string)
+            
+        Returns:
+            list[str]: List of local branch names, or empty list on error
+        """
+        if not self.is_git_available():
+            log.warning("Git not available for list_local_branches")
+            return []
+
+        if not repo_root or not os.path.isdir(repo_root):
+            log.warning(f"Invalid repo_root for list_local_branches: {repo_root}")
+            return []
+
+        git_cmd = self._get_git_command()
+
+        try:
+            result = subprocess.run(
+                [git_cmd, "-C", repo_root, "branch",
+                 "--format=%(refname:short)"],
+                capture_output=True,
+                text=True,
+                timeout=15
+            )
+            if result.returncode == 0:
+                branches = [
+                    line.strip()
+                    for line in result.stdout.strip().split("\n")
+                    if line.strip()
+                ]
+                log.debug(f"Found {len(branches)} local branches")
+                return branches
+            else:
+                log.warning(f"list_local_branches failed: {result.stderr.strip()}")
+                return []
+        except subprocess.TimeoutExpired:
+            log.warning("list_local_branches timed out")
+            return []
+        except OSError as e:
+            log.warning(f"list_local_branches error: {e}")
+            return []
+
+    def list_remote_branches(self, repo_root, remote="origin"):
+        """
+        List all remote branches for the given remote.
+        Filters out pseudo-refs like "origin/HEAD".
+        
+        Args:
+            repo_root: Repository root path (string)
+            remote: Remote name (default "origin")
+            
+        Returns:
+            list[str]: List of remote branch refs (e.g., "origin/main"),
+                       or empty list on error
+        """
+        if not self.is_git_available():
+            log.warning("Git not available for list_remote_branches")
+            return []
+
+        if not repo_root or not os.path.isdir(repo_root):
+            log.warning(f"Invalid repo_root for list_remote_branches: {repo_root}")
+            return []
+
+        git_cmd = self._get_git_command()
+
+        try:
+            result = subprocess.run(
+                [git_cmd, "-C", repo_root, "branch", "-r",
+                 "--format=%(refname:short)"],
+                capture_output=True,
+                text=True,
+                timeout=15
+            )
+            if result.returncode == 0:
+                branches = [
+                    line.strip()
+                    for line in result.stdout.strip().split("\n")
+                    if line.strip() and not line.strip().endswith("/HEAD")
+                ]
+                # Filter to only the requested remote
+                prefix = f"{remote}/"
+                branches = [b for b in branches if b.startswith(prefix)]
+                log.debug(f"Found {len(branches)} remote branches for {remote}")
+                return branches
+            else:
+                log.warning(f"list_remote_branches failed: {result.stderr.strip()}")
+                return []
+        except subprocess.TimeoutExpired:
+            log.warning("list_remote_branches timed out")
+            return []
+        except OSError as e:
+            log.warning(f"list_remote_branches error: {e}")
+            return []
+
+    def create_branch(self, repo_root, name, start_point=None):
+        """
+        Create a new branch at the specified start point.
+        
+        Args:
+            repo_root: Repository root path (string)
+            name: Branch name to create
+            start_point: Starting commit/branch (default: HEAD)
+            
+        Returns:
+            CmdResult: Result of the branch creation
+        """
+        if not self.is_git_available():
+            return CmdResult(
+                ok=False,
+                stdout="",
+                stderr="Git not available",
+                error_code="NO_GIT"
+            )
+
+        if not repo_root or not os.path.isdir(repo_root):
+            return CmdResult(
+                ok=False,
+                stdout="",
+                stderr="Invalid repository",
+                error_code="INVALID_REPO"
+            )
+
+        git_cmd = self._get_git_command()
+
+        if start_point:
+            args = [git_cmd, "-C", repo_root, "branch", name, start_point]
+        else:
+            args = [git_cmd, "-C", repo_root, "branch", name]
+
+        try:
+            result = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=15
+            )
+            if result.returncode == 0:
+                log.info(f"Created branch: {name}")
+                return CmdResult(
+                    ok=True,
+                    stdout=result.stdout.strip(),
+                    stderr=""
+                )
+            else:
+                log.warning(f"create_branch failed: {result.stderr.strip()}")
+                return CmdResult(
+                    ok=False,
+                    stdout=result.stdout.strip(),
+                    stderr=result.stderr.strip(),
+                    error_code="CREATE_FAILED"
+                )
+        except subprocess.TimeoutExpired:
+            return CmdResult(
+                ok=False,
+                stdout="",
+                stderr="Command timed out",
+                error_code="TIMEOUT"
+            )
+        except OSError as e:
+            return CmdResult(
+                ok=False,
+                stdout="",
+                stderr=str(e),
+                error_code="OS_ERROR"
+            )
+
+    def checkout_branch(self, repo_root, name):
+        """
+        Switch to the specified branch.
+        Prefers 'git switch', falls back to 'git checkout'.
+        
+        Args:
+            repo_root: Repository root path (string)
+            name: Branch name to switch to
+            
+        Returns:
+            CmdResult: Result of the checkout operation
+        """
+        if not self.is_git_available():
+            return CmdResult(
+                ok=False,
+                stdout="",
+                stderr="Git not available",
+                error_code="NO_GIT"
+            )
+
+        if not repo_root or not os.path.isdir(repo_root):
+            return CmdResult(
+                ok=False,
+                stdout="",
+                stderr="Invalid repository",
+                error_code="INVALID_REPO"
+            )
+
+        git_cmd = self._get_git_command()
+
+        # Try 'git switch' first (modern command)
+        args = [git_cmd, "-C", repo_root, "switch", name]
+        try:
+            result = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=15
+            )
+            if result.returncode == 0:
+                log.info(f"Switched to branch: {name}")
+                return CmdResult(
+                    ok=True,
+                    stdout=result.stdout.strip(),
+                    stderr=""
+                )
+            else:
+                # Check if 'switch' is not recognized
+                if "switch" in result.stderr.lower() and "not a git command" in result.stderr.lower():
+                    # Fallback to checkout
+                    log.debug("'git switch' not available, falling back to 'git checkout'")
+                    args = [git_cmd, "-C", repo_root, "checkout", name]
+                    result = subprocess.run(
+                        args,
+                        capture_output=True,
+                        text=True,
+                        timeout=15
+                    )
+                    if result.returncode == 0:
+                        log.info(f"Checked out branch: {name}")
+                        return CmdResult(
+                            ok=True,
+                            stdout=result.stdout.strip(),
+                            stderr=""
+                        )
+                
+                log.warning(f"checkout_branch failed: {result.stderr.strip()}")
+                return CmdResult(
+                    ok=False,
+                    stdout=result.stdout.strip(),
+                    stderr=result.stderr.strip(),
+                    error_code="CHECKOUT_FAILED"
+                )
+        except subprocess.TimeoutExpired:
+            return CmdResult(
+                ok=False,
+                stdout="",
+                stderr="Command timed out",
+                error_code="TIMEOUT"
+            )
+        except OSError as e:
+            return CmdResult(
+                ok=False,
+                stdout="",
+                stderr=str(e),
+                error_code="OS_ERROR"
+            )
+
+    def delete_local_branch(self, repo_root, name, force=False):
+        """
+        Delete a local branch.
+        
+        Args:
+            repo_root: Repository root path (string)
+            name: Branch name to delete
+            force: Whether to force delete (use -D instead of -d)
+            
+        Returns:
+            CmdResult: Result of the delete operation
+        """
+        if not self.is_git_available():
+            return CmdResult(
+                ok=False,
+                stdout="",
+                stderr="Git not available",
+                error_code="NO_GIT"
+            )
+
+        if not repo_root or not os.path.isdir(repo_root):
+            return CmdResult(
+                ok=False,
+                stdout="",
+                stderr="Invalid repository",
+                error_code="INVALID_REPO"
+            )
+
+        git_cmd = self._get_git_command()
+        flag = "-D" if force else "-d"
+        args = [git_cmd, "-C", repo_root, "branch", flag, name]
+
+        try:
+            result = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=15
+            )
+            if result.returncode == 0:
+                log.info(f"Deleted branch: {name}")
+                return CmdResult(
+                    ok=True,
+                    stdout=result.stdout.strip(),
+                    stderr=""
+                )
+            else:
+                log.warning(f"delete_local_branch failed: {result.stderr.strip()}")
+                return CmdResult(
+                    ok=False,
+                    stdout=result.stdout.strip(),
+                    stderr=result.stderr.strip(),
+                    error_code="DELETE_FAILED"
+                )
+        except subprocess.TimeoutExpired:
+            return CmdResult(
+                ok=False,
+                stdout="",
+                stderr="Command timed out",
+                error_code="TIMEOUT"
+            )
+        except OSError as e:
+            return CmdResult(
+                ok=False,
+                stdout="",
+                stderr=str(e),
+                error_code="OS_ERROR"
+            )
+
+    def get_upstream_ref(self, repo_root):
+        """
+        Get the upstream tracking ref for the current branch.
+        
+        Args:
+            repo_root: Repository root path (string)
+            
+        Returns:
+            str | None: Upstream ref (e.g., "origin/feature-x") or None if no upstream
+        """
+        if not self.is_git_available():
+            return None
+
+        if not repo_root or not os.path.isdir(repo_root):
+            return None
+
+        git_cmd = self._get_git_command()
+
+        try:
+            result = subprocess.run(
+                [git_cmd, "-C", repo_root, "rev-parse",
+                 "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+                capture_output=True,
+                text=True,
+                timeout=15
+            )
+            if result.returncode == 0:
+                upstream = result.stdout.strip()
+                log.debug(f"Upstream ref for current branch: '{upstream}' (returncode={result.returncode})")
+                return upstream if upstream else None
+            else:
+                log.debug(f"No upstream ref set (returncode={result.returncode}, stderr={result.stderr.strip()})")
+                return None
+        except subprocess.TimeoutExpired:
+            log.warning("get_upstream_ref timed out")
+            return None
+        except OSError as e:
+            log.warning(f"get_upstream_ref error: {e}")
+            return None
+
     def _classify_status_kind(self, x_code, y_code):
         """Classify porcelain XY codes into a status kind."""
         if x_code == "?" and y_code == "?":
@@ -804,6 +1171,43 @@ class GitClient:
         log.debug("No default upstream reference found")
         return None
 
+    def get_ahead_behind_with_upstream(self, repo_root):
+        """
+        Compute ahead/behind using the tracking upstream if available,
+        otherwise fall back to default upstream (origin/main or origin/master).
+        
+        Args:
+            repo_root: Repository root path (string)
+            
+        Returns:
+            dict with keys:
+                - ahead: int (commits ahead, or 0)
+                - behind: int (commits behind, or 0)
+                - ok: bool
+                - error: str | None
+                - upstream: str | None (the upstream ref used, or None if no tracking)
+        """
+        # Try to get the tracking upstream first
+        upstream_ref = self.get_upstream_ref(repo_root)
+        
+        if upstream_ref:
+            # Use the tracking upstream
+            log.debug(f"Using tracking upstream: {upstream_ref}")
+            result = self.ahead_behind(repo_root, upstream_ref)
+            result["upstream"] = upstream_ref
+            return result
+        else:
+            # No tracking upstream - return empty result
+            # The UI will show "(not set)" for upstream
+            log.debug("No tracking upstream found")
+            return {
+                "ahead": 0,
+                "behind": 0,
+                "ok": False,
+                "error": "No upstream configured",
+                "upstream": None,
+            }
+
     def ahead_behind(self, repo_root, upstream):
         """
         Compute how many commits ahead/behind the current branch is
@@ -1016,25 +1420,7 @@ class GitClient:
 
     def has_upstream(self, repo_root):
         """Return True if current branch has an upstream set."""
-        if not self.is_git_available():
-            return False
-
-        if not repo_root or not os.path.isdir(repo_root):
-            return False
-
-        git_cmd = self._get_git_command()
-
-        try:
-            result = subprocess.run(
-                [git_cmd, "-C", repo_root, "rev-parse",
-                 "--abbrev-ref", "--symbolic-full-name", "@{u}"],
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
-            return result.returncode == 0
-        except (subprocess.TimeoutExpired, OSError):
-            return False
+        return self.get_upstream_ref(repo_root) is not None
 
     def push(self, repo_root, remote="origin"):
         """Push current branch, setting upstream if needed."""

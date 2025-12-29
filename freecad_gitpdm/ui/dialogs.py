@@ -260,8 +260,87 @@ class PushErrorDialog(QtWidgets.QDialog):
         log.info("Push error details copied to clipboard")
 
 
+class NewBranchDialog(QtWidgets.QDialog):
+    """Dialog for creating a new branch."""
+
+    def __init__(self, parent=None, default_start_point="HEAD"):
+        super().__init__(parent)
+        self.setWindowTitle("Create New Branch")
+        self.setModal(True)
+        self.setMinimumWidth(400)
+
+        self.branch_name = ""
+        self.start_point = default_start_point
+
+        layout = QtWidgets.QVBoxLayout()
+        self.setLayout(layout)
+
+        # Branch name
+        name_layout = QtWidgets.QFormLayout()
+        name_layout.setFieldGrowthPolicy(
+            QtWidgets.QFormLayout.ExpandingFieldsGrow
+        )
+        
+        self.name_edit = QtWidgets.QLineEdit()
+        self.name_edit.setPlaceholderText("e.g., feature/my-feature")
+        self.name_edit.textChanged.connect(self._on_name_changed)
+        name_layout.addRow("Branch name:", self.name_edit)
+        
+        layout.addLayout(name_layout)
+
+        # Start point
+        start_layout = QtWidgets.QFormLayout()
+        start_layout.setFieldGrowthPolicy(
+            QtWidgets.QFormLayout.ExpandingFieldsGrow
+        )
+        
+        self.start_edit = QtWidgets.QLineEdit()
+        self.start_edit.setText(default_start_point)
+        start_layout.addRow("Start point:", self.start_edit)
+        
+        layout.addLayout(start_layout)
+
+        # Info label
+        info_label = QtWidgets.QLabel(
+            "The new branch will be created from the specified start point\n"
+            "and you will be automatically switched to it.\n"
+            "(e.g., origin/main, HEAD, or a specific commit)."
+        )
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("color: gray; font-size: 9px;")
+        layout.addWidget(info_label)
+
+        # Buttons
+        button_box = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        button_box.accepted.connect(self._on_accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+        self.ok_button = button_box.button(QtWidgets.QDialogButtonBox.Ok)
+        self.ok_button.setEnabled(False)
+
+        self.name_edit.setFocus()
+
+    def _on_name_changed(self):
+        """Enable OK button only if name is not empty."""
+        has_name = bool(self.name_edit.text().strip())
+        self.ok_button.setEnabled(has_name)
+
+    def _on_accept(self):
+        """Handle OK button click."""
+        self.branch_name = self.name_edit.text().strip()
+        self.start_point = self.start_edit.text().strip()
+        if not self.start_point:
+            self.start_point = "HEAD"
+        self.accept()
+
+
 __all__ = [
     "UncommittedChangesWarningDialog",
     "PullErrorDialog",
     "PushErrorDialog",
+    "NewBranchDialog",
 ]
+

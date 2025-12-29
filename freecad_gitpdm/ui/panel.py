@@ -121,11 +121,17 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._group_git_check = None
         self._group_repo_selector = None
         self._group_status = None
+        self._group_branch = None
         self._group_changes = None
         self._group_actions = None
         self._actions_extra_container = None
         self._repo_browser_container = None
         self._is_compact = False
+        self._is_switching_branch = False
+        self._branch_combo_updating = False  # Prevent recursive combo change events
+        self._local_branches = []
+        # Auto-publish tracking for newly created branches
+        self._pending_publish_new_branch = None
 
         # OAuth state tracking (Sprint OAUTH-1)
         self._oauth_dialog = None
@@ -150,6 +156,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._build_repo_selector(main_layout)
         self._build_github_account_section(main_layout)
         self._build_status_section(main_layout)
+        self._build_branch_section(main_layout)
         self._build_changes_section(main_layout)
         self._build_buttons_section(main_layout)
         self._build_repo_browser_section(main_layout)
@@ -214,6 +221,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             getattr(self, "_group_git_check", None),
             getattr(self, "_group_repo_selector", None),
             getattr(self, "_group_github_account", None),
+            getattr(self, "_group_branch", None),
             getattr(self, "_group_changes", None),
             getattr(self, "_actions_extra_container", None),
             getattr(self, "_repo_browser_container", None),
@@ -639,6 +647,59 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         layout.addWidget(group)
         self._group_status = group
+
+    def _build_branch_section(self, layout):
+        """
+        Build the branch management section with selector and actions.
+        
+        Args:
+            layout: Parent layout to add widgets to
+        """
+        group = QtWidgets.QGroupBox("Branch")
+        group_layout = QtWidgets.QVBoxLayout()
+        group_layout.setContentsMargins(6, 4, 6, 4)
+        group_layout.setSpacing(4)
+        group.setLayout(group_layout)
+
+        # Branch selector row
+        selector_layout = QtWidgets.QHBoxLayout()
+        selector_layout.setSpacing(4)
+
+        selector_layout.addWidget(QtWidgets.QLabel("Current:"))
+        
+        self.branch_combo = QtWidgets.QComboBox()
+        self.branch_combo.setMinimumWidth(120)
+        self.branch_combo.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding,
+            QtWidgets.QSizePolicy.Preferred
+        )
+        self.branch_combo.currentIndexChanged.connect(
+            self._on_branch_combo_changed
+        )
+        selector_layout.addWidget(self.branch_combo)
+        
+        group_layout.addLayout(selector_layout)
+
+        # Action buttons row
+        actions_layout = QtWidgets.QHBoxLayout()
+        actions_layout.setSpacing(4)
+
+        self.new_branch_btn = QtWidgets.QPushButton("New Branch…")
+        self.new_branch_btn.clicked.connect(self._on_new_branch_clicked)
+        actions_layout.addWidget(self.new_branch_btn)
+
+        self.switch_branch_btn = QtWidgets.QPushButton("Switch")
+        self.switch_branch_btn.clicked.connect(self._on_switch_branch_clicked)
+        actions_layout.addWidget(self.switch_branch_btn)
+
+        self.delete_branch_btn = QtWidgets.QPushButton("Delete…")
+        self.delete_branch_btn.clicked.connect(self._on_delete_branch_clicked)
+        actions_layout.addWidget(self.delete_branch_btn)
+
+        group_layout.addLayout(actions_layout)
+
+        layout.addWidget(group)
+        self._group_branch = group
 
     def _build_changes_section(self, layout):
         """
@@ -1067,8 +1128,11 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             # Update preview status area
             self._update_preview_status_labels()
             
-            # Update button states
+            # Update button states (including branch buttons)
             self._update_button_states()
+            
+            # Explicitly ensure branch buttons are updated
+            QtCore.QTimer.singleShot(100, self._update_branch_button_states)
             
             log.info(f"Validated repo: {repo_root}")
         else:
@@ -1117,10 +1181,14 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         # Display last fetch time
         self._display_last_fetch()
+        
+        # Refresh branch list
+        self._refresh_branch_list()
 
     def _update_upstream_info(self, repo_root):
         """
-        Update upstream ref and ahead/behind counts
+        Update upstream ref and ahead/behind counts.
+        Uses tracking upstream (@{u}) if available, otherwise falls back to default.
         
         Args:
             repo_root: str - repository root path
@@ -1140,26 +1208,29 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self._upstream_ref = None
             return
         
-        # Get default upstream ref
-        upstream_ref = self._git_client.default_upstream_ref(
-            repo_root, self._remote_name
-        )
-        self._upstream_ref = upstream_ref
+        # Use new method that prefers tracking upstream (no fallback)
+        ab_result = self._git_client.get_ahead_behind_with_upstream(repo_root)
+        upstream_ref = ab_result.get("upstream")
+        
+        # Show status message to debug
+        msg = f"Upstream: {upstream_ref if upstream_ref else '(not set)'}"
+        log.info(msg)
         
         if not upstream_ref:
+            # No upstream configured for this branch
             self.upstream_label.setText("(not set)")
-            self._set_meta_label(self.upstream_label, "gray")
+            self._set_meta_label(self.upstream_label, "orange")
             self.ahead_behind_label.setText("(unknown)")
             self._set_strong_label(self.ahead_behind_label, "gray")
+            self._upstream_ref = None
             return
         
         # Display upstream
         self.upstream_label.setText(upstream_ref)
         self._set_meta_label(self.upstream_label, "#4db6ac")
+        self._upstream_ref = upstream_ref
         
-        # Compute ahead/behind
-        ab_result = self._git_client.ahead_behind(repo_root, upstream_ref)
-        
+        # Display ahead/behind
         if ab_result["ok"]:
             ahead = ab_result["ahead"]
             behind = ab_result["behind"]
@@ -1358,6 +1429,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.connect_remote_btn.setVisible(remote_missing)
         # Allow connecting even while other tasks might be considered busy,
         # but still require git/repo to be valid.
+        
+        # Update branch button states
+        self._update_branch_button_states()
         self.connect_remote_btn.setEnabled(remote_missing)
 
     def _show_status_message(self, message, is_error=True):
@@ -1499,6 +1573,418 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         dock.show()
         dock.raise_()
         dock.activateWindow()
+
+    def _refresh_branch_list(self):
+        """Refresh the list of local branches in the combo box."""
+        if not self._current_repo_root:
+            self._local_branches = []
+            self.branch_combo.clear()
+            return
+        
+        self._local_branches = self._git_client.list_local_branches(
+            self._current_repo_root
+        )
+        current_branch = self._git_client.current_branch(
+            self._current_repo_root
+        )
+        
+        # Update combo box
+        self._branch_combo_updating = True
+        self.branch_combo.clear()
+        self.branch_combo.addItems(self._local_branches)
+        
+        # Select current branch
+        if current_branch and current_branch in self._local_branches:
+            idx = self._local_branches.index(current_branch)
+            self.branch_combo.setCurrentIndex(idx)
+        
+        self._branch_combo_updating = False
+        
+        # Update button states
+        self._update_branch_button_states()
+
+    def _update_branch_button_states(self):
+        """Update enabled/disabled state of branch action buttons."""
+        # Safety check: ensure widgets exist
+        if not hasattr(self, "new_branch_btn"):
+            return
+        
+        repo_ok = self._current_repo_root is not None
+        has_branches = len(self._local_branches) > 0
+        busy = (
+            self._is_fetching
+            or self._is_pulling
+            or self._is_committing
+            or self._is_pushing
+            or self._is_switching_branch
+            or self._job_runner.is_busy()
+        )
+        
+        # Debug logging
+        from freecad_gitpdm.core import log
+        log.debug(f"Branch button states - repo_ok: {repo_ok}, busy: {busy}, has_branches: {has_branches}")
+        
+        self.new_branch_btn.setEnabled(repo_ok and not busy)
+        self.switch_branch_btn.setEnabled(
+            repo_ok and has_branches and not busy
+        )
+        
+        # Can't delete current branch
+        current_branch = self._git_client.current_branch(
+            self._current_repo_root
+        ) if self._current_repo_root else None
+        selected_idx = self.branch_combo.currentIndex()
+        selected_branch = (
+            self._local_branches[selected_idx]
+            if 0 <= selected_idx < len(self._local_branches)
+            else None
+        )
+        can_delete = (
+            repo_ok
+            and has_branches
+            and not busy
+            and selected_branch
+            and selected_branch != current_branch
+        )
+        self.delete_branch_btn.setEnabled(can_delete)
+
+    def _on_branch_combo_changed(self, index):
+        """Handle branch combo box selection change."""
+        if self._branch_combo_updating:
+            return
+        # Just update delete button state
+        self._update_branch_button_states()
+
+    def _on_new_branch_clicked(self):
+        """Handle New Branch button click - show dialog and create branch."""
+        if not self._current_repo_root:
+            return
+        
+        if self._is_switching_branch or self._job_runner.is_busy():
+            log.debug("Job running, new branch ignored")
+            return
+        
+        # Get default branch as start point
+        default_upstream = self._git_client.default_upstream_ref(
+            self._current_repo_root, self._remote_name
+        )
+        if not default_upstream:
+            default_upstream = "HEAD"
+        
+        # Show dialog
+        dialog = dialogs.NewBranchDialog(self, default_upstream)
+        if not dialog.exec():
+            return
+        
+        branch_name = dialog.branch_name
+        start_point = dialog.start_point
+        
+        if not branch_name:
+            return
+        
+        # Validate branch name
+        if not self._validate_branch_name(branch_name):
+            return
+        
+        # Create branch
+        log.info(f"Creating branch: {branch_name} from {start_point}")
+        result = self._git_client.create_branch(
+            self._current_repo_root,
+            branch_name,
+            start_point
+        )
+        
+        if not result.ok:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Create Branch Failed",
+                f"Failed to create branch '{branch_name}':\n\n{result.stderr}"
+            )
+            return
+        
+        log.info(f"Branch '{branch_name}' created, now switching to it")
+        
+        # Switch to new branch
+        # Mark to auto-publish (push -u) after successful switch
+        self._pending_publish_new_branch = branch_name
+        self._switch_to_branch(branch_name)
+
+    def _validate_branch_name(self, name):
+        """
+        Validate branch name according to git rules.
+        Returns True if valid, shows error and returns False otherwise.
+        """
+        if not name:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Invalid Branch Name",
+                "Branch name cannot be empty."
+            )
+            return False
+        
+        if name.startswith("-"):
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Invalid Branch Name",
+                "Branch name cannot start with a dash."
+            )
+            return False
+        
+        if " " in name:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Invalid Branch Name",
+                "Branch name cannot contain spaces."
+            )
+            return False
+        
+        # Check for invalid characters
+        invalid_chars = ["~", "^", ":", "?", "*", "[", "\\", "..", "@{"]
+        for char in invalid_chars:
+            if char in name:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Invalid Branch Name",
+                    f"Branch name cannot contain '{char}'."
+                )
+                return False
+        
+        return True
+
+    def _on_switch_branch_clicked(self):
+        """Handle Switch button click - switch to selected branch."""
+        if not self._current_repo_root:
+            return
+        
+        selected_idx = self.branch_combo.currentIndex()
+        if selected_idx < 0 or selected_idx >= len(self._local_branches):
+            return
+        
+        target_branch = self._local_branches[selected_idx]
+        current_branch = self._git_client.current_branch(
+            self._current_repo_root
+        )
+        
+        if target_branch == current_branch:
+            log.debug("Already on selected branch")
+            return
+        
+        self._switch_to_branch(target_branch)
+
+    def _switch_to_branch(self, branch_name):
+        """
+        Switch to the specified branch, with dirty working tree check.
+        
+        Args:
+            branch_name: str - branch to switch to
+        """
+        if not self._current_repo_root:
+            return
+        
+        if self._is_switching_branch or self._job_runner.is_busy():
+            log.debug("Job running, branch switch ignored")
+            return
+        
+        # Check for uncommitted changes
+        has_changes = self._git_client.has_uncommitted_changes(
+            self._current_repo_root
+        )
+        
+        if has_changes:
+            reply = QtWidgets.QMessageBox.question(
+                self,
+                "Uncommitted Changes",
+                "You have uncommitted changes in your working tree.\n\n"
+                "Switching branches may fail or overwrite your changes.\n"
+                "Consider committing or stashing your changes first.\n\n"
+                "Do you want to switch anyway?",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                QtWidgets.QMessageBox.No
+            )
+            if reply != QtWidgets.QMessageBox.Yes:
+                log.info("User cancelled branch switch due to uncommitted changes")
+                return
+        
+        # Perform checkout asynchronously
+        self._is_switching_branch = True
+        self._start_busy_feedback(f"Switching to {branch_name}…")
+        self._update_branch_button_states()
+        
+        log.info(f"Switching to branch: {branch_name}")
+        
+        git_cmd = self._git_client._get_git_command()
+        args = [git_cmd, "-C", self._current_repo_root, "switch", branch_name]
+        
+        self._job_runner.run_job(
+            "switch_branch",
+            args,
+            callback=lambda job: self._on_switch_branch_completed(job, branch_name)
+        )
+
+    def _on_switch_branch_completed(self, job, branch_name):
+        """Callback when branch switch completes."""
+        result = job.get("result", {})
+        success = result.get("success", False)
+        stderr = result.get("stderr", "")
+        
+        self._is_switching_branch = False
+        self._stop_busy_feedback()
+        
+        if not success:
+            # Check if 'switch' is not recognized and retry with checkout
+            if "switch" in stderr.lower() and "not a git command" in stderr.lower():
+                log.debug("'git switch' not available, retrying with checkout")
+                self._switch_to_branch_with_checkout(branch_name)
+                return
+            
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Switch Branch Failed",
+                f"Failed to switch to branch '{branch_name}':\n\n{stderr}"
+            )
+            self._update_branch_button_states()
+            return
+        
+        log.info(f"Switched to branch: {branch_name}")
+        
+        # Show success message for new branch creation
+        self._show_status_message(
+            f"Created and switched to '{branch_name}'",
+            is_error=False
+        )
+        QtCore.QTimer.singleShot(3000, self._clear_status_message)
+        
+        # If this switch follows a new branch creation, publish it to origin
+        if self._pending_publish_new_branch == branch_name:
+            log.info(f"Publishing new branch to remote: {branch_name}")
+            # Clear flag before pushing to avoid re-entrancy
+            self._pending_publish_new_branch = None
+            # Use explicit branch name to ensure remote branch is created
+            # and set as upstream regardless of HEAD state.
+            self._retry_push_with_branch_name()
+
+        # Refresh UI
+        if self._current_repo_root:
+            self._refresh_after_branch_operation()
+
+    def _switch_to_branch_with_checkout(self, branch_name):
+        """Fallback to git checkout if git switch is not available."""
+        if not self._current_repo_root:
+            return
+        
+        self._is_switching_branch = True
+        self._start_busy_feedback(f"Switching to {branch_name}…")
+        
+        git_cmd = self._git_client._get_git_command()
+        args = [git_cmd, "-C", self._current_repo_root, "checkout", branch_name]
+        
+        self._job_runner.run_job(
+            "checkout_branch",
+            args,
+            callback=lambda job: self._on_switch_branch_completed(job, branch_name)
+        )
+
+    def _on_delete_branch_clicked(self):
+        """Handle Delete Branch button click."""
+        if not self._current_repo_root:
+            return
+        
+        selected_idx = self.branch_combo.currentIndex()
+        if selected_idx < 0 or selected_idx >= len(self._local_branches):
+            return
+        
+        branch_name = self._local_branches[selected_idx]
+        current_branch = self._git_client.current_branch(
+            self._current_repo_root
+        )
+        
+        if branch_name == current_branch:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Cannot Delete Branch",
+                f"Cannot delete the current branch '{branch_name}'.\n"
+                "Switch to another branch first."
+            )
+            return
+        
+        # Confirm deletion
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            "Delete Branch",
+            f"Are you sure you want to delete branch '{branch_name}'?\n\n"
+            "This operation cannot be undone.",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No
+        )
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
+        
+        # Delete branch
+        log.info(f"Deleting branch: {branch_name}")
+        result = self._git_client.delete_local_branch(
+            self._current_repo_root,
+            branch_name,
+            force=False
+        )
+        
+        if not result.ok:
+            # Check if branch needs force delete
+            if "not fully merged" in result.stderr.lower():
+                reply = QtWidgets.QMessageBox.question(
+                    self,
+                    "Force Delete Branch",
+                    f"Branch '{branch_name}' is not fully merged.\n\n"
+                    "Do you want to force delete it? "
+                    "Unmerged changes will be lost.",
+                    QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                    QtWidgets.QMessageBox.No
+                )
+                if reply == QtWidgets.QMessageBox.Yes:
+                    result = self._git_client.delete_local_branch(
+                        self._current_repo_root,
+                        branch_name,
+                        force=True
+                    )
+                    if not result.ok:
+                        QtWidgets.QMessageBox.warning(
+                            self,
+                            "Delete Branch Failed",
+                            f"Failed to delete branch '{branch_name}':\n\n{result.stderr}"
+                        )
+                        return
+                else:
+                    return
+            else:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Delete Branch Failed",
+                    f"Failed to delete branch '{branch_name}':\n\n{result.stderr}"
+                )
+                return
+        
+        log.info(f"Deleted branch: {branch_name}")
+        
+        # Refresh branch list
+        self._refresh_branch_list()
+
+    def _refresh_after_branch_operation(self):
+        """Refresh UI after branch operations (switch, create, etc.)."""
+        if not self._current_repo_root:
+            return
+        
+        # Update branch name display
+        branch = self._git_client.current_branch(self._current_repo_root)
+        self.branch_label.setText(branch)
+        
+        # Refresh branch list
+        self._refresh_branch_list()
+        
+        # Refresh status and upstream
+        self._refresh_status_views(self._current_repo_root)
+        self._update_upstream_info(self._current_repo_root)
+        
+        # Refresh repo browser
+        self._refresh_repo_browser_files()
 
     def _on_fetch_clicked(self):
         """
@@ -2564,6 +3050,24 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._update_commit_push_button_default_label()
 
         if not success:
+            # Check for upstream mismatch error
+            if "upstream branch" in stderr.lower() and "does not match" in stderr.lower():
+                # Upstream mismatch - offer to use current branch name
+                reply = QtWidgets.QMessageBox.question(
+                    self,
+                    "Upstream Branch Mismatch",
+                    f"The current upstream configuration doesn't match your branch name.\\n\\n"
+                    f"Do you want to push to 'origin/{self._git_client.current_branch(self._current_repo_root)}' "
+                    f"and set it as upstream?\\n\\n"
+                    f"This will create a new remote branch with the same name.",
+                    QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                    QtWidgets.QMessageBox.Yes
+                )
+                if reply == QtWidgets.QMessageBox.Yes:
+                    # Retry with explicit branch name
+                    self._retry_push_with_branch_name()
+                    return
+            
             code = self._git_client._classify_push_error(stderr)
             self._show_push_error_dialog(code, stderr)
             log.warning(f"Push failed: {code}")
@@ -2587,6 +3091,39 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._stop_busy_feedback()
 
         self._update_button_states()
+
+    def _retry_push_with_branch_name(self):
+        """Retry push using current branch name explicitly."""
+        if not self._current_repo_root:
+            return
+        
+        current_branch = self._git_client.current_branch(self._current_repo_root)
+        if not current_branch or current_branch.startswith("("):
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Cannot Push",
+                "Cannot determine current branch name."
+            )
+            return
+        
+        self._is_pushing = True
+        self._start_busy_feedback("Pushing…")
+        
+        git_cmd = self._git_client._get_git_command()
+        # Use: git push -u origin <branch>:<branch>
+        # This explicitly pushes to a branch with the same name
+        args = [
+            git_cmd, "-C", self._current_repo_root,
+            "push", "-u", self._remote_name, f"{current_branch}:{current_branch}"
+        ]
+        
+        log.info(f"Retrying push with explicit branch: {current_branch}")
+        
+        self._job_runner.run_job(
+            "push_retry",
+            args,
+            callback=self._on_push_main_completed,
+        )
 
     def _show_push_behind_warning(self):
         """Show warning if behind upstream."""
