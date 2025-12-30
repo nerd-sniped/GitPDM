@@ -213,8 +213,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # Load remote name
         self._remote_name = settings.load_remote_name()
 
-        # Defer heavy initialization to avoid blocking UI and window flash
-        QtCore.QTimer.singleShot(100, self._deferred_initialization)
+        # Sprint PERF: Defer initialization as soon as possible (10ms instead of 100ms)
+        # This makes the panel interactive almost immediately
+        QtCore.QTimer.singleShot(10, self._deferred_initialization)
         
         log.info("GitPDM dock panel created")
 
@@ -303,24 +304,24 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self._compact_commit_container.setVisible(compact)
     
     def _deferred_initialization(self):
-        """Run heavy initialization after panel is shown."""
+        """Run heavy initialization after panel is shown (Sprint PERF-2: fully async)."""
         try:
-            # Check git availability
-            self._check_git_available()
+            # Sprint PERF-2: Check git availability in background (immediate)
+            QtCore.QTimer.singleShot(10, self._check_git_available_async)
             
-            # Load saved repo path and validate
-            self._load_saved_repo_path()
+            # Sprint PERF-2: Load saved repo path and validate in background (immediate)
+            QtCore.QTimer.singleShot(20, self._load_saved_repo_path_async)
             
             # Register document observer to auto-refresh on save
             self._register_document_observer()
             
-            # Load GitHub connection status (Sprint OAUTH-1)
-            self._github_auth.refresh_connection_status()
+            # Load GitHub connection status (Sprint OAUTH-1) - slightly delayed
+            QtCore.QTimer.singleShot(50, self._github_auth.refresh_connection_status)
             # Sprint OAUTH-2: Auto-verify identity in background with cooldown
-            QtCore.QTimer.singleShot(50, self._github_auth.maybe_auto_verify_identity)
+            QtCore.QTimer.singleShot(100, self._github_auth.maybe_auto_verify_identity)
             
-            # Check if user is editing from wrong folder (worktree mismatch)
-            QtCore.QTimer.singleShot(1000, self._check_for_wrong_folder_editing)
+            # Check if user is editing from wrong folder (worktree mismatch) - low priority
+            QtCore.QTimer.singleShot(500, self._check_for_wrong_folder_editing)
             
             # Start periodic working directory refresh to maintain repo folder as default
             self._start_working_directory_refresh()
@@ -433,10 +434,37 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._group_git_check = group
 
     def _check_git_available(self):
-        """Check if git is available on system"""
+        """Check if git is available on system (synchronous - for backward compatibility)."""
         is_available = self._git_client.is_git_available()
         if is_available:
             version = self._git_client.git_version()
+            self.git_label.setText(f"● OK ({version})")
+            self.git_label.setStyleSheet("color: green;")
+        else:
+            self.git_label.setText("● Not found")
+            self.git_label.setStyleSheet("color: red;")
+            log.warning("Git not available on PATH")
+    
+    def _check_git_available_async(self):
+        """Check if git is available on system (Sprint PERF-2: async version)."""
+        def _check_git():
+            is_available = self._git_client.is_git_available()
+            version = self._git_client.git_version() if is_available else None
+            return {"is_available": is_available, "version": version}
+        
+        self._job_runner.run_callable(
+            "check_git",
+            _check_git,
+            on_success=self._on_git_check_complete,
+            on_error=lambda e: log.error(f"Git check error: {e}"),
+        )
+    
+    def _on_git_check_complete(self, result):
+        """Callback when async git check completes (Sprint PERF-2)."""
+        is_available = result.get("is_available")
+        version = result.get("version")
+        
+        if is_available:
             self.git_label.setText(f"● OK ({version})")
             self.git_label.setStyleSheet("color: green;")
         else:
@@ -2280,7 +2308,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
     def _load_saved_repo_path(self):
         """
-        Load the saved repository path from settings and validate it.
+        Load the saved repository path from settings and validate it (synchronous).
         """
         saved_path = settings.load_repo_path()
         if saved_path:
@@ -2292,6 +2320,20 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             log.info(
                 f"Restored repo path from settings: {saved_path}"
             )
+        # Initialize preview status area
+        self._update_preview_status_labels()
+    
+    def _load_saved_repo_path_async(self):
+        """Load saved repository path and validate in background (Sprint PERF-2)."""
+        saved_path = settings.load_repo_path()
+        if saved_path:
+            # Display path immediately
+            self.repo_path_field.blockSignals(True)
+            self.repo_path_field.setText(saved_path)
+            self.repo_path_field.blockSignals(False)
+            log.info(f"Restored repo path from settings: {saved_path}")
+            # Validate in background (non-blocking)
+            self._validate_repo_path(saved_path)
         # Initialize preview status area
         self._update_preview_status_labels()
     # ========== GitHub OAuth/Auth (Sprint 4: Delegated to GitHubAuthHandler) ==========

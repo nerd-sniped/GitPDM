@@ -2,15 +2,32 @@
 """
 GitPDM Git Client Module
 Sprint 2: Minimal git wrapper using subprocess with fetch support
+Sprint PERF: Suppress terminal windows on Windows
 """
 
 import subprocess
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List, Optional
 from freecad_gitpdm.core import log
 from freecad_gitpdm.core.result import Result
+
+
+# Sprint PERF: Windows subprocess configuration to suppress console windows
+def _get_subprocess_kwargs():
+    """
+    Get platform-specific kwargs for subprocess to suppress console windows.
+    
+    Returns:
+        dict: kwargs to pass to subprocess.run/Popen
+    """
+    kwargs = {}
+    if sys.platform == 'win32':
+        # Suppress console window on Windows
+        kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+    return kwargs
 
 
 # Status kinds for porcelain parsing
@@ -84,7 +101,8 @@ def _find_git_executable():
             ["git", "--version"],
             capture_output=True,
             text=True,
-            timeout=2
+            timeout=2,
+            **_get_subprocess_kwargs()
         )
         if result.returncode == 0:
             return "git"
@@ -138,7 +156,9 @@ class GitClient:
                 capture_output=True,
                 text=True,
                 timeout=10
-            )
+            ,
+            **_get_subprocess_kwargs()
+        )
             self._git_available = result.returncode == 0
             if self._git_available:
                 self._git_version = result.stdout.strip()
@@ -189,7 +209,9 @@ class GitClient:
                 capture_output=True,
                 text=True,
                 timeout=15
-            )
+            ,
+            **_get_subprocess_kwargs()
+        )
             if result.returncode == 0:
                 repo_root = result.stdout.strip()
                 # Normalize path (git returns forward slashes on Windows)
@@ -244,7 +266,9 @@ class GitClient:
                 capture_output=True,
                 text=True,
                 timeout=15
-            )
+            ,
+            **_get_subprocess_kwargs()
+        )
             if result.returncode == 0:
                 log.info(f"Repository initialized at: {path}")
                 return CmdResult(
@@ -331,7 +355,9 @@ class GitClient:
                 capture_output=True,
                 text=True,
                 timeout=15
-            )
+            ,
+            **_get_subprocess_kwargs()
+        )
             if result.returncode == 0:
                 log.info(f"Remote '{name}' added: {url}")
                 return CmdResult(
@@ -408,6 +434,7 @@ class GitClient:
                 capture_output=True,
                 text=True,
                 timeout=300,
+            **_get_subprocess_kwargs(),
             )
             if result.returncode == 0:
                 log.info(f"Repository cloned to: {dest_abs}")
@@ -454,7 +481,9 @@ class GitClient:
                 capture_output=True,
                 text=True,
                 timeout=15
-            )
+            ,
+            **_get_subprocess_kwargs()
+        )
             if result.returncode == 0:
                 branch = result.stdout.strip()
                 if branch:
@@ -470,7 +499,9 @@ class GitClient:
                 capture_output=True,
                 text=True,
                 timeout=15
-            )
+            ,
+            **_get_subprocess_kwargs()
+        )
             if result.returncode == 0:
                 sha = result.stdout.strip()
                 return f"(detached {sha})"
@@ -506,6 +537,7 @@ class GitClient:
                 capture_output=True,
                 text=True,
                 timeout=15
+            **_get_subprocess_kwargs(),
             )
             if result.returncode == 0:
                 branches = [
@@ -555,6 +587,7 @@ class GitClient:
                 capture_output=True,
                 text=True,
                 timeout=15
+            **_get_subprocess_kwargs(),
             )
             if result.returncode == 0:
                 branches = [
@@ -618,7 +651,9 @@ class GitClient:
                 capture_output=True,
                 text=True,
                 timeout=15
-            )
+            ,
+            **_get_subprocess_kwargs()
+        )
             if result.returncode == 0:
                 log.info(f"Created branch: {name}")
                 return CmdResult(
@@ -687,7 +722,9 @@ class GitClient:
                 capture_output=True,
                 text=True,
                 timeout=15
-            )
+            ,
+            **_get_subprocess_kwargs()
+        )
             if result.returncode == 0:
                 log.info(f"Switched to branch: {name}")
                 return CmdResult(
@@ -706,7 +743,9 @@ class GitClient:
                         capture_output=True,
                         text=True,
                         timeout=15
-                    )
+                    ,
+            **_get_subprocess_kwargs()
+        )
                     if result.returncode == 0:
                         log.info(f"Checked out branch: {name}")
                         return CmdResult(
@@ -775,7 +814,9 @@ class GitClient:
                 capture_output=True,
                 text=True,
                 timeout=15
-            )
+            ,
+            **_get_subprocess_kwargs()
+        )
             if result.returncode == 0:
                 log.info(f"Deleted branch: {name}")
                 return CmdResult(
@@ -831,7 +872,9 @@ class GitClient:
                 capture_output=True,
                 text=True,
                 timeout=15
-            )
+            ,
+            **_get_subprocess_kwargs()
+        )
             if result.returncode == 0:
                 upstream = result.stdout.strip()
                 log.debug(f"Upstream ref for current branch: '{upstream}' (returncode={result.returncode})")
@@ -903,7 +946,9 @@ class GitClient:
                 capture_output=True,
                 text=True,
                 timeout=20
-            )
+            ,
+            **_get_subprocess_kwargs()
+        )
         except subprocess.TimeoutExpired:
             log.warning("Git status command timed out")
             return entries
@@ -1037,7 +1082,9 @@ class GitClient:
                 capture_output=True,
                 text=True,
                 timeout=10
-            )
+            ,
+            **_get_subprocess_kwargs()
+        )
             if result.returncode == 0:
                 remotes = result.stdout.strip().split("\n")
                 return remote in remotes
@@ -1101,6 +1148,7 @@ class GitClient:
                 capture_output=True,
                 text=True,
                 timeout=120,
+            **_get_subprocess_kwargs(),
             )
         except subprocess.TimeoutExpired:
             return Result.failure("TIMEOUT", "Fetch timed out after 120 seconds")
@@ -1149,7 +1197,9 @@ class GitClient:
                 capture_output=True,
                 text=True,
                 timeout=10
-            )
+            ,
+            **_get_subprocess_kwargs()
+        )
             if result.returncode == 0:
                 ref = result.stdout.strip()
                 # Convert refs/remotes/origin/main -> origin/main
@@ -1170,7 +1220,9 @@ class GitClient:
                     capture_output=True,
                     text=True,
                     timeout=10
-                )
+                ,
+            **_get_subprocess_kwargs()
+        )
                 if result.returncode == 0:
                     upstream = f"{remote}/{branch}"
                     log.debug(f"Found upstream branch: {upstream}")
@@ -1263,7 +1315,9 @@ class GitClient:
                 capture_output=True,
                 text=True,
                 timeout=15
-            )
+            ,
+            **_get_subprocess_kwargs()
+        )
             if proc_result.returncode == 0:
                 output = proc_result.stdout.strip()
                 parts = output.split()
@@ -1315,6 +1369,7 @@ class GitClient:
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+            **_get_subprocess_kwargs(),
             )
             cmd_result.stdout = proc.stdout.strip()
             cmd_result.stderr = proc.stderr.strip()
@@ -1520,6 +1575,7 @@ class GitClient:
                 capture_output=True,
                 text=True,
                 timeout=120  # 2 minutes for pull
+            **_get_subprocess_kwargs(),
             )
 
             result["stdout"] = proc_result.stdout.strip()
@@ -1626,6 +1682,7 @@ class GitClient:
                 capture_output=True,
                 text=True,
                 timeout=20,
+            **_get_subprocess_kwargs(),
             )
         except subprocess.TimeoutExpired:
             log.warning("git ls-files timed out")
@@ -1773,6 +1830,7 @@ class GitClient:
                 text=True,
                 timeout=10,
                 cwd=repo_root if repo_root and os.path.isdir(repo_root) else None,
+            **_get_subprocess_kwargs(),
             )
             if result.returncode == 0:
                 return result.stdout.strip()

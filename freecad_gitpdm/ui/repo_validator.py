@@ -50,7 +50,7 @@ class RepoValidationHandler:
     def validate_repo_path(self, path):
         """
         Validate that path is inside a git repository.
-        Run validation in background to keep UI responsive.
+        Run validation in background to keep UI responsive (Sprint PERF-2).
         
         Args:
             path: str - path to validate
@@ -65,13 +65,23 @@ class RepoValidationHandler:
             "color: orange; font-style: italic;"
         )
 
-        # Run validation in background
-        repo_root = self._git_client.get_repo_root(path)
-
-        if repo_root:
-            self._handle_valid_repo(repo_root)
+        # Sprint PERF-2: Run validation in background via job_runner
+        def _run_validation():
+            repo_root = self._git_client.get_repo_root(path)
+            return {"repo_root": repo_root, "original_path": path}
+        
+        # Use job_runner for async operation
+        if hasattr(self._parent, '_job_runner'):
+            self._parent._job_runner.run_callable(
+                "validate_repo",
+                _run_validation,
+                on_success=self._on_validation_complete,
+                on_error=self._on_validation_error,
+            )
         else:
-            self._handle_invalid_repo(path)
+            # Fallback to synchronous for unit tests
+            result = _run_validation()
+            self._on_validation_complete(result)
 
     def refresh_clicked(self):
         """
@@ -162,6 +172,28 @@ class RepoValidationHandler:
 
         # Display last fetch time
         self._parent._fetch_pull.display_last_fetch()
+    
+    # Sprint PERF-2: Async validation callbacks
+    def _on_validation_complete(self, result):
+        """Callback when async repo validation completes (Sprint PERF-2)."""
+        try:
+            repo_root = result.get("repo_root")
+            original_path = result.get("original_path")
+            
+            if repo_root:
+                self._handle_valid_repo(repo_root)
+            else:
+                self._handle_invalid_repo(original_path)
+        except Exception as e:
+            log.error(f"Error processing validation result: {e}")
+            self._parent.validate_label.setText("Error")
+            self._parent.validate_label.setStyleSheet("color: red;")
+    
+    def _on_validation_error(self, error):
+        """Callback when async repo validation fails (Sprint PERF-2)."""
+        log.warning(f"Validation error: {error}")
+        self._parent.validate_label.setText("Error")
+        self._parent.validate_label.setStyleSheet("color: red;")
 
     # ========== Private Implementation ==========
 
