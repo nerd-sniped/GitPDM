@@ -56,6 +56,7 @@ class BranchOperationsHandler:
         self._local_branches = []
         self._branch_combo_updating = False
         self._pending_publish_new_branch = None
+        self._is_loading_branches = False  # Sprint PERF-3: Track async branch loading
     
     # ========== Public API ==========
     
@@ -112,28 +113,53 @@ class BranchOperationsHandler:
         if not self._validate_branch_name(branch_name):
             return
         
-        # Create branch
+        # Sprint PERF-3: Create branch asynchronously
         log.info(f"Creating branch: {branch_name} from {start_point}")
-        result = self._git_client.create_branch(
-            self._parent._current_repo_root,
-            branch_name,
-            start_point
-        )
         
-        if not result.ok:
+        def _create_branch():
+            """Background job to create branch."""
+            result = self._git_client.create_branch(
+                self._parent._current_repo_root,
+                branch_name,
+                start_point
+            )
+            return {"ok": result.ok, "stderr": result.stderr}
+        
+        # Store context for callback
+        self._pending_publish_new_branch = branch_name
+        
+        self._job_runner.run_callable(
+            _create_branch,
+            success_callback=lambda result: self._on_branch_created(result, branch_name),
+            error_callback=lambda error: self._on_branch_create_error(error, branch_name)
+        )
+
+    def _on_branch_created(self, result, branch_name):
+        """Callback when branch creation completes (Sprint PERF-3)."""
+        if not result.get("ok", False):
+            stderr = result.get("stderr", "Unknown error")
             QtWidgets.QMessageBox.warning(
                 self._parent,
                 "Create Branch Failed",
-                f"Failed to create branch '{branch_name}':\n\n{result.stderr}"
+                f"Failed to create branch '{branch_name}':\n\n{stderr}"
             )
+            self._pending_publish_new_branch = None
             return
         
         log.info(f"Branch '{branch_name}' created, now switching to it")
         
-        # Switch to new branch
-        # Mark to auto-publish (push -u) after successful switch
-        self._pending_publish_new_branch = branch_name
+        # Switch to new branch (pending_publish_new_branch already set)
         self.switch_to_branch(branch_name)
+    
+    def _on_branch_create_error(self, error_msg, branch_name):
+        """Callback when branch creation fails (Sprint PERF-3)."""
+        log.error(f"Failed to create branch '{branch_name}': {error_msg}")
+        QtWidgets.QMessageBox.warning(
+            self._parent,
+            "Create Branch Failed",
+            f"Failed to create branch '{branch_name}':\n\n{error_msg}"
+        )
+        self._pending_publish_new_branch = None
 
     def switch_branch_clicked(self):
         """Handle Switch button click - switch to selected branch."""
@@ -190,17 +216,32 @@ class BranchOperationsHandler:
         if reply != QtWidgets.QMessageBox.Yes:
             return
         
-        # Delete branch
+        # Sprint PERF-3: Delete branch asynchronously
         log.info(f"Deleting branch: {branch_name}")
-        result = self._git_client.delete_local_branch(
-            self._parent._current_repo_root,
-            branch_name,
-            force=False
-        )
         
-        if not result.ok:
+        def _delete_branch():
+            """Background job to delete branch."""
+            result = self._git_client.delete_local_branch(
+                self._parent._current_repo_root,
+                branch_name,
+                force=False
+            )
+            return {"ok": result.ok, "stderr": result.stderr, "branch_name": branch_name}
+        
+        self._job_runner.run_callable(
+            _delete_branch,
+            success_callback=self._on_branch_deleted,
+            error_callback=lambda error: self._on_branch_delete_error(error, branch_name)
+        )
+
+    def _on_branch_deleted(self, result):
+        """Callback when branch deletion completes (Sprint PERF-3)."""
+        branch_name = result.get("branch_name", "")
+        
+        if not result.get("ok", False):
+            stderr = result.get("stderr", "")
             # Check if branch needs force delete
-            if "not fully merged" in result.stderr.lower():
+            if "not fully merged" in stderr.lower():
                 reply = QtWidgets.QMessageBox.question(
                     self._parent,
                     "Force Delete Branch",
@@ -211,29 +252,62 @@ class BranchOperationsHandler:
                     QtWidgets.QMessageBox.No
                 )
                 if reply == QtWidgets.QMessageBox.Yes:
-                    result = self._git_client.delete_local_branch(
-                        self._parent._current_repo_root,
-                        branch_name,
-                        force=True
-                    )
-                    if not result.ok:
-                        QtWidgets.QMessageBox.warning(
-                            self._parent,
-                            "Delete Branch Failed",
-                            f"Failed to delete branch '{branch_name}':\n\n{result.stderr}"
-                        )
-                        return
-                else:
-                    return
+                    # Retry with force
+                    self._force_delete_branch(branch_name)
+                return
             else:
                 QtWidgets.QMessageBox.warning(
                     self._parent,
                     "Delete Branch Failed",
-                    f"Failed to delete branch '{branch_name}':\n\n{result.stderr}"
+                    f"Failed to delete branch '{branch_name}':\n\n{stderr}"
                 )
                 return
         
         log.info(f"Deleted branch: {branch_name}")
+        
+        # Refresh branch list
+        self.refresh_branch_list()
+    
+    def _on_branch_delete_error(self, error_msg, branch_name):
+        """Callback when branch deletion fails (Sprint PERF-3)."""
+        log.error(f"Failed to delete branch '{branch_name}': {error_msg}")
+        QtWidgets.QMessageBox.warning(
+            self._parent,
+            "Delete Branch Failed",
+            f"Failed to delete branch '{branch_name}':\n\n{error_msg}"
+        )
+    
+    def _force_delete_branch(self, branch_name):
+        """Force delete a branch (Sprint PERF-3: async helper)."""
+        def _force_delete():
+            """Background job to force delete branch."""
+            result = self._git_client.delete_local_branch(
+                self._parent._current_repo_root,
+                branch_name,
+                force=True
+            )
+            return {"ok": result.ok, "stderr": result.stderr, "branch_name": branch_name}
+        
+        self._job_runner.run_callable(
+            _force_delete,
+            success_callback=self._on_force_delete_completed,
+            error_callback=lambda error: self._on_branch_delete_error(error, branch_name)
+        )
+    
+    def _on_force_delete_completed(self, result):
+        """Callback when force delete completes (Sprint PERF-3)."""
+        branch_name = result.get("branch_name", "")
+        
+        if not result.get("ok", False):
+            stderr = result.get("stderr", "")
+            QtWidgets.QMessageBox.warning(
+                self._parent,
+                "Delete Branch Failed",
+                f"Failed to force delete branch '{branch_name}':\n\n{stderr}"
+            )
+            return
+        
+        log.info(f"Force deleted branch: {branch_name}")
         
         # Refresh branch list
         self.refresh_branch_list()
@@ -259,33 +333,42 @@ class BranchOperationsHandler:
         self.update_branch_button_states()
 
     def refresh_branch_list(self):
-        """Refresh the list of local branches in the combo box."""
+        """Refresh the list of local branches in the combo box (Sprint PERF-3: async)."""
         if not self._parent._current_repo_root:
             self._local_branches = []
             self._parent.branch_combo.clear()
             return
         
-        self._local_branches = self._git_client.list_local_branches(
-            self._parent._current_repo_root
-        )
-        current_branch = self._git_client.current_branch(
-            self._parent._current_repo_root
-        )
+        # Sprint PERF-3: Prevent multiple simultaneous refreshes
+        if self._is_loading_branches:
+            log.debug("Branch list already loading, skipping refresh")
+            return
         
-        # Update combo box
+        self._is_loading_branches = True
+        
+        # Show loading state
         self._branch_combo_updating = True
+        old_text = self._parent.branch_combo.currentText()
         self._parent.branch_combo.clear()
-        self._parent.branch_combo.addItems(self._local_branches)
-        
-        # Select current branch
-        if current_branch and current_branch in self._local_branches:
-            idx = self._local_branches.index(current_branch)
-            self._parent.branch_combo.setCurrentIndex(idx)
-        
+        self._parent.branch_combo.addItem("Loading branches…")
         self._branch_combo_updating = False
         
-        # Update button states
-        self.update_branch_button_states()
+        # Sprint PERF-3: Load branches in background
+        def _load_branches():
+            """Background job to load branch list."""
+            branches = self._git_client.list_local_branches(
+                self._parent._current_repo_root
+            )
+            current = self._git_client.current_branch(
+                self._parent._current_repo_root
+            )
+            return {"branches": branches, "current": current}
+        
+        self._job_runner.run_callable(
+            _load_branches,
+            success_callback=self._on_branch_list_loaded,
+            error_callback=self._on_branch_list_load_error
+        )
 
     def update_branch_button_states(self):
         """Update enabled/disabled state of branch action buttons."""
@@ -299,6 +382,7 @@ class BranchOperationsHandler:
             self._parent._fetch_pull.is_busy()
             or self._parent._commit_push.is_busy()
             or self._is_switching_branch
+            or self._is_loading_branches  # Sprint PERF-3: Include branch loading
             or self._job_runner.is_busy()
         )
         
@@ -491,6 +575,51 @@ class BranchOperationsHandler:
                 return False
         
         return True
+
+    def _on_branch_list_loaded(self, result):
+        """Callback when branch list loading completes (Sprint PERF-3)."""
+        self._is_loading_branches = False
+        
+        branches = result.get("branches", [])
+        current_branch = result.get("current", "")
+        
+        # Store branches
+        self._local_branches = branches
+        
+        # Update combo box
+        self._branch_combo_updating = True
+        self._parent.branch_combo.clear()
+        self._parent.branch_combo.addItems(self._local_branches)
+        
+        # Select current branch
+        if current_branch and current_branch in self._local_branches:
+            idx = self._local_branches.index(current_branch)
+            self._parent.branch_combo.setCurrentIndex(idx)
+        
+        self._branch_combo_updating = False
+        
+        # Update button states
+        self.update_branch_button_states()
+        
+        log.debug(f"Branch list loaded: {len(branches)} branches")
+    
+    def _on_branch_list_load_error(self, error_msg):
+        """Callback when branch list loading fails (Sprint PERF-3)."""
+        self._is_loading_branches = False
+        
+        log.error(f"Failed to load branch list: {error_msg}")
+        
+        # Show error in combo
+        self._branch_combo_updating = True
+        self._parent.branch_combo.clear()
+        self._parent.branch_combo.addItem("Error loading branches")
+        self._branch_combo_updating = False
+        
+        # Clear branches
+        self._local_branches = []
+        
+        # Update button states
+        self.update_branch_button_states()
 
     def _on_switch_branch_completed(self, job, branch_name):
         """Callback when branch switch completes."""

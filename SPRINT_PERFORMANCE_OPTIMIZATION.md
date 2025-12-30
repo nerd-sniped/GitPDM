@@ -153,7 +153,7 @@
 
 ---
 
-## Sprint PERF-3: Branch Operations (MEDIUM PRIORITY)
+## Sprint PERF-3: Branch Operations (MEDIUM PRIORITY) ✅ COMPLETE
 
 **Objective**: Make branch listing and operations non-blocking.
 
@@ -161,7 +161,7 @@
 
 ### Tasks
 
-#### 3.1 Async Branch List Population
+#### 3.1 Async Branch List Population ✅ COMPLETE
 **File**: `freecad_gitpdm/ui/branch_ops.py` (`refresh_branch_list`)
 **Current**: Synchronously calls:
 - `list_local_branches()`
@@ -173,6 +173,13 @@
 - Update combo box when load completes
 - Cache branch list, refresh only on explicit refresh/fetch
 
+**Implementation**:
+- Added `_is_loading_branches` flag to prevent race conditions
+- Created `_load_branches()` background callable
+- Shows "Loading branches…" state during loading
+- Added `_on_branch_list_loaded()` and `_on_branch_list_load_error()` callbacks
+- Updates busy state to include branch loading
+
 **Acceptance Criteria**:
 - ✓ Branch combo doesn't freeze on click
 - ✓ Branches load in background
@@ -183,13 +190,21 @@
 
 ---
 
-#### 3.2 Async Branch Operation Result Handling
+#### 3.2 Async Branch Operation Result Handling ✅ COMPLETE
 **File**: `freecad_gitpdm/ui/branch_ops.py` (various operations)
 **Current**: Some operations already async, but results processed synchronously
 **Change**:
 - Ensure create/switch/delete all use job_runner
 - Refresh UI only after operation completes
 - Show progress during operations
+
+**Implementation**:
+- Made `new_branch_clicked()` async with `_create_branch()` callable
+- Added `_on_branch_created()` and `_on_branch_create_error()` callbacks
+- Made `delete_branch_clicked()` async with `_delete_branch()` callable
+- Added `_on_branch_deleted()` and `_on_branch_delete_error()` callbacks
+- Added `_force_delete_branch()` helper for unmerged branch handling
+- All branch operations now non-blocking via job_runner
 
 **Acceptance Criteria**:
 - ✓ All branch operations non-blocking
@@ -206,6 +221,7 @@
 - No freezes during branch management
 
 **Estimated Effort**: 1-2 days
+**Actual Effort**: <1 hour
 
 ---
 
