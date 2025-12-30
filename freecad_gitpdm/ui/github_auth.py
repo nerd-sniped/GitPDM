@@ -38,29 +38,72 @@ class GitHubAuthHandler:
         self._oauth_cancel_token = None
         self._oauth_in_progress = False
         self._oauth_status_label = None
+        self._is_checking_connection = False  # Sprint PERF-4: Track async status check
 
     # ========== Public API ==========
 
     def refresh_connection_status(self):
-        """Check if GitHub token exists and update UI. Called on startup."""
-        try:
-            store = self.services.token_store()
-            host = settings.load_github_host()
-            account = settings.load_github_login()
+        """Check if GitHub token exists and update UI. Called on startup (Sprint PERF-4: async)."""
+        # Sprint PERF-4: Prevent multiple simultaneous checks
+        if self._is_checking_connection:
+            log.debug("Connection status check already in progress")
+            return
+        
+        self._is_checking_connection = True
+        
+        # Show checking state
+        self.panel.github_status_label.setText("GitHub: Checking…")
+        self.panel._set_strong_label(self.panel.github_status_label, "orange")
+        
+        # Sprint PERF-4: Check credentials in background
+        def _check_credentials():
+            """Background job to check GitHub credentials."""
+            try:
+                store = self.services.token_store()
+                host = settings.load_github_host()
+                account = settings.load_github_login()
+                token = store.load(host, account)
+                is_connected = token is not None
+                return {"connected": is_connected, "login": account}
+            except Exception as e:
+                log.debug(f"Failed to check GitHub credentials: {e}")
+                return {"connected": False, "login": None}
+        
+        # Use job_runner if available (panel initialization), fallback to sync for tests
+        if hasattr(self.panel, '_job_runner') and self.panel._job_runner:
+            self.panel._job_runner.run_callable(
+                "check_github_credentials",
+                _check_credentials,
+                on_success=self._on_connection_status_checked,
+                on_error=self._on_connection_status_error
+            )
+        else:
+            # Fallback for tests without job_runner
+            result = _check_credentials()
+            self._on_connection_status_checked(result)
 
-            token = store.load(host, account)
-            is_connected = token is not None
-
-            settings.save_github_connected(is_connected)
-            self.update_ui_state()
-
-            if is_connected:
-                log.info("GitHub token found in credential store")
-            else:
-                log.debug("No GitHub token in credential store")
-        except Exception as e:
-            log.debug(f"Failed to refresh GitHub status: {e}")
-            self.update_ui_state()
+    def _on_connection_status_checked(self, result):
+        """Callback when connection status check completes (Sprint PERF-4)."""
+        self._is_checking_connection = False
+        
+        is_connected = result.get("connected", False)
+        login = result.get("login", None)
+        
+        settings.save_github_connected(is_connected)
+        self.update_ui_state()
+        
+        if is_connected:
+            log.info("GitHub token found in credential store")
+        else:
+            log.debug("No GitHub token in credential store")
+    
+    def _on_connection_status_error(self, error_msg):
+        """Callback when connection status check fails (Sprint PERF-4)."""
+        self._is_checking_connection = False
+        
+        log.debug(f"Failed to check GitHub connection: {error_msg}")
+        settings.save_github_connected(False)
+        self.update_ui_state()
 
     def update_ui_state(self):
         """Update GitHub UI buttons and status label based on connection state."""
@@ -180,30 +223,62 @@ class GitHubAuthHandler:
         self.verify_identity_async(force=True)
 
     def maybe_auto_verify_identity(self):
-        """Auto-verify identity on panel open with 10-minute cooldown."""
-        try:
-            store = self.services.token_store()
-            host = settings.load_github_host()
-            account = settings.load_github_login()
-            token = store.load(host, account)
-            if not token:
-                return
-            last_verified = settings.load_last_verified_at() or ""
-            if not last_verified:
-                self.verify_identity_async(force=False)
-                return
-            from datetime import datetime, timezone
-
+        """Auto-verify identity on panel open with 10-minute cooldown (Sprint PERF-4: fully async)."""
+        # Sprint PERF-4: Move all checks to background including cooldown
+        def _check_should_verify():
+            """Background job to check if verification is needed."""
             try:
-                dt = datetime.fromisoformat(last_verified)
-                now = datetime.now(timezone.utc)
-                age_s = (now - dt).total_seconds()
-                if age_s > 10 * 60:
-                    self.verify_identity_async(force=False)
-            except Exception:
-                self.verify_identity_async(force=False)
-        except Exception as e:
-            log.debug(f"Auto verify skipped: {e}")
+                store = self.services.token_store()
+                host = settings.load_github_host()
+                account = settings.load_github_login()
+                token = store.load(host, account)
+                
+                if not token:
+                    return {"should_verify": False, "reason": "no_token"}
+                
+                last_verified = settings.load_last_verified_at() or ""
+                if not last_verified:
+                    return {"should_verify": True, "reason": "never_verified"}
+                
+                from datetime import datetime, timezone
+                try:
+                    dt = datetime.fromisoformat(last_verified)
+                    now = datetime.now(timezone.utc)
+                    age_s = (now - dt).total_seconds()
+                    
+                    if age_s > 10 * 60:  # 10 minute cooldown
+                        return {"should_verify": True, "reason": "cooldown_expired"}
+                    else:
+                        return {"should_verify": False, "reason": "cooldown_active"}
+                except Exception:
+                    return {"should_verify": True, "reason": "parse_error"}
+            except Exception as e:
+                log.debug(f"Auto verify check failed: {e}")
+                return {"should_verify": False, "reason": "error"}
+        
+        # Use job_runner if available
+        if hasattr(self.panel, '_job_runner') and self.panel._job_runner:
+            self.panel._job_runner.run_callable(
+                "check_auto_verify_needed",
+                _check_should_verify,
+                on_success=self._on_auto_verify_check_complete,
+                on_error=lambda error: log.debug(f"Auto verify check error: {error}")
+            )
+        else:
+            # Fallback for tests
+            result = _check_should_verify()
+            self._on_auto_verify_check_complete(result)
+    
+    def _on_auto_verify_check_complete(self, result):
+        """Callback when auto-verify check completes (Sprint PERF-4)."""
+        should_verify = result.get("should_verify", False)
+        reason = result.get("reason", "unknown")
+        
+        if should_verify:
+            log.debug(f"Auto-verifying identity: {reason}")
+            self.verify_identity_async(force=False)
+        else:
+            log.debug(f"Skipping auto-verify: {reason}")
 
     def verify_identity_async(self, force: bool = False):
         """Run identity verification in a worker thread and update UI."""

@@ -129,9 +129,10 @@ class BranchOperationsHandler:
         self._pending_publish_new_branch = branch_name
         
         self._job_runner.run_callable(
+            "create_branch",
             _create_branch,
-            success_callback=lambda result: self._on_branch_created(result, branch_name),
-            error_callback=lambda error: self._on_branch_create_error(error, branch_name)
+            on_success=lambda result: self._on_branch_created(result, branch_name),
+            on_error=lambda error: self._on_branch_create_error(error, branch_name)
         )
 
     def _on_branch_created(self, result, branch_name):
@@ -229,9 +230,10 @@ class BranchOperationsHandler:
             return {"ok": result.ok, "stderr": result.stderr, "branch_name": branch_name}
         
         self._job_runner.run_callable(
+            "delete_branch",
             _delete_branch,
-            success_callback=self._on_branch_deleted,
-            error_callback=lambda error: self._on_branch_delete_error(error, branch_name)
+            on_success=self._on_branch_deleted,
+            on_error=lambda error: self._on_branch_delete_error(error, branch_name)
         )
 
     def _on_branch_deleted(self, result):
@@ -289,9 +291,10 @@ class BranchOperationsHandler:
             return {"ok": result.ok, "stderr": result.stderr, "branch_name": branch_name}
         
         self._job_runner.run_callable(
+            "force_delete_branch",
             _force_delete,
-            success_callback=self._on_force_delete_completed,
-            error_callback=lambda error: self._on_branch_delete_error(error, branch_name)
+            on_success=self._on_force_delete_completed,
+            on_error=lambda error: self._on_branch_delete_error(error, branch_name)
         )
     
     def _on_force_delete_completed(self, result):
@@ -365,9 +368,10 @@ class BranchOperationsHandler:
             return {"branches": branches, "current": current}
         
         self._job_runner.run_callable(
+            "load_branch_list",
             _load_branches,
-            success_callback=self._on_branch_list_loaded,
-            error_callback=self._on_branch_list_load_error
+            on_success=self._on_branch_list_loaded,
+            on_error=self._on_branch_list_load_error
         )
 
     def update_branch_button_states(self):

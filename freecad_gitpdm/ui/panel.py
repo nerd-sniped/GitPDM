@@ -148,6 +148,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._busy_timer.setInterval(5000)
         self._busy_timer.timeout.connect(self._on_busy_timer_tick)
         self._busy_label = ""
+        self._active_operations = set()  # Sprint PERF-4: Track multiple concurrent operations
         self._button_update_timer = QtCore.QTimer(self)
         self._button_update_timer.setSingleShot(True)
         self._button_update_timer.setInterval(300)
@@ -1730,30 +1731,41 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 "color: red; font-size: 9px;"
             )
 
-    def _start_busy_feedback(self, label):
-        """Show progress indicator and periodic status updates."""
+    def _start_busy_feedback(self, label, operation_id=None):
+        """Show progress indicator and periodic status updates (Sprint PERF-4: enhanced)."""
         self._busy_label = label
+        
+        # Sprint PERF-4: Track operation for better state management
+        if operation_id:
+            self._active_operations.add(operation_id)
+        
         if hasattr(self, "busy_bar"):
             self.busy_bar.show()
         self._update_operation_status(label)
         self._busy_timer.start()
         self._show_status_message(label, is_error=False)
 
-    def _stop_busy_feedback(self):
-        """Hide progress indicator and stop timer."""
-        try:
-            QtCore.QMetaObject.invokeMethod(
-                self._busy_timer,
-                "stop",
-                QtCore.Qt.QueuedConnection,
-            )
-        except Exception:
-            # Fallback if queued invocation is unavailable
-            self._busy_timer.stop()
-        self._busy_label = ""
-        if hasattr(self, "busy_bar"):
-            self.busy_bar.hide()
-        self._set_ready_later()
+    def _stop_busy_feedback(self, operation_id=None):
+        """Hide progress indicator and stop timer (Sprint PERF-4: enhanced)."""
+        # Sprint PERF-4: Remove operation from tracking
+        if operation_id and operation_id in self._active_operations:
+            self._active_operations.discard(operation_id)
+        
+        # Only hide busy UI if no operations are active
+        if not self._active_operations:
+            try:
+                QtCore.QMetaObject.invokeMethod(
+                    self._busy_timer,
+                    "stop",
+                    QtCore.Qt.QueuedConnection,
+                )
+            except Exception:
+                # Fallback if queued invocation is unavailable
+                self._busy_timer.stop()
+            self._busy_label = ""
+            if hasattr(self, "busy_bar"):
+                self.busy_bar.hide()
+            self._set_ready_later()
 
     def _on_busy_timer_tick(self):
         """Periodic pulse while a long operation is running."""
@@ -1764,12 +1776,16 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             )
 
     def _set_ready_later(self, delay_ms=1500, status_text="Ready"):
-        """Return UI to Ready after a short delay if idle."""
+        """Return UI to Ready after a short delay if idle (Sprint PERF-4: enhanced)."""
         def _to_ready():
+            # Sprint PERF-4: Check all operation states including active_operations
             if not (
                 self._fetch_pull.is_busy()
                 or self._commit_push.is_busy()
                 or self._job_runner.is_busy()
+                or self._active_operations  # Check tracked operations
+                or self._branch_ops._is_switching_branch
+                or self._branch_ops._is_loading_branches
             ):
                 self._update_operation_status(status_text)
         QtCore.QTimer.singleShot(delay_ms, _to_ready)
