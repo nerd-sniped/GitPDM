@@ -1,6 +1,12 @@
 {
   "files": {
-    "freecad_gitpdm/ui/panel.py": { "max_lines": 5125 },
+    "freecad_gitpdm/ui/panel.py": { "max_lines": 2250 },
+    "freecad_gitpdm/ui/github_auth.py": { "max_lines": 600 },
+    "freecad_gitpdm/ui/file_browser.py": { "max_lines": 550 },
+    "freecad_gitpdm/ui/fetch_pull.py": { "max_lines": 450 },
+    "freecad_gitpdm/ui/commit_push.py": { "max_lines": 575 },
+    "freecad_gitpdm/ui/repo_validator.py": { "max_lines": 450 },
+    "freecad_gitpdm/ui/branch_ops.py": { "max_lines": 750 },
     "freecad_gitpdm/git/client.py": { "max_lines": 1855 },
     "freecad_gitpdm/export/exporter.py": { "max_lines": 825 }
   }
