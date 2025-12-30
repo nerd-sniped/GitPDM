@@ -155,6 +155,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self._do_deferred_button_update
         )
         self._cached_has_remote = False
+        self._is_refreshing_status = False  # Sprint PERF-1: prevent concurrent status refreshes
+        self._is_updating_upstream = False  # Sprint PERF-1: prevent concurrent upstream updates
         self._doc_observer = None
         self._group_git_check = None
         self._group_repo_selector = None
@@ -1177,106 +1179,137 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
     def _update_upstream_info(self, repo_root):
         """
-        Update upstream ref and ahead/behind counts.
+        Update upstream ref and ahead/behind counts (async via job_runner).
         Uses tracking upstream (@{u}) if available, otherwise falls back to default.
         
         Args:
             repo_root: str - repository root path
         """
-        self._ahead_count = 0
-        self._behind_count = 0
+        # Sprint PERF-1: Move to background to avoid blocking UI
+        if not repo_root:
+            return
         
+        # Prevent concurrent upstream updates
+        if self._is_updating_upstream:
+            log.debug("Upstream update already in progress, skipping")
+            return
+        
+        self._is_updating_upstream = True
+        
+        # Check remote status (fast, local operation)
         self._cached_has_remote = self._git_client.has_remote(
             repo_root, self._remote_name
         )
         
         if not self._cached_has_remote:
+            self._is_updating_upstream = False
+            self._ahead_count = 0
+            self._behind_count = 0
             self.upstream_label.setText("(no remote)")
             self._set_meta_label(self.upstream_label, "gray")
             self.ahead_behind_label.setText("(unknown)")
             self._set_strong_label(self.ahead_behind_label, "gray")
             self._upstream_ref = None
+            self._update_button_states()
             return
         
-        # Use new method that prefers tracking upstream (no fallback)
-        ab_result = self._git_client.get_ahead_behind_with_upstream(repo_root)
-        upstream_ref = ab_result.get("upstream")
+        # Show calculating state
+        self.ahead_behind_label.setText("Calculating…")
+        self._set_strong_label(self.ahead_behind_label, "gray")
         
-        # Show status message to debug
-        msg = f"Upstream: {upstream_ref if upstream_ref else '(not set)'}"
-        log.info(msg)
+        # Run ahead/behind calculation in background
+        def _fetch_upstream():
+            ab_result = self._git_client.get_ahead_behind_with_upstream(repo_root)
+            return ab_result
         
-        if not upstream_ref:
-            # No upstream configured for this branch
-            self.upstream_label.setText("(not set)")
-            self._set_meta_label(self.upstream_label, "orange")
-            self.ahead_behind_label.setText("(unknown)")
-            self._set_strong_label(self.ahead_behind_label, "gray")
-            self._upstream_ref = None
-            return
-        
-        # Display upstream
-        self.upstream_label.setText(upstream_ref)
-        self._set_meta_label(self.upstream_label, "#4db6ac")
-        self._upstream_ref = upstream_ref
-        
-        # Display ahead/behind
-        if ab_result["ok"]:
-            ahead = ab_result["ahead"]
-            behind = ab_result["behind"]
+        self._job_runner.run_callable(
+            "update_upstream",
+            _fetch_upstream,
+            on_success=self._on_upstream_update_complete,
+            on_error=self._on_upstream_update_error,
+        )
+    
+    def _on_upstream_update_complete(self, ab_result):
+        """Callback when async upstream update completes (Sprint PERF-1)."""
+        try:
+            self._is_updating_upstream = False
             
-            self._ahead_count = ahead
-            self._behind_count = behind
+            upstream_ref = ab_result.get("upstream")
             
-            ab_text = f"Ahead {ahead} / Behind {behind}"
+            # Log upstream status
+            msg = f"Upstream: {upstream_ref if upstream_ref else '(not set)'}"
+            log.info(msg)
             
-            if ahead == 0 and behind == 0:
-                self._set_strong_label(
-                    self.ahead_behind_label, "green"
-                )
-            elif behind > 0:
-                self._set_strong_label(
-                    self.ahead_behind_label, "orange"
-                )
+            if not upstream_ref:
+                # No upstream configured for this branch
+                self._ahead_count = 0
+                self._behind_count = 0
+                self.upstream_label.setText("(not set)")
+                self._set_meta_label(self.upstream_label, "orange")
+                self.ahead_behind_label.setText("(unknown)")
+                self._set_strong_label(self.ahead_behind_label, "gray")
+                self._upstream_ref = None
+                self._update_button_states()
+                return
+            
+            # Display upstream
+            self.upstream_label.setText(upstream_ref)
+            self._set_meta_label(self.upstream_label, "#4db6ac")
+            self._upstream_ref = upstream_ref
+            
+            # Display ahead/behind
+            if ab_result["ok"]:
+                ahead = ab_result["ahead"]
+                behind = ab_result["behind"]
+                
+                self._ahead_count = ahead
+                self._behind_count = behind
+                
+                ab_text = f"Ahead {ahead} / Behind {behind}"
+                
+                if ahead == 0 and behind == 0:
+                    self._set_strong_label(
+                        self.ahead_behind_label, "green"
+                    )
+                elif behind > 0:
+                    self._set_strong_label(
+                        self.ahead_behind_label, "orange"
+                    )
+                else:
+                    self._set_strong_label(
+                        self.ahead_behind_label, "#4db6ac"
+                    )
+                
+                self.ahead_behind_label.setText(ab_text)
             else:
-                self._set_strong_label(
-                    self.ahead_behind_label, "#4db6ac"
-                )
+                self.ahead_behind_label.setText("(error)")
+                self._set_strong_label(self.ahead_behind_label, "red")
+                if ab_result["error"]:
+                    log.debug(
+                        f"Ahead/behind error: {ab_result['error']}"
+                    )
             
-            self.ahead_behind_label.setText(ab_text)
-        else:
-            self.ahead_behind_label.setText("(error)")
-            self._set_strong_label(self.ahead_behind_label, "red")
-            if ab_result["error"]:
-                log.debug(
-                    f"Ahead/behind error: {ab_result['error']}"
-                )
-
+            self._update_button_states()
+            log.debug("Upstream update complete")
+        except Exception as e:
+            log.error(f"Error processing upstream update result: {e}")
+            self._is_updating_upstream = False
+    
+    def _on_upstream_update_error(self, error):
+        """Callback when async upstream update fails (Sprint PERF-1)."""
+        self._is_updating_upstream = False
+        log.warning(f"Upstream update error: {error}")
+        self.ahead_behind_label.setText("(error)")
+        self._set_strong_label(self.ahead_behind_label, "red")
         self._update_button_states()
 
     # ========== Fetch/Pull Operations (Sprint 4: Delegated to FetchPullHandler) ==========
     # Fetch and pull operations fully delegated to self._fetch_pull handler
 
     def _update_button_states(self):
-        """Update enabled/disabled state of action buttons (full checks)."""
-        git_ok = self._git_client.is_git_available()
-        repo_ok = (
-            self._current_repo_root is not None
-            and self._current_repo_root != ""
-        )
-        upstream_ok = self._upstream_ref is not None
-        changes_present = len(self._file_statuses) > 0
-        busy = (
-            self._fetch_pull.is_busy()
-            or self._commit_push.is_busy()
-            or self._job_runner.is_busy()
-        )
-
-        if repo_ok:
-            self._cached_has_remote = self._git_client.has_remote(
-                self._current_repo_root, self._remote_name
-            )
-
+        """Update enabled/disabled state of action buttons (uses cached values only)."""
+        # Sprint PERF-1: Removed synchronous has_remote() call - use cached value
+        # Remote status is updated by _update_upstream_info() in background
         self._update_button_states_fast()
 
     def _do_deferred_button_update(self):
@@ -1607,6 +1640,18 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self._wd_refresh_timer.start(10000)
             log.debug("Started working directory refresh timer")
 
+    def _set_freecad_working_directory(self, directory: str):
+        """
+        Set FreeCAD's working directory to ensure Save As dialog defaults to repo folder.
+        
+        This prevents users from accidentally saving files outside the repo.
+        Delegates to repo_validator for the actual implementation.
+        
+        Args:
+            directory: Absolute path to set as working directory
+        """
+        self._repo_validator._set_freecad_working_directory(directory)
+    
     def _refresh_working_directory(self):
         """Periodic refresh of working directory to maintain repo folder as default."""
         if self._current_repo_root:
@@ -1729,14 +1774,64 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self._set_strong_label(self.working_tree_label, "orange")
 
     def _refresh_status_views(self, repo_root):
-        """Refresh working tree status and changes list."""
-        status = self._git_client.status_summary(repo_root)
-        self._display_working_tree_status(status)
+        """Refresh working tree status and changes list (async via job_runner)."""
+        # Sprint PERF-1: Move to background to avoid blocking UI
+        if not repo_root:
+            return
+        
+        # Prevent concurrent status refreshes
+        if self._is_refreshing_status:
+            log.debug("Status refresh already in progress, skipping")
+            return
+        
+        self._is_refreshing_status = True
+        
+        # Show loading state
+        self.working_tree_label.setText("Refreshing…")
+        self._set_strong_label(self.working_tree_label, "gray")
+        
+        # Run git status operations in background
+        def _fetch_status():
+            status = self._git_client.status_summary(repo_root)
+            file_statuses = self._git_client.status_porcelain(repo_root)
+            return {"status": status, "file_statuses": file_statuses}
+        
+        self._job_runner.run_callable(
+            "refresh_status",
+            _fetch_status,
+            on_success=self._on_status_refresh_complete,
+            on_error=self._on_status_refresh_error,
+        )
 
-        self._file_statuses = self._git_client.status_porcelain(repo_root)
-        self._populate_changes_list()
+    def _on_status_refresh_complete(self, result):
+        """Callback when async status refresh completes (Sprint PERF-1)."""
+        try:
+            self._is_refreshing_status = False
+            
+            status = result.get("status")
+            file_statuses = result.get("file_statuses")
+            
+            if status:
+                self._display_working_tree_status(status)
+            
+            if file_statuses is not None:
+                self._file_statuses = file_statuses
+                self._populate_changes_list()
+            
+            self._update_button_states()
+            log.debug("Status refresh complete")
+        except Exception as e:
+            log.error(f"Error processing status refresh result: {e}")
+            self._is_refreshing_status = False
+    
+    def _on_status_refresh_error(self, error):
+        """Callback when async status refresh fails (Sprint PERF-1)."""
+        self._is_refreshing_status = False
+        log.warning(f"Status refresh error: {error}")
+        self.working_tree_label.setText("(error)")
+        self._set_strong_label(self.working_tree_label, "red")
         self._update_button_states()
-
+    
     def _populate_changes_list(self):
         """Update changes list widget with current file statuses."""
         self.changes_list.clear()
