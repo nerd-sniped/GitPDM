@@ -142,3 +142,51 @@ def debug(message):
         FreeCAD.Console.PrintLog(f"[GitPDM] DEBUG: {safe_msg}\n")
     except ImportError:
         print(f"[GitPDM] DEBUG: {message}")
+
+
+def error_safe(message, exception=None):
+    """
+    Log an error with automatic exception redaction.
+    
+    Args:
+        message: Error message prefix
+        exception: Optional exception object to include (will be redacted)
+    """
+    if exception:
+        safe_exc = _redact_sensitive(str(exception))
+        full_msg = f"{message}: {safe_exc}"
+    else:
+        full_msg = message
+    error(full_msg)
+
+
+def warning_safe(message, exception=None):
+    """
+    Log a warning with automatic exception redaction.
+    
+    Args:
+        message: Warning message prefix
+        exception: Optional exception object to include (will be redacted)
+    """
+    if exception:
+        safe_exc = _redact_sensitive(str(exception))
+        full_msg = f"{message}: {safe_exc}"
+    else:
+        full_msg = message
+    warning(full_msg)
+
+
+def debug_safe(message, exception=None):
+    """
+    Log a debug message with automatic exception redaction.
+    
+    Args:
+        message: Debug message prefix
+        exception: Optional exception object to include (will be redacted)
+    """
+    if exception:
+        safe_exc = _redact_sensitive(str(exception))
+        full_msg = f"{message}: {safe_exc}"
+    else:
+        full_msg = message
+    debug(full_msg)

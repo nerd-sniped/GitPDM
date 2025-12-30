@@ -312,7 +312,13 @@ def poll_for_token(
         )
         
         if not access_token:
-            log.error(f"Token response missing access_token: {response_data}")
+            # Import redaction helper to prevent token leaks in logs
+            try:
+                from freecad_gitpdm.core.log import _redact_sensitive
+                safe_response = _redact_sensitive(str(response_data))
+            except ImportError:
+                safe_response = "[response redacted]"
+            log.error(f"Token response missing access_token: {safe_response}")
             raise DeviceFlowError("invalid_response", "Missing access_token")
         
         obtained_at = datetime.now(timezone.utc).isoformat()

@@ -189,10 +189,11 @@ class GitHubApiClient:
                 data = json.dumps(body).encode("utf-8")
                 req_headers["Content-Type"] = "application/json"
             except Exception as e:
+                from freecad_gitpdm.core.log import _redact_sensitive
                 raise GitHubApiError(
                     code="BAD_RESPONSE",
                     message="Failed to prepare request.",
-                    details=str(e)
+                    details=_redact_sensitive(str(e))
                 )
 
         req = request.Request(target, data=data, method=(method or "GET").upper())
@@ -276,8 +277,9 @@ class GitHubApiClient:
                 meta=meta,
             )
         except Exception as e:
+            from freecad_gitpdm.core.log import _redact_sensitive
             return Result.failure(
                 "UNKNOWN",
                 "An unexpected error occurred.",
-                details=str(e),
+                details=_redact_sensitive(str(e)),
             )

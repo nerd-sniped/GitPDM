@@ -160,13 +160,15 @@ class GitHubAuthHandler:
                 on_error=self._on_oauth_error,
             )
         except Exception as e:
-            log.error(f"Connect button error: {e}")
+            log.error_safe("Connect button error", e)
             self._oauth_in_progress = False
             self.update_ui_state()
+            # Safe to show in UI - log module handles redaction
+            from freecad_gitpdm.core.log import _redact_sensitive
             QtWidgets.QMessageBox.critical(
                 self.panel,
                 "GitHub Connection Error",
-                f"Failed to start OAuth flow: {str(e)}",
+                f"Failed to start OAuth flow: {_redact_sensitive(str(e))}",
             )
 
     def disconnect_clicked(self):
@@ -211,11 +213,12 @@ class GitHubAuthHandler:
 
             log.info("GitHub disconnected")
         except Exception as e:
-            log.error(f"Error disconnecting GitHub: {e}")
+            log.error_safe("Error disconnecting GitHub", e)
+            from freecad_gitpdm.core.log import _redact_sensitive
             QtWidgets.QMessageBox.critical(
                 self.panel,
                 "Disconnect Failed",
-                f"Failed to disconnect: {str(e)}",
+                f"Failed to disconnect: {_redact_sensitive(str(e))}",
             )
 
     def verify_clicked(self):
@@ -490,8 +493,34 @@ class GitHubAuthHandler:
             host = settings.load_github_host()
             account = settings.load_github_login()
 
-            store.save(host, account, token_response)
-            log.info("Token stored in credential manager")
+            try:
+                store.save(host, account, token_response)
+                log.info("Token stored in credential manager")
+            except OSError as storage_err:
+                # Credential storage failed - this is a critical security issue
+                log.error_safe("Failed to store token securely", storage_err)
+                
+                # Close OAuth dialog first
+                if self._oauth_dialog:
+                    self._oauth_dialog.close()
+                
+                # Show critical warning to user
+                QtWidgets.QMessageBox.critical(
+                    self.panel,
+                    "Credential Storage Failed",
+                    "Unable to securely store your GitHub credentials.\n\n"
+                    "This may be because Windows Credential Manager is unavailable "
+                    "or access was denied.\n\n"
+                    "Your token cannot be saved and you will need to reconnect "
+                    "each time you restart FreeCAD.\n\n"
+                    f"Technical details: {storage_err}",
+                )
+                
+                # Don't mark as connected since we couldn't store the token
+                self._oauth_in_progress = False
+                self._oauth_cancel_token = None
+                self.update_ui_state()
+                return
 
             # Update settings
             settings.save_github_connected(True)
@@ -510,7 +539,7 @@ class GitHubAuthHandler:
 
             log.info("GitHub OAuth flow completed successfully")
         except Exception as e:
-            log.error(f"Error storing token: {e}")
+            log.error_safe("Error storing token", e)
             self._on_oauth_error(e)
         finally:
             self._oauth_in_progress = False
@@ -552,7 +581,7 @@ class GitHubAuthHandler:
                 self.panel, "GitHub Connection Failed", msg
             )
         except Exception as e:
-            log.error(f"Error handling token poll error: {e}")
+            log.error_safe("Error handling token poll error", e)
         finally:
             self.update_ui_state()
             self._oauth_cancel_token = None
@@ -566,14 +595,17 @@ class GitHubAuthHandler:
             if self._oauth_dialog:
                 self._oauth_dialog.close()
 
-            log.error(f"OAuth flow error: {error}")
+            log.error_safe("OAuth flow error", error if isinstance(error, Exception) else None)
+            if not isinstance(error, Exception):
+                log.error(f"OAuth flow error: {error}")
+            from freecad_gitpdm.core.log import _redact_sensitive
             QtWidgets.QMessageBox.critical(
                 self.panel,
                 "GitHub Connection Error",
-                f"An error occurred: {str(error)}",
+                f"An error occurred: {_redact_sensitive(str(error))}",
             )
         except Exception as e:
-            log.error(f"Error handling OAuth error: {e}")
+            log.error_safe("Error handling OAuth error", e)
         finally:
             self.update_ui_state()
             self._oauth_cancel_token = None
@@ -645,7 +677,7 @@ class GitHubAuthHandler:
             self.panel.github_refresh_btn.setEnabled(True)
             self.update_ui_state()
         except Exception as e:
-            log.error(f"Identity result handling failed: {e}")
+            log.error_safe("Identity result handling failed", e)
             self.panel.github_refresh_btn.setEnabled(True)
 
     def _on_identity_error(self, error):
