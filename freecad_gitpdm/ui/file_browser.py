@@ -140,8 +140,8 @@ class FileBrowserHandler:
         
         backup_layout.addLayout(controls_row)
         
-        # Hide by default
-        self._parent.backup_config_panel.setVisible(False)
+        # Initially disabled until a FCStd file is selected
+        self._parent.backup_config_panel.setEnabled(False)
         layout.addWidget(self._parent.backup_config_panel)
 
         top_row = QtWidgets.QHBoxLayout()
@@ -449,17 +449,17 @@ class FileBrowserHandler:
         """Show preview for the selected repository item."""
         if not current:
             self.clear_preview()
-            self._parent.backup_config_panel.setVisible(False)
+            self._parent.backup_config_panel.setEnabled(False)
             return
         rel = current.text()
         self.show_preview(rel)
         
-        # Show backup config panel only for FCStd files
+        # Enable backup config panel only for FCStd files
         if rel.lower().endswith(".fcstd"):
             self._load_backup_settings(rel)
-            self._parent.backup_config_panel.setVisible(True)
+            self._parent.backup_config_panel.setEnabled(True)
         else:
-            self._parent.backup_config_panel.setVisible(False)
+            self._parent.backup_config_panel.setEnabled(False)
 
     def _on_list_context_menu(self, pos):
         """Show context menu for repo list items."""
@@ -713,8 +713,8 @@ class FileBrowserHandler:
                     # If backups already exist, trigger cleanup
                     backup_dir = json_abs.parent / "Backup"
                     if backup_dir.exists():
-                        from freecad_gitpdm.export.exporter import _cleanup_old_backups
-                        _cleanup_old_backups(backup_dir, Path(rel).stem, new_max)
+                        from freecad_gitpdm.export.backup_manager import cleanup_old_backups
+                        cleanup_old_backups(backup_dir, Path(rel).stem, new_max)
                     
                     QtWidgets.QMessageBox.information(
                         self._parent,
@@ -832,8 +832,8 @@ class FileBrowserHandler:
                 if max_backups > 0:
                     backup_dir = json_abs.parent / "Backup"
                     if backup_dir.exists():
-                        from freecad_gitpdm.export.exporter import _cleanup_old_backups
-                        _cleanup_old_backups(backup_dir, Path(rel).stem, max_backups)
+                        from freecad_gitpdm.export.backup_manager import cleanup_old_backups
+                        cleanup_old_backups(backup_dir, Path(rel).stem, max_backups)
             except Exception as e:
                 log.error(f"Failed to update maxBackups: {e}")
         else:

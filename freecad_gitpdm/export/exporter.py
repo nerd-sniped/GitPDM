@@ -9,19 +9,21 @@ Constraints:
 """
 
 import json
-import hashlib
-import time
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from freecad_gitpdm.core import log
 from freecad_gitpdm.core import paths as core_paths
 from freecad_gitpdm.export.preset import load_preset
 from freecad_gitpdm.export.mapper import to_preview_dir_rel, stl_root_path_rel
-from freecad_gitpdm.export.stl_converter import obj_to_stl
+from freecad_gitpdm.export.view_helper import doc_and_view
+from freecad_gitpdm.export.manifest import freecad_version_string, sha256_file
+from freecad_gitpdm.export.thumbnail import set_view_for_thumbnail, save_thumbnail
+from freecad_gitpdm.export.model_export import export_glb, compute_bbox_mm
+from freecad_gitpdm.export.backup_manager import move_fcbak_to_previews
 
 
 @dataclass
@@ -39,588 +41,13 @@ class ExportResult:
     preset_used: Dict[str, Any]
 
 
-def _freecad_version_string() -> str:
-    try:
-        import FreeCAD
-        v = getattr(FreeCAD, "Version", None)
-        if callable(v):
-            ver = v()
-            # FreeCAD.Version() may return a tuple or dict-like
-            try:
-                return str(ver)
-            except Exception:
-                pass
-        return f"{getattr(FreeCAD, 'Version', 'unknown')}"
-    except Exception:
-        return "unknown"
-
-
-def _doc_and_view() -> Tuple[Any, Any]:
-    try:
-        import FreeCAD, FreeCADGui
-        doc = FreeCAD.ActiveDocument
-        view = None
-        try:
-            view = FreeCADGui.ActiveDocument.ActiveView
-        except Exception:
-            try:
-                view = FreeCADGui.ActiveDocument.ActiveView
-            except Exception:
-                view = None
-        return doc, view
-    except Exception:
-        return None, None
-
-
-def _sha256_file(path: Path) -> Optional[str]:
-    try:
-        h = hashlib.sha256()
-        with path.open("rb") as f:
-            for chunk in iter(lambda: f.read(8192), b""):
-                h.update(chunk)
-        return h.hexdigest()
-    except Exception as e:
-        log.warning(f"SHA256 failed: {e}")
-        return None
-
-
-def _move_fcbak_to_previews(source_fcstd: Path, preview_dir: Path, part_name: str, max_backups: int = 3) -> bool:
-    """
-    Move FCBak file from source directory to preview folder.
-    FreeCAD creates FCBak files during save with timestamps (e.g., filename.20251230-213417.FCBak).
-    This function waits briefly for the file to appear before moving it.
-    Also cleans up old backups keeping only the most recent max_backups files.
-    
-    Args:
-        source_fcstd: Path to the source FCStd file
-        preview_dir: Directory where previews are stored
-        part_name: Name of the part (used for searching backups)
-        max_backups: Maximum number of backup files to keep (default: 3)
-    
-    Returns True if FCBak was moved, False otherwise.
-    """
-    parent = source_fcstd.parent
-    stem = source_fcstd.stem  # Get filename without extension
-    
-    log.info(f"Looking for FCBak files matching: {stem}.*.FCBak in {parent}")
-    log.info(f"Max backups to keep: {max_backups}")
-    
-    # Wait up to 2 seconds for FCBak to appear (FreeCAD creates it asynchronously)
-    max_attempts = 20
-    wait_interval = 0.1  # 100ms
-    
-    moved_successfully = False
-    
-    for attempt in range(max_attempts):
-        try:
-            # Search for FCBak files matching the pattern: filename.*.FCBak
-            # FreeCAD creates files like "Square Test.20251230-213417.FCBak"
-            pattern = f"{stem}.*.FCBak"
-            fcbak_files = list(parent.glob(pattern))
-            
-            if fcbak_files:
-                # Get the most recent FCBak file (in case there are multiple)
-                fcbak_source = max(fcbak_files, key=lambda p: p.stat().st_mtime)
-                log.info(f"Found FCBak file: {fcbak_source}")
-                
-                try:
-                    # Create Backup subfolder inside preview directory
-                    backup_dir = preview_dir / "Backup"
-                    backup_dir.mkdir(parents=True, exist_ok=True)
-                    
-                    # Keep the timestamped name in the backup folder
-                    fcbak_dest = backup_dir / fcbak_source.name
-                    # Remove existing FCBak if present (Windows won't overwrite on rename)
-                    if fcbak_dest.exists():
-                        fcbak_dest.unlink()
-                    # Move FCBak to the part's preview/Backup folder
-                    fcbak_source.rename(fcbak_dest)
-                    log.info(f"FCBak moved to previews/Backup: {fcbak_dest.name}")
-                    moved_successfully = True
-                    
-                    # Clean up old backups - keep only the most recent max_backups files
-                    # Skip cleanup if max_backups is -1 (unlimited) or 0 (no backups)
-                    if max_backups > 0:
-                        _cleanup_old_backups(backup_dir, stem, max_backups)
-                    
-                    return True
-                except Exception as e:
-                    log.warning(f"Failed to move FCBak: {e}")
-                    return False
-        except Exception as e:
-            log.warning(f"Error searching for FCBak: {e}")
-        
-        # Wait a bit before checking again
-        if attempt < max_attempts - 1 and not moved_successfully:
-            time.sleep(wait_interval)
-    
-    # FCBak file never appeared (this is normal if FreeCAD didn't create one)
-    log.debug(f"No FCBak file found matching {stem}.*.FCBak")
-    return False
-
-
-def _cleanup_old_backups(backup_dir: Path, part_stem: str, max_backups: int):
-    """
-    Remove old backup files, keeping only the most recent max_backups files.
-    
-    Args:
-        backup_dir: Directory containing backup files
-        part_stem: Stem of the part name (e.g., "Square Test")
-        max_backups: Maximum number of backups to keep
-    """
-    try:
-        # Find all backup files for this part
-        pattern = f"{part_stem}.*.FCBak"
-        backup_files = list(backup_dir.glob(pattern))
-        
-        if len(backup_files) <= max_backups:
-            return  # Nothing to clean up
-        
-        # Sort by modification time, newest first
-        backup_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-        
-        # Remove old backups beyond the limit
-        files_to_remove = backup_files[max_backups:]
-        for old_backup in files_to_remove:
-            try:
-                old_backup.unlink()
-                log.info(f"Removed old backup: {old_backup.name}")
-            except Exception as e:
-                log.warning(f"Failed to remove old backup {old_backup.name}: {e}")
-    except Exception as e:
-        log.warning(f"Failed to cleanup old backups: {e}")
-
-
-def _compute_bbox_mm(doc) -> Optional[Tuple[float, float, float]]:
-    """Compute bounding box size in mm (robust across API variants)."""
-    try:
-        # Best effort recompute once
-        try:
-            doc.recompute()
-        except Exception:
-            pass
-
-        # Prefer object named "Export"
-        target = None
-        try:
-            obj = doc.getObject("Export")
-            if obj and getattr(obj, "Shape", None):
-                target = [obj]
-        except Exception:
-            target = None
-
-        objs: List[Any] = []
-        if target:
-            objs = target
-        else:
-            # Aggregate visible objects with Shape
-            try:
-                for o in doc.Objects:
-                    vo = getattr(o, "ViewObject", None)
-                    vis = True
-                    try:
-                        vis = bool(getattr(vo, "Visibility", True))
-                    except Exception:
-                        vis = True
-                    if vis and getattr(o, "Shape", None):
-                        objs.append(o)
-            except Exception:
-                # Fallback: first object with Shape
-                try:
-                    for o in doc.Objects:
-                        if getattr(o, "Shape", None):
-                            objs.append(o)
-                            break
-                except Exception:
-                    pass
-
-        if not objs:
-            return None
-
-        # Combine min/max extents manually for robustness
-        x_min = y_min = z_min = None
-        x_max = y_max = z_max = None
-        for o in objs:
-            shp = getattr(o, "Shape", None)
-            if not shp:
-                continue
-            try:
-                b = shp.BoundBox
-                xm, ym, zm = float(b.XMin), float(b.YMin), float(b.ZMin)
-                xM, yM, zM = float(b.XMax), float(b.YMax), float(b.ZMax)
-            except Exception:
-                continue
-            x_min = xm if x_min is None else min(x_min, xm)
-            y_min = ym if y_min is None else min(y_min, ym)
-            z_min = zm if z_min is None else min(z_min, zm)
-            x_max = xM if x_max is None else max(x_max, xM)
-            y_max = yM if y_max is None else max(y_max, yM)
-            z_max = zM if z_max is None else max(z_max, zM)
-
-        if None in (x_min, y_min, z_min, x_max, y_max, z_max):
-            return None
-
-        dx = float(x_max - x_min)
-        dy = float(y_max - y_min)
-        dz = float(z_max - z_min)
-        return (dx, dy, dz)
-    except Exception as e:
-        log.warning(f"BBox compute failed: {e}")
-        return None
-
-
-def _set_view_for_thumbnail(view, preset):
-    try:
-        if not view:
-            return False
-        # Projection
-        proj = preset.get("thumbnail", {}).get("projection", "orthographic")
-        try:
-            if proj == "orthographic":
-                view.setCameraType("Orthographic")
-            else:
-                view.setCameraType("Perspective")
-        except Exception:
-            pass
-        # View orientation
-        vname = preset.get("thumbnail", {}).get("view", "isometric")
-        try:
-            if vname == "isometric":
-                view.viewIsometric()
-            elif vname == "front":
-                view.viewFront()
-            elif vname == "top":
-                view.viewTop()
-            elif vname == "right":
-                view.viewRight()
-        except Exception:
-            pass
-        # Fit to model
-        try:
-            view.fitAll()
-        except Exception:
-            pass
-        # Draw style edges/shaded
-        try:
-            se = bool(preset.get("thumbnail", {}).get("showEdges", False))
-            view.setDrawStyle("ShadedWithEdges" if se else "Shaded")
-        except Exception:
-            pass
-        # Hide overlays best-effort
-        try:
-            view.showAxis(False)
-        except Exception:
-            pass
-        try:
-            # Some FreeCADs use showGrid()
-            getattr(view, "showGrid", lambda *_: None)(False)
-        except Exception:
-            pass
-        return True
-    except Exception:
-        return False
-
-
-def _save_thumbnail(view, preset, out_path: Path) -> Optional[str]:
-    size = preset.get("thumbnail", {}).get("size", [512, 512])
-    w, h = int(size[0]), int(size[1])
-    bg = preset.get("thumbnail", {}).get("background", "transparent")
-    
-    # Handle transparent background
-    if bg.lower() in ["transparent", "none", ""]:
-        # Set view background to transparent before capturing
-        orig_bg_color = None
-        try:
-            # Try to get and set background color
-            try:
-                orig_bg_color = view.getBackgroundColor()
-            except Exception:
-                pass
-            
-            # Set transparent/white background (FreeCAD doesn't support true transparency in viewport)
-            # We'll make it transparent in the image processing
-            try:
-                view.setBackgroundColor(1.0, 1.0, 1.0, 0.0)  # RGBA with alpha=0
-            except Exception:
-                # Fallback: set to white, we'll process it
-                try:
-                    view.setBackgroundColor(1.0, 1.0, 1.0)
-                except Exception:
-                    pass
-            
-            pm = view.getPixmap(w, h)
-            
-            # Restore original background
-            if orig_bg_color is not None:
-                try:
-                    if len(orig_bg_color) == 4:
-                        view.setBackgroundColor(*orig_bg_color)
-                    elif len(orig_bg_color) == 3:
-                        view.setBackgroundColor(*orig_bg_color)
-                except Exception:
-                    pass
-            
-            try:
-                from PySide6.QtGui import QImage, QPainter
-                from PySide6.QtCore import Qt
-            except Exception:
-                try:
-                    from PySide2.QtGui import QImage, QPainter
-                    from PySide2.QtCore import Qt
-                except Exception as e:
-                    return f"Thumbnail requires FreeCAD GUI ({e})"
-            
-            try:
-                # Create image with alpha channel
-                img = QImage(w, h, QImage.Format_ARGB32)
-                # Fill with transparent background
-                img.fill(Qt.transparent)
-                
-                try:
-                    from PySide6.QtCore import QRect
-                    from PySide6.QtGui import QColor
-                except Exception:
-                    from PySide2.QtCore import QRect
-                    from PySide2.QtGui import QColor
-                
-                # Convert pixmap to image for processing
-                pm_img = pm.toImage().convertToFormat(QImage.Format_ARGB32)
-                
-                # Make white/near-white background pixels transparent
-                # This processes the image to remove white backgrounds
-                width = pm_img.width()
-                height = pm_img.height()
-                
-                for y in range(height):
-                    for x in range(width):
-                        pixel = pm_img.pixel(x, y)
-                        color = QColor(pixel)
-                        # If pixel is very close to white (all RGB > 250), make it transparent
-                        if color.red() > 250 and color.green() > 250 and color.blue() > 250:
-                            pm_img.setPixel(x, y, 0x00FFFFFF)  # Transparent white
-                
-                # Save the processed image
-                pm_img.save(str(out_path), "PNG")
-                return None
-            except Exception as e:
-                return f"Transparent thumbnail export failed: {e}"
-        except Exception as e:
-            return f"Thumbnail requires FreeCAD GUI ({e})"
-    
-    # Try native screenshot API first (for solid backgrounds)
-    try:
-        # Some versions: saveImage(path, width, height, "White")
-        bg_mode = "White" if bg.lower() == "#ffffff" else "Current"
-        view.saveImage(str(out_path), w, h, bg_mode)
-        return None
-    except Exception as e:
-        # Fallback using pixmap
-        try:
-            pm = view.getPixmap(w, h)
-            # Ensure background by filling image if possible
-            from PySide6.QtGui import QImage, QPainter, QColor
-        except Exception:
-            try:
-                from PySide2.QtGui import QImage, QPainter, QColor
-            except Exception:
-                return f"Thumbnail requires FreeCAD GUI ({e})"
-        try:
-            img = QImage(w, h, QImage.Format_ARGB32)
-            # Fill background
-            color = QColor(bg)
-            p = QPainter(img)
-            p.fillRect(0, 0, w, h, color)
-            # Draw pixmap centered
-            try:
-                from PySide6.QtCore import QRect
-            except Exception:
-                from PySide2.QtCore import QRect
-            p.drawPixmap(QRect(0, 0, w, h), pm)
-            p.end()
-            img.save(str(out_path), "PNG")
-            return None
-        except Exception as e2:
-            return f"Thumbnail export failed: {e2}"
-
-
-def _export_glb(
-    doc, out_path: Path, preset: Dict[str, Any], part_name: str = "model"
-) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
-    """
-    Export GLB mesh artifact. Best-effort across FreeCAD versions.
-    Returns (error_msg, mesh_stats).
-    
-    Args:
-        doc: FreeCAD document
-        out_path: Output path for model file (base path; extensions vary)
-        preset: Export preset configuration
-        part_name: Name of the part for file naming (used in .obj/.stl filenames)
-    """
-    try:
-        import FreeCAD
-        import Mesh
-        import MeshPart
-    except Exception as e:
-        return f"Mesh module unavailable: {e}", None
-
-    # Gather objects to export
-    try:
-        export_obj = doc.getObject("Export")
-        if export_obj and getattr(export_obj, "Shape", None):
-            objs = [export_obj]
-        else:
-            objs = [
-                o for o in doc.Objects
-                if getattr(o, "Shape", None)
-                and getattr(getattr(o, "ViewObject", None), "Visibility", True)
-            ]
-    except Exception as e:
-        return f"No exportable objects: {e}", None
-
-    if not objs:
-        return "No visible shapes to export", None
-
-    # Mesh settings from preset
-    mesh_cfg = preset.get("mesh", {})
-    lin_def = float(mesh_cfg.get("linearDeflection", 0.1))
-    ang_def = float(mesh_cfg.get("angularDeflectionDeg", 15))
-    relative = bool(mesh_cfg.get("relative", False))
-
-    # Create mesh (tessellate shapes) using MeshPart.meshFromShape
-    try:
-        mesh_doc = FreeCAD.newDocument("__mesh_temp__", temp=True)
-        for obj in objs:
-            try:
-                shp = obj.Shape
-                mesh_obj = mesh_doc.addObject("Mesh::Feature", "MeshExport")
-                mesh_obj.Mesh = MeshPart.meshFromShape(
-                    Shape=shp,
-                    LinearDeflection=lin_def,
-                    AngularDeflection=ang_def,
-                    Relative=relative,
-                )
-            except Exception as e_tess:
-                log.debug(f"Tessellate failed for object {getattr(obj,'Name','?')}: {e_tess}")
-                continue
-        # Best-effort recompute
-        try:
-            mesh_doc.recompute()
-        except Exception:
-            pass
-    except Exception as e:
-        return f"Mesh tessellation failed: {e}", None
-
-    # Compute stats
-    stats = None
-    try:
-        total_tri = 0
-        total_vert = 0
-        for o in mesh_doc.Objects:
-            if hasattr(o, "Mesh"):
-                m = o.Mesh
-                total_tri += m.CountFacets
-                total_vert += m.CountPoints
-        if total_tri > 0 or total_vert > 0:
-            stats = {"triangles": total_tri, "vertices": total_vert}
-    except Exception:
-        pass
-
-    # Export to GLB
-    try:
-        # Get mesh feature objects to export (Mesh::Feature)
-        mesh_objs = [o for o in mesh_doc.Objects if hasattr(o, "Mesh")]
-        if not mesh_objs:
-            FreeCAD.closeDocument(mesh_doc.Name)
-            return "No mesh objects to export", stats
-
-        # Default: export as OBJ using Mesh.export on Mesh::Feature objects
-        try:
-            obj_path = out_path.with_suffix(".obj")
-            stl_path = out_path.with_suffix(".stl")
-            glb_path = out_path.with_suffix(".glb")
-            # Clean old artifacts to avoid stale files (Windows-safe overwrite)
-            for old in (obj_path, stl_path, glb_path):
-                try:
-                    if old.exists():
-                        old.unlink()
-                except Exception:
-                    pass
-            Mesh.export(mesh_objs, str(obj_path))
-            FreeCAD.closeDocument(mesh_doc.Name)
-            if obj_path.exists() and obj_path.stat().st_size > 0:
-                # OBJ success; convert to STL for GitHub preview support
-                try:
-                    stl_err = obj_to_stl(obj_path, stl_path)
-                    if stl_err:
-                        log.debug(f"STL conversion failed: {stl_err}")
-                    else:
-                        log.debug(f"STL conversion succeeded: {stl_path}")
-                except Exception as e_stl:
-                    log.debug(f"STL conversion error: {e_stl}")
-                # Return OBJ success regardless of STL conversion (STL is bonus)
-                return None, stats
-            else:
-                raise Exception("OBJ export failed")
-        except Exception as e_obj:
-            log.debug(f"OBJ export failed: {e_obj}")
-
-        # Secondary: try importGLTF (FreeCAD 0.21+) for GLB
-        try:
-            import importGLTF
-
-            if not hasattr(importGLTF, 'export') or not callable(importGLTF.export):
-                raise Exception("importGLTF.export not available")
-
-            importGLTF.export(mesh_objs, str(out_path))
-
-            if out_path.exists() and out_path.stat().st_size > 100:
-                with open(out_path, 'rb') as f:
-                    if f.read(4) != b'glTF':
-                        out_path.unlink()
-                        raise Exception("Invalid GLB header")
-
-                # GLB success
-                FreeCAD.closeDocument(mesh_doc.Name)
-                return None, stats
-            else:
-                raise Exception("GLB file missing or too small")
-        except Exception as e_glb:
-            log.debug(f"GLB export failed: {e_glb}")
-            if out_path.exists():
-                try:
-                    out_path.unlink()
-                except Exception:
-                    pass
-
-        # Last resort: export STL
-        try:
-            stl_path = out_path.with_suffix(".stl")
-            Mesh.export(mesh_objs, str(stl_path))
-            FreeCAD.closeDocument(mesh_doc.Name)
-            if stl_path.exists() and stl_path.stat().st_size > 0:
-                # STL success; return warning to indicate fallback
-                return "GLB export not available; exported STL instead", stats
-            else:
-                return "STL export failed", stats
-        except Exception as e_stl:
-            FreeCAD.closeDocument(mesh_doc.Name)
-            return f"Mesh export failed: {e_stl}", stats
-
-    except Exception as e:
-        try:
-            FreeCAD.closeDocument(mesh_doc.Name)
-        except Exception:
-            pass
-        return f"GLB export error: {e}", stats
-
-
 def export_active_document(repo_root: str) -> ExportResult:
     """
     Export previews for the active FreeCAD document.
     Returns ExportResult with file paths and any thumbnail error.
     """
     try:
-        doc, view = _doc_and_view()
+        doc, view = doc_and_view()
         if not doc:
             return ExportResult(
                 ok=False,
@@ -738,8 +165,8 @@ def export_active_document(repo_root: str) -> ExportResult:
                 orig_style = None
             try:
                 # Always apply deterministic view before capture
-                _set_view_for_thumbnail(view, preset)
-                thumb_err = _save_thumbnail(view, preset, png_path)
+                set_view_for_thumbnail(view, preset)
+                thumb_err = save_thumbnail(view, preset, png_path)
             finally:
                 try:
                     if orig_cam:
@@ -755,7 +182,7 @@ def export_active_document(repo_root: str) -> ExportResult:
             thumb_err = "Thumbnail requires FreeCAD GUI"
 
         # GLB Export (Sprint 7)
-        glb_err, mesh_stats = _export_glb(doc, glb_path, preset, part_name)
+        glb_err, mesh_stats = export_glb(doc, glb_path, preset, part_name)
         
         # Determine which model file actually exists (prefer OBJ; STL as converted)
         # OBJ and GLB stay in the part folder
@@ -820,7 +247,7 @@ def export_active_document(repo_root: str) -> ExportResult:
                 max_backups = existing_data.get("maxBackups", 3)
             except Exception:
                 pass
-        _move_fcbak_to_previews(Path(file_name), out_dir, part_name, max_backups)
+        move_fcbak_to_previews(Path(file_name), out_dir, part_name, max_backups)
         
         # Only warn if we had to fall back to STL or nothing was created
         if not model_file:
@@ -833,7 +260,7 @@ def export_active_document(repo_root: str) -> ExportResult:
 
         # Manifest JSON
         # Stats (best effort)
-        bbox = _compute_bbox_mm(doc)
+        bbox = compute_bbox_mm(doc)
         precision = int(preset.get("stats", {}).get("precision", 2))
         if bbox:
             stats_bbox = [
@@ -845,7 +272,7 @@ def export_active_document(repo_root: str) -> ExportResult:
             stats_bbox = [None, None, None]
 
         # Source hash
-        src_hash = _sha256_file(Path(file_name))
+        src_hash = sha256_file(Path(file_name))
         
         # Load existing maxBackups setting from previous JSON if it exists
         max_backups = 3  # Default value
@@ -866,7 +293,7 @@ def export_active_document(repo_root: str) -> ExportResult:
                 "at": datetime.now(timezone.utc).isoformat(),
             },
             "maxBackups": max_backups,
-            "freecadVersion": _freecad_version_string(),
+            "freecadVersion": freecad_version_string(),
             "exportPreset": preset,
             "stats": {
                 "bboxMm": stats_bbox,

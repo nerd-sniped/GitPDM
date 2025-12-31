@@ -28,8 +28,8 @@ def test_fcbak_timing():
         fcbak_file.write_text('backup content')
         
         # Import the function
-        from freecad_gitpdm.export.exporter import _move_fcbak_to_previews
-        result = _move_fcbak_to_previews(fcstd_file, preview_dir, 'BRK-001')
+        from freecad_gitpdm.export.backup_manager import move_fcbak_to_previews
+        result = move_fcbak_to_previews(fcstd_file, preview_dir, 'BRK-001')
         
         print(f'  Result: {result}')
         print(f'  FCBak in source: {fcbak_file.exists()}')
@@ -49,7 +49,7 @@ def test_fcbak_timing():
         thread = threading.Thread(target=create_delayed)
         thread.start()
         
-        result2 = _move_fcbak_to_previews(fcstd_file2, preview_dir, 'test2')
+        result2 = move_fcbak_to_previews(fcstd_file2, preview_dir, 'test2')
         thread.join()
         
         print(f'  Result: {result2}')
@@ -62,7 +62,7 @@ def test_fcbak_timing():
         fcstd_file3.write_text('test')
         # Don't create FCBak - simulates when FreeCAD doesn't create one
         
-        result3 = _move_fcbak_to_previews(fcstd_file3, preview_dir, 'test3')
+        result3 = move_fcbak_to_previews(fcstd_file3, preview_dir, 'test3')
         
         print(f'  Result: {result3}')
         print(f'  (This is expected - no FCBak to move)')
