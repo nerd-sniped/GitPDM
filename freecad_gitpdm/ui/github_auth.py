@@ -175,8 +175,13 @@ class GitHubAuthHandler:
         """Handle Disconnect GitHub button click."""
         reply = QtWidgets.QMessageBox.question(
             self.panel,
-            "Disconnect GitHub",
-            "Remove GitHub credentials from this computer?",
+            "Disconnect from GitHub?",
+            "This will sign you out of GitHub on this computer.\n\n"
+            "You'll need to sign in again if you want to:\n"
+            "  \u2022 Create new projects\n"
+            "  \u2022 Share changes with your team\n"
+            "  \u2022 Download team projects\n\n"
+            "Are you sure you want to disconnect?",
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
         )
 
@@ -207,8 +212,9 @@ class GitHubAuthHandler:
             # Show success message
             QtWidgets.QMessageBox.information(
                 self.panel,
-                "GitHub Disconnected",
-                "GitHub credentials have been removed.",
+                "Disconnected from GitHub",
+                "You've been signed out successfully.\n\n"
+                "To use GitHub features again, click 'Connect GitHub'.",
             )
 
             log.info("GitHub disconnected")
@@ -351,32 +357,52 @@ class GitHubAuthHandler:
         layout.setSpacing(12)
         layout.setContentsMargins(12, 12, 12, 12)
 
-        # Instructions
+        # Instructions with numbered steps
         instructions = QtWidgets.QLabel()
         instructions.setWordWrap(True)
         instructions.setText(
-            "We opened a GitHub page in your browser.\n"
-            "Enter this code on the GitHub page:"
+            "<b>Connect to GitHub - Follow these steps:</b><br><br>"
+            "<b>Step 1:</b> We've copied a code for you (see below)<br>"
+            "<b>Step 2:</b> A GitHub page should open in your browser<br>"
+            "<b>Step 3:</b> Paste the code on that page and authorize<br>"
+            "<b>Step 4:</b> Come back here and wait - we'll connect automatically!"
         )
         layout.addWidget(instructions)
 
         # Code display (large, monospace)
+        code_container = QtWidgets.QWidget()
+        code_layout = QtWidgets.QVBoxLayout()
+        code_layout.setSpacing(4)
+        code_container.setLayout(code_layout)
+        
+        code_title = QtWidgets.QLabel("Your Authorization Code:")
+        code_title.setStyleSheet("font-weight: bold; color: #555;")
+        code_layout.addWidget(code_title)
+        
         code_label = QtWidgets.QLabel(device_code_response.user_code)
         code_font = QtGui.QFont("Courier")
-        code_font.setPointSize(16)
+        code_font.setPointSize(18)
         code_font.setBold(True)
         code_label.setFont(code_font)
         code_label.setAlignment(QtCore.Qt.AlignCenter)
         code_label.setStyleSheet(
-            "color: darkblue; border: 1px solid gray; padding: 8px;"
+            "color: #0066cc; background-color: #f0f0f0; "
+            "border: 2px solid #0066cc; border-radius: 4px; padding: 12px;"
         )
         code_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        layout.addWidget(code_label)
+        code_layout.addWidget(code_label)
+        
+        hint_label = QtWidgets.QLabel("\u2713 Code already copied to clipboard - just paste it!")
+        hint_label.setStyleSheet("color: green; font-style: italic; font-size: 10px;")
+        hint_label.setAlignment(QtCore.Qt.AlignCenter)
+        code_layout.addWidget(hint_label)
+        
+        layout.addWidget(code_container)
 
         # Status label
-        self._oauth_status_label = QtWidgets.QLabel("Waiting for authorization…")
+        self._oauth_status_label = QtWidgets.QLabel("Waiting for you to authorize on GitHub...")
         self._oauth_status_label.setStyleSheet(
-            "color: orange; font-style: italic;"
+            "color: orange; font-style: italic; font-size: 11px;"
         )
         self._oauth_status_label.setAlignment(QtCore.Qt.AlignCenter)
         layout.addWidget(self._oauth_status_label)
@@ -385,13 +411,15 @@ class GitHubAuthHandler:
         buttons_layout = QtWidgets.QHBoxLayout()
         buttons_layout.setSpacing(6)
 
-        copy_btn = QtWidgets.QPushButton("Copy Code")
+        copy_btn = QtWidgets.QPushButton("Copy Code Again")
+        copy_btn.setToolTip("Copy the authorization code to your clipboard")
         copy_btn.clicked.connect(
             lambda: self._copy_to_clipboard(device_code_response.user_code)
         )
         buttons_layout.addWidget(copy_btn)
 
         open_btn = QtWidgets.QPushButton("Open GitHub Page")
+        open_btn.setToolTip("Open the GitHub authorization page in your browser")
         open_btn.clicked.connect(
             lambda: self._open_verification_uri(
                 device_code_response.verification_uri
@@ -400,6 +428,7 @@ class GitHubAuthHandler:
         buttons_layout.addWidget(open_btn)
 
         cancel_btn = QtWidgets.QPushButton("Cancel")
+        cancel_btn.setToolTip("Stop trying to connect to GitHub")
         cancel_btn.clicked.connect(self._on_oauth_dialog_cancel)
         buttons_layout.addWidget(cancel_btn)
 
@@ -507,12 +536,13 @@ class GitHubAuthHandler:
                 # Show critical warning to user
                 QtWidgets.QMessageBox.critical(
                     self.panel,
-                    "Credential Storage Failed",
-                    "Unable to securely store your GitHub credentials.\n\n"
-                    "This may be because Windows Credential Manager is unavailable "
-                    "or access was denied.\n\n"
-                    "Your token cannot be saved and you will need to reconnect "
-                    "each time you restart FreeCAD.\n\n"
+                    "Couldn't Save Your Sign-In",
+                    "We connected to GitHub, but couldn't save your sign-in \n"
+                    "information on your computer.\n\n"
+                    "This might be because:\n"
+                    "  \u2022 Windows security settings blocked it\n"
+                    "  \u2022 You don't have admin permissions\n\n"
+                    "You'll need to sign in again next time you open FreeCAD.\n\n"
                     f"Technical details: {storage_err}",
                 )
                 
@@ -534,7 +564,12 @@ class GitHubAuthHandler:
 
             # Show success message
             QtWidgets.QMessageBox.information(
-                self.panel, "GitHub Connected", "Successfully connected to GitHub!"
+                self.panel, "\u2713 Connected to GitHub!", 
+                "Great! You're now connected to GitHub.\n\n"
+                "You can now:\n"
+                "  \u2022 Create new projects\n"
+                "  \u2022 Share your work with your team\n"
+                "  \u2022 Download team projects"
             )
 
             log.info("GitHub OAuth flow completed successfully")
@@ -568,17 +603,17 @@ class GitHubAuthHandler:
                     log.info("OAuth flow cancelled")
                     return
                 elif error.error_code == "expired_token":
-                    msg = "Device code expired. Please try again."
+                    msg = "The authorization code expired.\n\nPlease try connecting again."
                 elif error.error_code == "access_denied":
-                    msg = "GitHub access was denied. Please try again."
+                    msg = "You didn't authorize access on GitHub.\n\nIf you want to connect, try again and approve the authorization."
                 else:
-                    msg = f"GitHub error: {error.error_code}"
+                    msg = f"GitHub reported an error: {error.error_code}\n\nTry connecting again."
             else:
-                msg = f"Connection error: {str(error)}"
+                msg = f"Couldn't connect to GitHub.\n\nMake sure you're connected to the internet and try again."
 
             log.error(f"OAuth error: {msg}")
             QtWidgets.QMessageBox.warning(
-                self.panel, "GitHub Connection Failed", msg
+                self.panel, "Couldn't Connect to GitHub", msg
             )
         except Exception as e:
             log.error_safe("Error handling token poll error", e)

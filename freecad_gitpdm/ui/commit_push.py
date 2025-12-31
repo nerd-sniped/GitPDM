@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Commit/Push Handler Module
-Sprint 4: Extracted from panel.py to manage commit, push, and publish operations.
+Sprint 4: Extracted from panel.py to manage commit and push operations.
 """
 
 # Qt compatibility layer
@@ -22,13 +22,12 @@ from freecad_gitpdm.ui import dialogs
 
 class CommitPushHandler:
     """
-    Handles commit, push, and publish operations.
+    Handles commit and push operations.
     
     Manages:
     - Commit workflow (stage, commit)
     - Push workflow (with upstream handling)
     - Combined commit & push sequence
-    - Publish workflow (export previews, commit, push)
     - Identity error dialogs
     - Behind upstream warnings
     """
@@ -54,16 +53,13 @@ class CommitPushHandler:
     # ========== Public API ==========
     
     def commit_push_clicked(self):
-        """Handle Commit & Push / Publish button click (routes to appropriate flow)."""
+        """Handle Commit & Push button click (routes to appropriate flow)."""
         if self._parent._workflow_mode == 'both':
             self.start_commit_push_sequence()
         elif self._parent._workflow_mode == 'commit':
             self.commit_clicked()
         elif self._parent._workflow_mode == 'push':
             self.push_clicked()
-        elif self._parent._workflow_mode == 'publish':
-            # Delegate to parent's publish flow
-            self._parent._on_publish_clicked()
     
     def commit_clicked(self):
         """Handle Commit button click."""
@@ -197,15 +193,13 @@ class CommitPushHandler:
         """Update the commit/push button to its default label based on workflow mode."""
         mode = self._parent._workflow_mode
         if mode == 'both':
-            self._parent.commit_push_btn.setText("Commit & Push")
+            self._parent.commit_push_btn.setText("Commit and Push")
         elif mode == 'commit':
             self._parent.commit_push_btn.setText("Commit")
         elif mode == 'push':
             self._parent.commit_push_btn.setText("Push")
-        elif mode == 'publish':
-            self._parent.commit_push_btn.setText("Publish")
         else:
-            self._parent.commit_push_btn.setText("Commit & Push")
+            self._parent.commit_push_btn.setText("Commit and Push")
 
     def is_busy(self):
         """Check if commit or push operation is in progress."""

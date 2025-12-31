@@ -141,8 +141,12 @@ class BranchOperationsHandler:
             stderr = result.get("stderr", "Unknown error")
             QtWidgets.QMessageBox.warning(
                 self._parent,
-                "Create Branch Failed",
-                f"Failed to create branch '{branch_name}':\n\n{stderr}"
+                "Couldn't Create Work Version",
+                f"We couldn't create the work version '{branch_name}'.\n\n"
+                f"This might be because:\n"
+                f"  \u2022 A version with that name already exists\n"
+                f"  \u2022 The name contains invalid characters\n\n"
+                f"Technical details: {stderr}"
             )
             self._pending_publish_new_branch = None
             return
@@ -157,8 +161,10 @@ class BranchOperationsHandler:
         log.error(f"Failed to create branch '{branch_name}': {error_msg}")
         QtWidgets.QMessageBox.warning(
             self._parent,
-            "Create Branch Failed",
-            f"Failed to create branch '{branch_name}':\n\n{error_msg}"
+            "Couldn't Create Work Version",
+            f"We couldn't create the work version '{branch_name}'.\n\n"
+            f"Try using a different name or ask someone familiar with Git for help.\n\n"
+            f"Technical details: {error_msg}"
         )
         self._pending_publish_new_branch = None
 
@@ -199,18 +205,22 @@ class BranchOperationsHandler:
         if branch_name == current_branch:
             QtWidgets.QMessageBox.warning(
                 self._parent,
-                "Cannot Delete Branch",
-                f"Cannot delete the current branch '{branch_name}'.\n"
-                "Switch to another branch first."
+                "Can't Delete Current Version",
+                f"You can't delete the work version you're currently using.\n\n"
+                f"To delete '{branch_name}':\n"
+                f"1. Switch to a different work version first\n"
+                f"2. Then come back and delete this one"
             )
             return
         
         # Confirm deletion
         reply = QtWidgets.QMessageBox.question(
             self._parent,
-            "Delete Branch",
-            f"Are you sure you want to delete branch '{branch_name}'?\n\n"
-            "This operation cannot be undone.",
+            "Delete Work Version?",
+            f"Are you sure you want to permanently delete '{branch_name}'?\n\n"
+            f"<b>Warning:</b> This cannot be undone!\n\n"
+            f"Any work you've done in this version that hasn't been shared\n"
+            f"to GitHub will be lost forever.",
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
             QtWidgets.QMessageBox.No
         )
@@ -246,10 +256,12 @@ class BranchOperationsHandler:
             if "not fully merged" in stderr.lower():
                 reply = QtWidgets.QMessageBox.question(
                     self._parent,
-                    "Force Delete Branch",
-                    f"Branch '{branch_name}' is not fully merged.\n\n"
-                    "Do you want to force delete it? "
-                    "Unmerged changes will be lost.",
+                    "This Version Has Unshared Work",
+                    f"The work version '{branch_name}' contains changes that haven't\n"
+                    f"been shared to GitHub or merged with your main version.\n\n"
+                    f"<b>If you delete it now, those changes will be lost forever.</b>\n\n"
+                    f"Do you still want to delete it?\n\n"
+                    f"(If you're not sure, click No and ask someone familiar with Git for help)",
                     QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
                     QtWidgets.QMessageBox.No
                 )
@@ -319,14 +331,22 @@ class BranchOperationsHandler:
         """Show quick guidance for setting up per-branch git worktrees."""
         example_path = os.path.normpath(os.path.join(self._parent._current_repo_root or "..", "repo-feature"))
         msg = (
-            "Use git worktree to give each branch its own folder. This avoids FCStd corruption "
-            "from branch switches while files are open.\n\n"
-            "Example commands:\n"
-            f"  git worktree add {example_path} feature\n"
-            "  git worktree add ../repo-main main\n\n"
-            "Open the matching worktree folder in FreeCAD for the branch you are editing."
+            "<b>What are Work Version Folders?</b>\n\n"
+            "Instead of switching between work versions in the same folder \n"
+            "(which can corrupt open files), you can give each work version \n"
+            "its own separate folder.\n\n"
+            "<b>Why use them?</b>\n"
+            "  \u2022 Each version has its own folder\n"
+            "  \u2022 No risk of corrupting files when switching\n"
+            "  \u2022 You can have multiple versions open at once\n\n"
+            "<b>How to set up:</b>\n"
+            "This requires some Git knowledge. Ask a team member who knows Git \n"
+            "to help you set up worktrees, or see the documentation.\n\n"
+            f"<i>Git term: 'worktree' - a linked working directory for a branch</i>\n\n"
+            f"<i>Example command (for Git users):</i>\n"
+            f"  git worktree add {example_path} feature"
         )
-        QtWidgets.QMessageBox.information(self._parent, "Use Git Worktrees", msg)
+        QtWidgets.QMessageBox.information(self._parent, "About Work Version Folders", msg)
 
     def branch_combo_changed(self, index):
         """Handle branch combo box selection change."""

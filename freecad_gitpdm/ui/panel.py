@@ -228,17 +228,25 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         row.setSpacing(6)
         container.setLayout(row)
 
-        msg_label = QtWidgets.QLabel("Commit message:")
+        msg_label = QtWidgets.QLabel("What changed:")
         self._set_meta_label(msg_label, "gray")
         row.addWidget(msg_label)
 
         self.compact_commit_message = QtWidgets.QLineEdit()
-        self.compact_commit_message.setPlaceholderText("Describe your changes")
+        self.compact_commit_message.setPlaceholderText("Example: Updated wheel design, Fixed bracket")
+        self.compact_commit_message.setToolTip(
+            "Describe what you changed to help you remember later\n"
+            "(Git term: 'commit message')"
+        )
         self.compact_commit_message.textChanged.connect(self._on_commit_message_changed)
         row.addWidget(self.compact_commit_message, 1)
 
-        self.compact_commit_btn = QtWidgets.QPushButton("Commit")
+        self.compact_commit_btn = QtWidgets.QPushButton("Save Version")
         self.compact_commit_btn.setEnabled(False)
+        self.compact_commit_btn.setToolTip(
+            "Save a checkpoint of your current work\n"
+            "(Git term: 'commit' - creates a saved snapshot)"
+        )
         self.compact_commit_btn.clicked.connect(self._commit_push.commit_clicked)
         row.addWidget(self.compact_commit_btn)
 
@@ -491,7 +499,11 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         path_layout.setSpacing(4)
         self.repo_path_field = QtWidgets.QLineEdit()
         self.repo_path_field.setPlaceholderText(
-            "Select repository folder..."
+            "Select your project folder..."
+        )
+        self.repo_path_field.setToolTip(
+            "The folder where your FreeCAD project files are stored\n"
+            "(Git term: 'repository' or 'repo' - the project folder tracked by Git)"
         )
         self.repo_path_field.editingFinished.connect(
             self._on_repo_path_editing_finished
@@ -499,14 +511,26 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         path_layout.addWidget(self.repo_path_field)
 
         browse_btn = QtWidgets.QPushButton("Browse...")
+        browse_btn.setToolTip(
+            "Select an existing project folder on your computer\n"
+            "(Git term: open a local 'repository')"
+        )
         browse_btn.clicked.connect(self._on_browse_clicked)
         path_layout.addWidget(browse_btn)
 
-        clone_btn = QtWidgets.QPushButton("Open/Clone Repo…")
+        clone_btn = QtWidgets.QPushButton("Join Team Project…")
+        clone_btn.setToolTip(
+            "Download a project from GitHub to work on with your team\n"
+            "(Git term: 'clone' - makes a local copy of a remote repository)"
+        )
         clone_btn.clicked.connect(self._on_open_clone_repo_clicked)
         path_layout.addWidget(clone_btn)
 
-        new_repo_btn = QtWidgets.QPushButton("New Repo…")
+        new_repo_btn = QtWidgets.QPushButton("Start New Project…")
+        new_repo_btn.setToolTip(
+            "Create a brand new project and store it on GitHub\n"
+            "(Git term: 'init' + create remote 'repository')"
+        )
         new_repo_btn.clicked.connect(self._on_new_repo_clicked)
         path_layout.addWidget(new_repo_btn)
 
@@ -721,11 +745,19 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.working_tree_label.setTextInteractionFlags(
             QtCore.Qt.TextSelectableByMouse
         )
+        self.working_tree_label.setToolTip(
+            "Files you've modified but haven't saved as a version yet\n"
+            "(Git term: 'working tree status' or 'dirty/clean state')"
+        )
         self._set_strong_label(self.working_tree_label, "black")
 
         self.ahead_behind_label = QtWidgets.QLabel("—")
         self.ahead_behind_label.setTextInteractionFlags(
             QtCore.Qt.TextSelectableByMouse
+        )
+        self.ahead_behind_label.setToolTip(
+            "How many changes you need to share or get from your team\n"
+            "(Git term: 'ahead/behind' - commits to push/pull)"
         )
         self._set_strong_label(self.ahead_behind_label, "black")
 
@@ -733,11 +765,19 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.branch_label.setTextInteractionFlags(
             QtCore.Qt.TextSelectableByMouse
         )
+        self.branch_label.setToolTip(
+            "The work version you're currently using\n"
+            "(Git term: 'current branch' - active line of development)"
+        )
         self._set_meta_label(self.branch_label, "gray")
 
         self.upstream_label = QtWidgets.QLabel("—")
         self.upstream_label.setTextInteractionFlags(
             QtCore.Qt.TextSelectableByMouse
+        )
+        self.upstream_label.setToolTip(
+            "The GitHub version your work is synced with\n"
+            "(Git term: 'upstream' or 'tracking branch' - remote reference)"
         )
         self._set_meta_label(self.upstream_label, "gray")
 
@@ -745,13 +785,17 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.last_fetch_label.setTextInteractionFlags(
             QtCore.Qt.TextSelectableByMouse
         )
+        self.last_fetch_label.setToolTip(
+            "When you last checked for updates from your team\n"
+            "(Git term: 'last fetch time')"
+        )
         self._set_meta_label(self.last_fetch_label, "gray")
 
-        add_field(0, 0, "Working tree", self.working_tree_label)
-        add_field(0, 1, "Ahead/Behind", self.ahead_behind_label)
-        add_field(0, 2, "Branch", self.branch_label)
-        add_field(1, 0, "Upstream", self.upstream_label)
-        add_field(1, 1, "Last fetch", self.last_fetch_label)
+        add_field(0, 0, "Your Changes", self.working_tree_label)
+        add_field(0, 1, "Sync Status", self.ahead_behind_label)
+        add_field(0, 2, "Work Version", self.branch_label)
+        add_field(1, 0, "GitHub Version", self.upstream_label)
+        add_field(1, 1, "Last checked", self.last_fetch_label)
 
         group_layout.addLayout(grid_layout)
 
@@ -803,15 +847,30 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         actions_layout = QtWidgets.QHBoxLayout()
         actions_layout.setSpacing(4)
 
-        self.new_branch_btn = QtWidgets.QPushButton("New Branch…")
+        self.new_branch_btn = QtWidgets.QPushButton("New Work Version…")
+        self.new_branch_btn.setToolTip(
+            "Create a new version to try different design ideas\n"
+            "(Like creating a new save file in a video game)\n\n"
+            "Git term: 'branch' - an independent line of development"
+        )
         self.new_branch_btn.clicked.connect(self._branch_ops.new_branch_clicked)
         actions_layout.addWidget(self.new_branch_btn)
 
-        self.switch_branch_btn = QtWidgets.QPushButton("Switch")
+        self.switch_branch_btn = QtWidgets.QPushButton("Switch Version")
+        self.switch_branch_btn.setToolTip(
+            "Switch to a different work version\n"
+            "(Like loading a different save file)\n\n"
+            "Git term: 'checkout' or 'switch' - changes which branch you're working on"
+        )
         self.switch_branch_btn.clicked.connect(self._branch_ops.switch_branch_clicked)
         actions_layout.addWidget(self.switch_branch_btn)
 
-        self.delete_branch_btn = QtWidgets.QPushButton("Delete…")
+        self.delete_branch_btn = QtWidgets.QPushButton("Delete Version…")
+        self.delete_branch_btn.setToolTip(
+            "Permanently delete a work version you no longer need\n"
+            "(Can't be undone - be careful!)\n\n"
+            "Git term: 'delete branch' - removes a branch permanently"
+        )
         self.delete_branch_btn.clicked.connect(self._branch_ops.delete_branch_clicked)
         actions_layout.addWidget(self.delete_branch_btn)
 
@@ -819,9 +878,11 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         worktree_help_layout = QtWidgets.QHBoxLayout()
         worktree_help_layout.addStretch()
-        self.worktree_help_btn = QtWidgets.QPushButton("Worktree Help")
+        self.worktree_help_btn = QtWidgets.QPushButton("About Work Versions")
         self.worktree_help_btn.setToolTip(
-            "Use per-branch worktrees so each branch has its own folder."
+            "Learn how to keep each work version in its own folder\n"
+            "to prevent file corruption (recommended for complex projects)\n\n"
+            "Git term: 'worktree' - gives each branch its own directory"
         )
         self.worktree_help_btn.clicked.connect(self._branch_ops.worktree_help_clicked)
         worktree_help_layout.addWidget(self.worktree_help_btn)
@@ -846,11 +907,14 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         group.setLayout(group_layout)
 
         info_label = QtWidgets.QLabel(
-            "Working tree changes detected by git status." 
-            " Use Stage all to include them in commits."
+            "These files have been modified since your last save checkpoint."
         )
         info_label.setWordWrap(True)
         info_label.setStyleSheet("color: gray; font-style: italic;")
+        info_label.setToolTip(
+            "Files that you've changed and haven't saved as a version yet\n"
+            "(Git term: 'working tree' or 'unstaged changes' - modified but not committed)"
+        )
         group_layout.addWidget(info_label)
 
         self.changes_list = QtWidgets.QListWidget()
@@ -861,9 +925,13 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         stage_layout = QtWidgets.QHBoxLayout()
         stage_layout.setSpacing(4)
-        self.stage_all_checkbox = QtWidgets.QCheckBox("Stage all changes")
+        self.stage_all_checkbox = QtWidgets.QCheckBox("Include all changed files")
         self.stage_all_checkbox.setChecked(True)
         self.stage_all_checkbox.setEnabled(False)
+        self.stage_all_checkbox.setToolTip(
+            "When saving, include all files you've modified (recommended)\n"
+            "(Git term: 'stage' or 'add' - marks files to include in the next commit)"
+        )
         self.stage_all_checkbox.stateChanged.connect(
             self._update_button_states
         )
@@ -889,13 +957,21 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         row1_layout = QtWidgets.QHBoxLayout()
         row1_layout.setSpacing(4)
-        self.fetch_btn = QtWidgets.QPushButton("Fetch")
+        self.fetch_btn = QtWidgets.QPushButton("Check for Updates")
         self.fetch_btn.setEnabled(False)
+        self.fetch_btn.setToolTip(
+            "Check if your team has shared new changes on GitHub\n"
+            "(Git term: 'fetch' - downloads info about remote changes without applying them)"
+        )
         self.fetch_btn.clicked.connect(self._fetch_pull.fetch_clicked)
         row1_layout.addWidget(self.fetch_btn)
 
-        self.pull_btn = QtWidgets.QPushButton("Pull")
+        self.pull_btn = QtWidgets.QPushButton("Get Updates")
         self.pull_btn.setEnabled(False)
+        self.pull_btn.setToolTip(
+            "Download and apply changes from your team\n"
+            "(Git term: 'pull' - combines fetch + merge to update your local files)"
+        )
         self.pull_btn.clicked.connect(self._fetch_pull.pull_clicked)
         row1_layout.addWidget(self.pull_btn)
 
@@ -908,15 +984,23 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         extra_layout.setSpacing(4)
         self._actions_extra_container.setLayout(extra_layout)
 
-        msg_label = QtWidgets.QLabel("Commit message:")
+        msg_label = QtWidgets.QLabel("Describe what you changed:")
         msg_label.setStyleSheet("font-weight: bold;")
+        msg_label.setToolTip(
+            "Write a short description to help you and your team remember what changed\n"
+            "(Git term: 'commit message' - describes what's in this checkpoint)"
+        )
         extra_layout.addWidget(msg_label)
 
         self.commit_message = QtWidgets.QPlainTextEdit()
         self.commit_message.setPlaceholderText(
-            "Describe your changes before committing"
+            "Example: Updated wheel design, Fixed mounting bracket dimensions, Added new parts..."
         )
         self.commit_message.setMaximumHeight(70)
+        self.commit_message.setToolTip(
+            "Describe what you changed in this version. Be specific so you can find this version later!\n"
+            "(This creates a 'commit' - a saved checkpoint in your project's history)"
+        )
         self.commit_message.textChanged.connect(
             self._on_commit_message_changed
         )
@@ -925,9 +1009,13 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         row2_layout = QtWidgets.QHBoxLayout()
         row2_layout.setSpacing(4)
         
-        # Combined Commit & Push / Publish button (regular push button)
-        self.commit_push_btn = QtWidgets.QPushButton("Commit & Push")
+        # Combined Commit & Push button (regular push button)
+        self.commit_push_btn = QtWidgets.QPushButton("Commit and Push")
         self.commit_push_btn.setEnabled(False)
+        self.commit_push_btn.setToolTip(
+            "Save your work and share it with your team on GitHub\n"
+            "(Git terms: 'commit' = save checkpoint, 'push' = upload to GitHub)"
+        )
         self.commit_push_btn.clicked.connect(
             self._commit_push.commit_push_clicked
         )
@@ -935,7 +1023,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # Dropdown menu for workflow selection
         self.workflow_menu = QtWidgets.QMenu(self)
         self.workflow_action_both = self.workflow_menu.addAction(
-            "Commit & Push"
+            "Save & Share (recommended)"
         )
         self.workflow_action_both.setCheckable(True)
         self.workflow_action_both.setChecked(True)
@@ -943,25 +1031,17 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self._on_workflow_changed
         )
         self.workflow_action_commit = self.workflow_menu.addAction(
-            "Commit Only"
+            "Save Only (don't share yet)"
         )
         self.workflow_action_commit.setCheckable(True)
         self.workflow_action_commit.triggered.connect(
             self._on_workflow_changed
         )
         self.workflow_action_push = self.workflow_menu.addAction(
-            "Push Only"
+            "Share Only (already saved)"
         )
         self.workflow_action_push.setCheckable(True)
         self.workflow_action_push.triggered.connect(
-            self._on_workflow_changed
-        )
-        self.workflow_menu.addSeparator()
-        self.workflow_action_publish = self.workflow_menu.addAction(
-            "Publish Branch (with previews)"
-        )
-        self.workflow_action_publish.setCheckable(True)
-        self.workflow_action_publish.triggered.connect(
             self._on_workflow_changed
         )
         
@@ -973,7 +1053,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         workflow_menu_btn.setDefault(False)
         workflow_menu_btn.setFlat(True)
         workflow_menu_btn.setFixedWidth(24)
-        workflow_menu_btn.setToolTip("Select workflow: Commit & Push, Commit Only, Push Only, or Publish Branch")
+        workflow_menu_btn.setToolTip("Select workflow: Commit and Push (recommended), Commit only, or Push only")
         workflow_menu_btn.clicked.connect(
             lambda: self.workflow_menu.exec_(
                 workflow_menu_btn.mapToGlobal(
@@ -986,12 +1066,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         row2_layout.addWidget(workflow_menu_btn)
 
         extra_layout.addLayout(row2_layout)
-
-        self.stage_all_checkbox = QtWidgets.QCheckBox(
-            "Stage all changes during Publish"
-        )
-        self.stage_all_checkbox.setChecked(True)
-        extra_layout.addWidget(self.stage_all_checkbox)
 
         # Sprint 6: Generate Previews workflow
         previews_group = QtWidgets.QGroupBox("Previews")
@@ -1294,7 +1368,14 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 self._ahead_count = ahead
                 self._behind_count = behind
                 
-                ab_text = f"Ahead {ahead} / Behind {behind}"
+                if ahead == 0 and behind == 0:
+                    ab_text = "Up to date"
+                elif ahead > 0 and behind > 0:
+                    ab_text = f"{ahead} to share | {behind} to get"
+                elif ahead > 0:
+                    ab_text = f"{ahead} to share \u2191"
+                else:
+                    ab_text = f"{behind} to get \u2193"
                 
                 if ahead == 0 and behind == 0:
                     self._set_strong_label(
@@ -1416,19 +1497,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             commit_push_enabled = (
                 git_ok and repo_ok and self._cached_has_remote and not busy
                 and ((self._ahead_count > 0) or not upstream_ok)
-            )
-        elif self._workflow_mode == 'publish':
-            # Publish mode: needs valid repo, saved doc, and remote
-            doc_saved = False
-            try:
-                import FreeCAD
-                ad = FreeCAD.ActiveDocument
-                doc_saved = bool(getattr(ad, "FileName", ""))
-            except Exception:
-                doc_saved = False
-            commit_push_enabled = (
-                git_ok and repo_ok and doc_saved and self._cached_has_remote
-                and not busy
             )
         
         self.commit_push_btn.setEnabled(commit_push_enabled)
@@ -1800,20 +1868,20 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             status: dict - status summary from GitClient
         """
         if status["is_clean"]:
-            self.working_tree_label.setText("Clean")
+            self.working_tree_label.setText("No changes")
             self._set_strong_label(self.working_tree_label, "green")
         else:
             parts = []
             if status["modified"] > 0:
-                parts.append(f"M:{status['modified']}")
+                parts.append(f"{status['modified']} modified")
             if status["added"] > 0:
-                parts.append(f"A:{status['added']}")
+                parts.append(f"{status['added']} new")
             if status["deleted"] > 0:
-                parts.append(f"D:{status['deleted']}")
+                parts.append(f"{status['deleted']} deleted")
             if status["untracked"] > 0:
-                parts.append(f"U:{status['untracked']}")
+                parts.append(f"{status['untracked']} unsaved")
 
-            status_str = "Dirty (" + " ".join(parts) + ")"
+            status_str = " | ".join(parts)
             self.working_tree_label.setText(status_str)
             self._set_strong_label(self.working_tree_label, "orange")
 
@@ -1877,16 +1945,58 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._update_button_states()
     
     def _populate_changes_list(self):
-        """Update changes list widget with current file statuses."""
+        """Update changes list widget with current file statuses using friendly labels."""
         self.changes_list.clear()
 
         if not self._file_statuses:
             return
 
         for entry in self._file_statuses:
-            prefix = f"{entry.x}{entry.y}"
-            text = f"{prefix} {entry.path}"
+            # Convert Git status codes to user-friendly text with icons
+            status_text = self._friendly_status_text(entry.x, entry.y)
+            text = f"{status_text} {entry.path}"
             self.changes_list.addItem(text)
+    
+    def _friendly_status_text(self, x, y):
+        """
+        Convert Git status codes to friendly text with visual indicators.
+        
+        Args:
+            x: index status character
+            y: working tree status character
+            
+        Returns:
+            str: Friendly status text with icon/emoji
+        """
+        # Handle common two-character combinations first
+        code = f"{x}{y}"
+        
+        # Modified in working tree
+        if code in [" M", "MM", "AM"]:
+            return "📝 Modified"
+        
+        # New file (untracked or added)
+        if code in ["??", "A ", "AM"]:
+            return "➕ New"
+        
+        # Deleted
+        if code in [" D", "D ", "AD"]:
+            return "➖ Deleted"
+        
+        # Renamed
+        if code in ["R ", "RM"]:
+            return "📋 Renamed"
+        
+        # Copied
+        if code in ["C ", "CM"]:
+            return "📋 Copied"
+        
+        # Updated but unmerged (conflict)
+        if code in ["UU", "AA", "DD"]:
+            return "⚠️ Conflict"
+        
+        # Default: show the code if we don't recognize it
+        return f"[{code}]"
 
     def _on_workflow_changed(self):
         """Handle workflow selection change."""
@@ -1898,8 +2008,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self._workflow_mode = 'commit'
         elif sender == self.workflow_action_push:
             self._workflow_mode = 'push'
-        elif sender == self.workflow_action_publish:
-            self._workflow_mode = 'publish'
         
         # Update checkmarks
         self.workflow_action_both.setChecked(
@@ -1910,9 +2018,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         )
         self.workflow_action_push.setChecked(
             self._workflow_mode == 'push'
-        )
-        self.workflow_action_publish.setChecked(
-            self._workflow_mode == 'publish'
         )
         
         # Update button label and states for the new mode

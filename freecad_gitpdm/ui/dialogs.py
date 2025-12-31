@@ -41,9 +41,9 @@ class UncommittedChangesWarningDialog(QtWidgets.QDialog):
         main_layout.addWidget(icon)
 
         message = QtWidgets.QLabel(
-            "You have local changes.\n\n"
-            "Pull (fast-forward) may fail.\n"
-            "Consider committing or stashing first."
+            "You have unsaved changes in your project.\n\n"
+            "Getting updates from your team might not work until you save or undo your changes.\n\n"
+            "What would you like to do?"
         )
         message.setWordWrap(True)
         main_layout.addWidget(message)
@@ -53,12 +53,14 @@ class UncommittedChangesWarningDialog(QtWidgets.QDialog):
         btn_layout = QtWidgets.QHBoxLayout()
         btn_layout.addStretch()
 
-        cancel_btn = QtWidgets.QPushButton("Cancel")
+        cancel_btn = QtWidgets.QPushButton("Go Back")
         cancel_btn.setDefault(True)
+        cancel_btn.setToolTip("Return to the main panel to save your changes first")
         cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(cancel_btn)
 
-        continue_btn = QtWidgets.QPushButton("Continue")
+        continue_btn = QtWidgets.QPushButton("Try Anyway")
+        continue_btn.setToolTip("Attempt to get updates anyway (may not work)")
         continue_btn.clicked.connect(self.accept)
         btn_layout.addWidget(continue_btn)
 
@@ -74,7 +76,7 @@ class PullErrorDialog(QtWidgets.QDialog):
 
     def __init__(self, error_code, stderr, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Pull Failed")
+        self.setWindowTitle("Couldn't Get Updates")
         self.setModal(True)
         self.setMinimumWidth(500)
         self.setMinimumHeight(300)
@@ -134,32 +136,47 @@ class PullErrorDialog(QtWidgets.QDialog):
         """Return user-friendly message for error code."""
         if code == "WORKING_TREE_DIRTY":
             return (
-                "Pull failed: Uncommitted changes.\n\n"
-                "Commit or stash using GitHub Desktop, then pull."
+                "Can't get updates right now\n\n"
+                "You have unsaved work that would be overwritten.\n\n"
+                "Next steps:\n"
+                "1. Go back to the panel\n"
+                "2. Save your changes (use 'Save & Share' button)\n"
+                "3. Then try getting updates again"
             )
         if code == "DIVERGED_OR_NON_FF":
             return (
-                "Fast-forward not possible: branches diverged.\n\n"
-                "Fix without terminal:\n"
-                " 1) Open GitHub Desktop and pull (merge or rebase).\n"
-                " 2) Resolve conflicts there if prompted and finish pull.\n"
-                " 3) Back in GitPDM: Refresh Status, then Push."
+                "Your version and your team's version are different\n\n"
+                "Both you and your teammates have made changes.\n\n"
+                "How to fix this:\n"
+                "Option 1 (Easiest): Ask a team member who knows Git for help\n\n"
+                "Option 2: Use GitHub Desktop\n"
+                " 1. Open GitHub Desktop\n"
+                " 2. Select your project\n"
+                " 3. Click 'Fetch origin' then 'Pull origin'\n"
+                " 4. If conflicts appear, GitHub Desktop will help you resolve them\n"
+                " 5. Come back here and click 'Check for Updates'"
             )
         if code == "AUTH_OR_PERMISSION":
             return (
-                "Authentication or permission issue.\n\n"
-                "Sign in via GitHub Desktop, then try again."
-            )
-        if code == "NO_REMOTE":
-            return (
-                "Remote not found. Check remote config and network."
-            )
-        if code == "TIMEOUT":
-            return (
-                "Pull timed out (>2 minutes). Check connection and retry."
+                "Can't access GitHub right now\n\n"
+                "This could mean:\n"
+                "\u2022 You need to sign in to GitHub again\n"
+                "\u2022 You don't have permission to access this project\n"
+                "\u2022 Your internet connection is down\n\n"
+                "Try:\n"
+                "1. Check your internet connection\n"
+                "2. Click 'Verify / Refresh Account' in the GitHub section\n"
+                "3. If that doesn't work, disconnect and reconnect GitHub"
             )
         return (
-            "Pull failed due to an unexpected error. Check details below."
+            "Something went wrong\n\n"
+            "We couldn't get updates from GitHub.\n\n"
+            "Try:\n"
+            "\u2022 Check your internet connection\n"
+            "\u2022 Make sure you're signed in to GitHub\n"
+            "\u2022 Click 'Check for Updates' to try again\n\n"
+            "If this keeps happening, you might need help from someone \n"
+            "familiar with Git. Technical details are shown below."
         )
 
     def _on_copy_details(self):
@@ -173,7 +190,7 @@ class PushErrorDialog(QtWidgets.QDialog):
 
     def __init__(self, error_code, stderr, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Push Failed")
+        self.setWindowTitle("Couldn't Share Changes")
         self.setModal(True)
         self.setMinimumWidth(500)
         self.setMinimumHeight(300)
@@ -201,7 +218,7 @@ class PushErrorDialog(QtWidgets.QDialog):
 
         layout.addLayout(header_layout)
 
-        details_group = QtWidgets.QGroupBox("Details")
+        details_group = QtWidgets.QGroupBox("Technical Details (for troubleshooting)")
         details_layout = QtWidgets.QVBoxLayout()
         details_group.setLayout(details_layout)
 
@@ -214,6 +231,7 @@ class PushErrorDialog(QtWidgets.QDialog):
 
         copy_layout = QtWidgets.QHBoxLayout()
         copy_btn = QtWidgets.QPushButton("Copy Details")
+        copy_btn.setToolTip("Copy technical details to share with someone who can help")
         copy_btn.clicked.connect(self._on_copy_details)
         copy_layout.addWidget(copy_btn)
         copy_layout.addStretch()
@@ -223,8 +241,9 @@ class PushErrorDialog(QtWidgets.QDialog):
 
         close_layout = QtWidgets.QHBoxLayout()
         close_layout.addStretch()
-        close_btn = QtWidgets.QPushButton("Close")
+        close_btn = QtWidgets.QPushButton("OK, I Understand")
         close_btn.setDefault(True)
+        close_btn.setToolTip("Close this message and follow the steps above")
         close_btn.clicked.connect(self.accept)
         close_layout.addWidget(close_btn)
         layout.addLayout(close_layout)
@@ -233,26 +252,62 @@ class PushErrorDialog(QtWidgets.QDialog):
         """Return user-friendly message for error code."""
         if code == "AUTH_OR_PERMISSION":
             return (
-                "Authentication or permission issue.\n\n"
-                "Sign in via GitHub Desktop, then try again."
+                "Can't access GitHub right now\n\n"
+                "This could mean:\n"
+                "\u2022 You need to sign in to GitHub again\n"
+                "\u2022 You don't have permission to share to this project\n"
+                "\u2022 Your internet connection is down\n\n"
+                "Try:\n"
+                "1. Check your internet connection\n"
+                "2. Click 'Verify / Refresh Account' in the GitHub section\n"
+                "3. If that doesn't work, disconnect and reconnect GitHub"
             )
         if code == "NO_UPSTREAM":
             return (
-                "No upstream branch set.\n\n"
-                "Push should auto-detect this, but upstream may be needed."
+                "Your work version isn't connected to GitHub yet\n\n"
+                "This usually fixes itself automatically.\n\n"
+                "If the error keeps happening, try clicking 'Check for Updates'\n"
+                "first, then try sharing again."
             )
         if code == "NO_REMOTE":
-            return "Remote not found. Check remote config and network."
+            return (
+                "Can't find GitHub connection\n\n"
+                "Your project might not be connected to GitHub, or there's\n"
+                "a network problem.\n\n"
+                "Try:\n"
+                "\u2022 Check your internet connection\n"
+                "\u2022 Make sure this project is connected to GitHub\n"
+                "\u2022 Ask someone familiar with Git for help"
+            )
         if code == "REJECTED":
             return (
-                "Push rejected. You may need to pull first.\n\n"
-                "Consider Pull before Push."
+                "Your team has made changes you don't have yet\n\n"
+                "Before sharing your changes, you need to get your team's\n"
+                "changes first.\n\n"
+                "What to do:\n"
+                "1. Click 'Check for Updates'\n"
+                "2. If there are updates, click 'Get Updates'\n"
+                "3. Then try sharing again"
             )
         if code == "TIMEOUT":
             return (
-                "Push timed out (>3 minutes). Check connection and retry."
+                "This is taking too long\n\n"
+                "Sharing changes is taking more than 3 minutes.\n\n"
+                "Try:\n"
+                "\u2022 Check your internet connection\n"
+                "\u2022 Try again in a few minutes\n"
+                "\u2022 If it keeps failing, your files might be very large"
             )
-        return "Push failed due to an unexpected error. Check details."
+        return (
+            "Something went wrong\n\n"
+            "We couldn't share your changes to GitHub.\n\n"
+            "Try:\n"
+            "\u2022 Check your internet connection\n"
+            "\u2022 Make sure you're signed in to GitHub\n"
+            "\u2022 Try sharing again\n\n"
+            "If this keeps happening, you might need help from someone\n"
+            "familiar with Git. Technical details are shown below."
+        )
 
     def _on_copy_details(self):
         clipboard = QtWidgets.QApplication.clipboard()
@@ -265,7 +320,7 @@ class NewBranchDialog(QtWidgets.QDialog):
 
     def __init__(self, parent=None, default_start_point="HEAD", open_docs=None, lock_files=None):
         super().__init__(parent)
-        self.setWindowTitle("Create New Branch")
+        self.setWindowTitle("Create New Work Version")
         self.setModal(True)
         self.setMinimumWidth(400)
 
@@ -289,15 +344,18 @@ class NewBranchDialog(QtWidgets.QDialog):
             warning_layout = QtWidgets.QVBoxLayout()
             warning_frame.setLayout(warning_layout)
             
-            warning_icon_label = QtWidgets.QLabel("⚠️  Files Must Be Closed")
+            warning_icon_label = QtWidgets.QLabel("⚠️  Please Close All FreeCAD Files First")
             warning_icon_label.setStyleSheet("font-weight: bold; color: #856404;")
             warning_layout.addWidget(warning_icon_label)
             
             warning_text = QtWidgets.QLabel(
-                "CRITICAL: Git operations can corrupt .FCStd files that are open in FreeCAD!\n\n"
-                "All FreeCAD documents must be closed before creating and switching to a new branch. "
-                "This includes files from other worktrees or folders.\n\n"
-                "Please close ALL FreeCAD files (File -> Close All) before proceeding:"
+                "<b>Why?</b> Creating a new work version while files are open can corrupt your FreeCAD files!\n\n"
+                "<b>What to do:</b>\n"
+                "1. Go to File → Close All\n"
+                "2. Make sure ALL FreeCAD documents are closed\n"
+                "3. Come back here and try again\n\n"
+                "<b>Important:</b> This includes files from any folder, not just this project.\n\n"
+                "These files are currently open:"
             )
             warning_text.setWordWrap(True)
             warning_text.setStyleSheet("color: #856404;")
@@ -339,9 +397,15 @@ class NewBranchDialog(QtWidgets.QDialog):
         )
         
         self.name_edit = QtWidgets.QLineEdit()
-        self.name_edit.setPlaceholderText("e.g., feature/my-feature")
+        self.name_edit.setPlaceholderText("e.g., wheel-redesign or version-2.0")
+        self.name_edit.setToolTip(
+            "Give this work version a descriptive name\n"
+            "Good names: wheel-redesign, lightweight-version, final-design\n"
+            "Avoid spaces - use dashes instead\n\n"
+            "Git term: 'branch name' - identifies this line of development"
+        )
         self.name_edit.textChanged.connect(self._on_name_changed)
-        name_layout.addRow("Branch name:", self.name_edit)
+        name_layout.addRow("Version name:", self.name_edit)
         
         layout.addLayout(name_layout)
 
@@ -353,18 +417,27 @@ class NewBranchDialog(QtWidgets.QDialog):
         
         self.start_edit = QtWidgets.QLineEdit()
         self.start_edit.setText(default_start_point)
-        start_layout.addRow("Start point:", self.start_edit)
+        self.start_edit.setToolTip(
+            "Which version to start from (usually the main/latest version)\n"
+            "Most of the time you can leave this as-is\n\n"
+            "Git term: 'start point' or 'base branch' - where to branch from"
+        )
+        start_layout.addRow("Starting from:", self.start_edit)
         
         layout.addLayout(start_layout)
 
         # Info label
         info_label = QtWidgets.QLabel(
-            "The new branch will be created from the specified start point\n"
-            "and you will be automatically switched to it.\n"
-            "(e.g., origin/main, HEAD, or a specific commit)."
+            "<b>What happens next:</b>\n"
+            "1. A new work version will be created\n"
+            "2. You'll automatically switch to working on this new version\n"
+            "3. Your files will stay exactly as they are\n\n"
+            "<i>Think of this like creating a new save file where you can try different ideas "
+            "without affecting your original work.</i>\n\n"
+            "<i>Git terms: This creates and checks out a new 'branch'</i>"
         )
         info_label.setWordWrap(True)
-        info_label.setStyleSheet("color: gray; font-size: 9px;")
+        info_label.setStyleSheet("color: #555; font-size: 9px;")
         layout.addWidget(info_label)
 
         # Buttons
