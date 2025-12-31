@@ -66,10 +66,31 @@ class GitPDMWorkbench(FreeCADGui.Workbench):
             
             if dock is None:
                 dock = panel.GitPDMDockWidget(services=get_services())
-                mw.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
+                
+                # Try to tab with the Task panel for better integration
+                task_panel = mw.findChild(QtWidgets.QDockWidget, "Tasks")
+                if task_panel:
+                    mw.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
+                    mw.tabifyDockWidget(task_panel, dock)
+                else:
+                    # Fallback: just add to right area
+                    mw.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
             
+            # Show and bring to front
             if not dock.isVisible():
                 dock.show()
+            
+            # Bring GitPDM to front of its tab group
+            dock.raise_()
+            
+            # Also bring repository browser to front if it exists
+            repo_browser = mw.findChild(
+                QtWidgets.QDockWidget, "GitPDM_RepoBrowserDock"
+            )
+            if repo_browser:
+                if not repo_browser.isVisible():
+                    repo_browser.show()
+                repo_browser.raise_()
         except Exception as e:
             from freecad_gitpdm.core import log
             log.error(f"Failed to auto-open panel: {e}")

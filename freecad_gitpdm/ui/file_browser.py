@@ -221,9 +221,22 @@ class FileBrowserHandler:
             main_window = None
 
         if main_window:
-            main_window.addDockWidget(
-                QtCore.Qt.LeftDockWidgetArea, dock
-            )
+            # Try to tab with the Model tree view for better integration
+            # Try multiple possible names for the tree view dock
+            tree_view = None
+            for name in ["Tree view", "Model", "Combo View"]:
+                tree_view = main_window.findChild(QtWidgets.QDockWidget, name)
+                if tree_view:
+                    break
+            
+            if tree_view:
+                main_window.addDockWidget(QtCore.Qt.LeftDockWidgetArea, dock)
+                main_window.tabifyDockWidget(tree_view, dock)
+                # Keep tree view as the active tab by default
+                tree_view.raise_()
+            else:
+                # Fallback: just add to left area
+                main_window.addDockWidget(QtCore.Qt.LeftDockWidgetArea, dock)
         else:
             dock.setParent(self._parent)
             dock.setFloating(True)
