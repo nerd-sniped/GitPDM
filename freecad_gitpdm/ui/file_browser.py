@@ -19,6 +19,8 @@ except ImportError:
 import os
 import sys
 import subprocess as sp
+import json
+from pathlib import Path
 
 from freecad_gitpdm.core import log, paths as core_paths
 from freecad_gitpdm.export import mapper
@@ -55,6 +57,7 @@ class FileBrowserHandler:
         self._is_listing_files = False
         self._browser_dock = None
         self._browser_content = None
+        self._current_backup_file = None  # Track currently selected file for backup config
     
     # ========== Public API ==========
     
@@ -73,9 +76,10 @@ class FileBrowserHandler:
         self._parent.repo_branch_indicator = QtWidgets.QLabel("—")
         self._parent.repo_branch_indicator.setWordWrap(True)
         self._parent.repo_branch_indicator.setStyleSheet(
-            "color: #2196F3; font-weight: bold; padding: 4px; "
-            "background-color: #E3F2FD; border-radius: 3px;"
+            "font-weight: bold; padding: 4px;"
         )
+        self._parent.repo_branch_indicator.setFrameShape(QtWidgets.QFrame.StyledPanel)
+        self._parent.repo_branch_indicator.setFrameShadow(QtWidgets.QFrame.Sunken)
         layout.addWidget(self._parent.repo_branch_indicator)
 
         self._parent.repo_info_label = QtWidgets.QLabel("Repo not selected.")
@@ -84,6 +88,61 @@ class FileBrowserHandler:
             "color: gray; font-style: italic;"
         )
         layout.addWidget(self._parent.repo_info_label)
+
+        # Backup configuration panel (shown when FCStd file is selected)
+        self._parent.backup_config_panel = QtWidgets.QFrame()
+        backup_layout = QtWidgets.QVBoxLayout()
+        backup_layout.setContentsMargins(8, 6, 8, 6)
+        backup_layout.setSpacing(6)
+        self._parent.backup_config_panel.setLayout(backup_layout)
+        # Use styled panel to inherit theme colors
+        self._parent.backup_config_panel.setFrameShape(QtWidgets.QFrame.StyledPanel)
+        self._parent.backup_config_panel.setFrameShadow(QtWidgets.QFrame.Raised)
+        
+        # Title
+        backup_title = QtWidgets.QLabel("📦 Backup Settings")
+        backup_title.setStyleSheet("font-weight: bold;")
+        backup_layout.addWidget(backup_title)
+        
+        # Controls row
+        controls_row = QtWidgets.QHBoxLayout()
+        controls_row.setSpacing(8)
+        
+        # Unlimited checkbox
+        self._parent.backup_unlimited_checkbox = QtWidgets.QCheckBox("Keep all backups")
+        self._parent.backup_unlimited_checkbox.setToolTip(
+            "When checked, all backup files will be kept (no limit)"
+        )
+        self._parent.backup_unlimited_checkbox.stateChanged.connect(
+            self._on_backup_unlimited_changed
+        )
+        controls_row.addWidget(self._parent.backup_unlimited_checkbox)
+        
+        controls_row.addStretch()
+        
+        # Max backups label and spinbox
+        self._parent.backup_limit_label = QtWidgets.QLabel("Max backups:")
+        controls_row.addWidget(self._parent.backup_limit_label)
+        
+        self._parent.backup_spinbox = QtWidgets.QSpinBox()
+        self._parent.backup_spinbox.setMinimum(0)
+        self._parent.backup_spinbox.setMaximum(100)
+        self._parent.backup_spinbox.setValue(3)
+        self._parent.backup_spinbox.setToolTip(
+            "Maximum number of timestamped backup files to keep.\n"
+            "0 = No backups, 1-100 = Keep this many recent backups"
+        )
+        self._parent.backup_spinbox.setMinimumWidth(60)
+        self._parent.backup_spinbox.valueChanged.connect(
+            self._on_backup_limit_changed
+        )
+        controls_row.addWidget(self._parent.backup_spinbox)
+        
+        backup_layout.addLayout(controls_row)
+        
+        # Hide by default
+        self._parent.backup_config_panel.setVisible(False)
+        layout.addWidget(self._parent.backup_config_panel)
 
         top_row = QtWidgets.QHBoxLayout()
         self._parent.repo_search = QtWidgets.QLineEdit()
@@ -163,7 +222,7 @@ class FileBrowserHandler:
 
         if main_window:
             main_window.addDockWidget(
-                QtCore.Qt.RightDockWidgetArea, dock
+                QtCore.Qt.LeftDockWidgetArea, dock
             )
         else:
             dock.setParent(self._parent)
@@ -390,9 +449,17 @@ class FileBrowserHandler:
         """Show preview for the selected repository item."""
         if not current:
             self.clear_preview()
+            self._parent.backup_config_panel.setVisible(False)
             return
         rel = current.text()
         self.show_preview(rel)
+        
+        # Show backup config panel only for FCStd files
+        if rel.lower().endswith(".fcstd"):
+            self._load_backup_settings(rel)
+            self._parent.backup_config_panel.setVisible(True)
+        else:
+            self._parent.backup_config_panel.setVisible(False)
 
     def _on_list_context_menu(self, pos):
         """Show context menu for repo list items."""
@@ -403,12 +470,18 @@ class FileBrowserHandler:
         act_open = menu.addAction("Open")
         act_reveal = menu.addAction("Reveal in Explorer/Finder")
         act_copy = menu.addAction("Copy Relative Path")
+        
+        # Add configure backups option for FCStd files
+        act_backups = None
+        rel = item.text() if item else None
+        if rel and rel.lower().endswith(".fcstd"):
+            menu.addSeparator()
+            act_backups = menu.addAction("Configure Backups...")
 
         chosen = menu.exec_(self._parent.repo_list.mapToGlobal(pos))
         if not chosen:
             return
 
-        rel = item.text() if item else None
         if chosen == act_copy and rel:
             QtWidgets.QApplication.clipboard().setText(rel)
             return
@@ -420,6 +493,8 @@ class FileBrowserHandler:
             self._open_file(rel)
         elif chosen == act_reveal:
             self._reveal_in_file_manager(rel)
+        elif chosen == act_backups:
+            self._configure_backups(rel)
 
     def _open_file(self, rel):
         """Open the given repo-relative path in FreeCAD."""
@@ -546,3 +621,220 @@ class FileBrowserHandler:
                 sp.run(["xdg-open", folder], timeout=10)
             except Exception as e:
                 log.error(f"Reveal failed: {e}")
+
+    def _configure_backups(self, rel):
+        """Configure the maximum number of backups for a part."""
+        if not self._parent._current_repo_root:
+            return
+        
+        # Get the preview JSON path
+        preview_rel = mapper.to_preview_dir_rel(rel)
+        json_rel = preview_rel + "/" + Path(rel).stem + ".json"
+        json_abs = core_paths.safe_join_repo(
+            self._parent._current_repo_root, json_rel
+        )
+        
+        # Load current maxBackups value
+        current_max = 3  # Default
+        if json_abs and json_abs.exists():
+            try:
+                data = json.loads(json_abs.read_text(encoding="utf-8"))
+                current_max = data.get("maxBackups", 3)
+            except Exception as e:
+                log.warning(f"Failed to read maxBackups from JSON: {e}")
+        
+        # Show dialog to configure
+        dialog = QtWidgets.QDialog(self._parent)
+        dialog.setWindowTitle("Configure Backups")
+        dialog.setModal(True)
+        
+        layout = QtWidgets.QVBoxLayout()
+        layout.setSpacing(12)
+        
+        # Info label
+        info_label = QtWidgets.QLabel(
+            f"Configure backup retention for:\n{Path(rel).name}\n\n"
+            "Set the maximum number of timestamped backup files (.FCBak) to keep.\n"
+            "Older backups beyond this limit will be automatically removed."
+        )
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        # Input for max backups
+        input_layout = QtWidgets.QHBoxLayout()
+        input_label = QtWidgets.QLabel("Max Backups:")
+        input_layout.addWidget(input_label)
+        
+        spinbox = QtWidgets.QSpinBox()
+        spinbox.setMinimum(0)
+        spinbox.setMaximum(100)
+        spinbox.setValue(current_max)
+        spinbox.setToolTip(
+            "0 = No backups kept (FCBak files deleted)\n"
+            "1-100 = Keep this many recent backups"
+        )
+        input_layout.addWidget(spinbox)
+        input_layout.addStretch()
+        layout.addLayout(input_layout)
+        
+        # Buttons
+        button_layout = QtWidgets.QHBoxLayout()
+        button_layout.addStretch()
+        
+        cancel_btn = QtWidgets.QPushButton("Cancel")
+        cancel_btn.clicked.connect(dialog.reject)
+        button_layout.addWidget(cancel_btn)
+        
+        save_btn = QtWidgets.QPushButton("Save")
+        save_btn.setDefault(True)
+        save_btn.clicked.connect(dialog.accept)
+        button_layout.addWidget(save_btn)
+        
+        layout.addLayout(button_layout)
+        dialog.setLayout(layout)
+        
+        # Execute dialog
+        if dialog.exec() == QtWidgets.QDialog.Accepted:
+            new_max = spinbox.value()
+            if json_abs and json_abs.exists():
+                try:
+                    # Update the JSON file
+                    data = json.loads(json_abs.read_text(encoding="utf-8"))
+                    data["maxBackups"] = new_max
+                    json_text = json.dumps(
+                        data,
+                        sort_keys=True,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    json_abs.write_text(json_text, encoding="utf-8", newline="\n")
+                    log.info(f"Updated maxBackups to {new_max} for {rel}")
+                    
+                    # If backups already exist, trigger cleanup
+                    backup_dir = json_abs.parent / "Backup"
+                    if backup_dir.exists():
+                        from freecad_gitpdm.export.exporter import _cleanup_old_backups
+                        _cleanup_old_backups(backup_dir, Path(rel).stem, new_max)
+                    
+                    QtWidgets.QMessageBox.information(
+                        self._parent,
+                        "Backups Configured",
+                        f"Maximum backups set to {new_max} for this part.\n"
+                        "This will take effect on the next save."
+                    )
+                except Exception as e:
+                    log.error(f"Failed to update maxBackups: {e}")
+                    QtWidgets.QMessageBox.warning(
+                        self._parent,
+                        "Configuration Failed",
+                        f"Failed to update backup settings:\n{e}"
+                    )
+            else:
+                QtWidgets.QMessageBox.information(
+                    self._parent,
+                    "No Preview Generated",
+                    "Generate a preview for this part first.\n"
+                    "The backup setting will be saved then."
+                )
+
+    def _load_backup_settings(self, rel):
+        """Load and display backup settings for the selected file."""
+        if not self._parent._current_repo_root:
+            return
+        
+        # Store current file for save operations
+        self._current_backup_file = rel
+        
+        # Get the preview JSON path
+        preview_rel = mapper.to_preview_dir_rel(rel)
+        json_rel = preview_rel + "/" + Path(rel).stem + ".json"
+        json_abs = core_paths.safe_join_repo(
+            self._parent._current_repo_root, json_rel
+        )
+        
+        # Load current maxBackups value
+        max_backups = 3  # Default
+        if json_abs and json_abs.exists():
+            try:
+                data = json.loads(json_abs.read_text(encoding="utf-8"))
+                max_backups = data.get("maxBackups", 3)
+            except Exception as e:
+                log.warning(f"Failed to read maxBackups from JSON: {e}")
+        
+        # Block signals while updating UI
+        self._parent.backup_spinbox.blockSignals(True)
+        self._parent.backup_unlimited_checkbox.blockSignals(True)
+        
+        # Check if unlimited (represented as -1 or very high number)
+        if max_backups == -1 or max_backups >= 999:
+            self._parent.backup_unlimited_checkbox.setChecked(True)
+            self._parent.backup_spinbox.setEnabled(False)
+            self._parent.backup_limit_label.setEnabled(False)
+            self._parent.backup_spinbox.setValue(10)  # Display value when unchecked
+        else:
+            self._parent.backup_unlimited_checkbox.setChecked(False)
+            self._parent.backup_spinbox.setEnabled(True)
+            self._parent.backup_limit_label.setEnabled(True)
+            self._parent.backup_spinbox.setValue(max_backups)
+        
+        # Unblock signals
+        self._parent.backup_spinbox.blockSignals(False)
+        self._parent.backup_unlimited_checkbox.blockSignals(False)
+
+    def _on_backup_unlimited_changed(self, state):
+        """Handle unlimited backups checkbox change."""
+        is_unlimited = (state == QtCore.Qt.Checked)
+        
+        # Enable/disable spinbox
+        self._parent.backup_spinbox.setEnabled(not is_unlimited)
+        self._parent.backup_limit_label.setEnabled(not is_unlimited)
+        
+        # Save the setting
+        if hasattr(self, '_current_backup_file'):
+            self._save_backup_setting(self._current_backup_file, -1 if is_unlimited else self._parent.backup_spinbox.value())
+
+    def _on_backup_limit_changed(self, value):
+        """Handle backup limit spinbox change."""
+        if hasattr(self, '_current_backup_file') and not self._parent.backup_unlimited_checkbox.isChecked():
+            self._save_backup_setting(self._current_backup_file, value)
+
+    def _save_backup_setting(self, rel, max_backups):
+        """Save the backup setting to the JSON file."""
+        if not self._parent._current_repo_root:
+            return
+        
+        # Get the preview JSON path
+        preview_rel = mapper.to_preview_dir_rel(rel)
+        json_rel = preview_rel + "/" + Path(rel).stem + ".json"
+        json_abs = core_paths.safe_join_repo(
+            self._parent._current_repo_root, json_rel
+        )
+        
+        if json_abs and json_abs.exists():
+            try:
+                # Update the JSON file
+                data = json.loads(json_abs.read_text(encoding="utf-8"))
+                data["maxBackups"] = max_backups
+                json_text = json.dumps(
+                    data,
+                    sort_keys=True,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                json_abs.write_text(json_text, encoding="utf-8", newline="\n")
+                
+                if max_backups == -1:
+                    log.info(f"Set unlimited backups for {rel}")
+                else:
+                    log.info(f"Updated maxBackups to {max_backups} for {rel}")
+                
+                # If backups already exist and we have a limit, trigger cleanup
+                if max_backups > 0:
+                    backup_dir = json_abs.parent / "Backup"
+                    if backup_dir.exists():
+                        from freecad_gitpdm.export.exporter import _cleanup_old_backups
+                        _cleanup_old_backups(backup_dir, Path(rel).stem, max_backups)
+            except Exception as e:
+                log.error(f"Failed to update maxBackups: {e}")
+        else:
+            log.debug(f"No preview JSON exists yet for {rel}, will use setting on next save")

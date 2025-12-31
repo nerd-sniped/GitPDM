@@ -49,7 +49,7 @@ class _DocumentObserver:
     
     def slotFinishSaveDocument(self, doc, filename):
         """Called after a document is saved."""
-        log.debug(f"Document saved: {filename}")
+        log.info(f"Document saved: {filename}")
         
         if not self._panel._current_repo_root:
             log.debug("No repo configured, skipping refresh")
@@ -195,8 +195,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # Compact-mode commit mini section (hidden by default)
         self._build_compact_commit_section(main_layout)
 
-        # Default to collapsed view
-        self._set_compact_mode(True)
+        # Default to expanded view
+        self._set_compact_mode(False)
 
         # Add stretch at bottom to push everything up
         main_layout.addStretch()
