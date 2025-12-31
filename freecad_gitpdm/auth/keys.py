@@ -12,14 +12,14 @@ storage happens in this sprint.
 def credential_target_name(host="github.com", account=None):
     """
     Generate credential storage target name for OAuth tokens.
-    
+
     Args:
         host: GitHub host (default "github.com")
         account: GitHub username (optional, for multi-account)
-        
+
     Returns:
         str: Target name for credential storage
-        
+
     Examples:
         >>> credential_target_name()
         'GitPDM:github.com:oauth'

@@ -12,8 +12,7 @@ except ImportError:
         from PySide2 import QtCore, QtGui, QtWidgets
     except ImportError as e:
         raise ImportError(
-            "Neither PySide6 nor PySide2 found. "
-            "FreeCAD installation may be incomplete."
+            "Neither PySide6 nor PySide2 found. FreeCAD installation may be incomplete."
         ) from e
 
 from freecad_gitpdm.core import log
@@ -34,9 +33,9 @@ class UncommittedChangesWarningDialog(QtWidgets.QDialog):
         main_layout = QtWidgets.QHBoxLayout()
         icon = QtWidgets.QLabel()
         icon.setPixmap(
-            self.style().standardIcon(
-                QtWidgets.QStyle.SP_MessageBoxWarning
-            ).pixmap(40, 40)
+            self.style()
+            .standardIcon(QtWidgets.QStyle.SP_MessageBoxWarning)
+            .pixmap(40, 40)
         )
         main_layout.addWidget(icon)
 
@@ -90,15 +89,13 @@ class PullErrorDialog(QtWidgets.QDialog):
         header_layout = QtWidgets.QHBoxLayout()
         icon_label = QtWidgets.QLabel()
         icon_label.setPixmap(
-            self.style().standardIcon(
-                QtWidgets.QStyle.SP_MessageBoxCritical
-            ).pixmap(48, 48)
+            self.style()
+            .standardIcon(QtWidgets.QStyle.SP_MessageBoxCritical)
+            .pixmap(48, 48)
         )
         header_layout.addWidget(icon_label)
 
-        message_label = QtWidgets.QLabel(
-            self._friendly_message(error_code)
-        )
+        message_label = QtWidgets.QLabel(self._friendly_message(error_code))
         message_label.setWordWrap(True)
         header_layout.addWidget(message_label)
 
@@ -204,15 +201,13 @@ class PushErrorDialog(QtWidgets.QDialog):
         header_layout = QtWidgets.QHBoxLayout()
         icon_label = QtWidgets.QLabel()
         icon_label.setPixmap(
-            self.style().standardIcon(
-                QtWidgets.QStyle.SP_MessageBoxCritical
-            ).pixmap(48, 48)
+            self.style()
+            .standardIcon(QtWidgets.QStyle.SP_MessageBoxCritical)
+            .pixmap(48, 48)
         )
         header_layout.addWidget(icon_label)
 
-        message_label = QtWidgets.QLabel(
-            self._friendly_message(error_code)
-        )
+        message_label = QtWidgets.QLabel(self._friendly_message(error_code))
         message_label.setWordWrap(True)
         header_layout.addWidget(message_label)
 
@@ -318,7 +313,9 @@ class PushErrorDialog(QtWidgets.QDialog):
 class NewBranchDialog(QtWidgets.QDialog):
     """Dialog for creating a new branch."""
 
-    def __init__(self, parent=None, default_start_point="HEAD", open_docs=None, lock_files=None):
+    def __init__(
+        self, parent=None, default_start_point="HEAD", open_docs=None, lock_files=None
+    ):
         super().__init__(parent)
         self.setWindowTitle("Create New Work Version")
         self.setModal(True)
@@ -343,11 +340,13 @@ class NewBranchDialog(QtWidgets.QDialog):
             )
             warning_layout = QtWidgets.QVBoxLayout()
             warning_frame.setLayout(warning_layout)
-            
-            warning_icon_label = QtWidgets.QLabel("⚠️  Please Close All FreeCAD Files First")
+
+            warning_icon_label = QtWidgets.QLabel(
+                "⚠️  Please Close All FreeCAD Files First"
+            )
             warning_icon_label.setStyleSheet("font-weight: bold; color: #856404;")
             warning_layout.addWidget(warning_icon_label)
-            
+
             warning_text = QtWidgets.QLabel(
                 "<b>Why?</b> Creating a new work version while files are open can corrupt your FreeCAD files!\n\n"
                 "<b>What to do:</b>\n"
@@ -360,42 +359,42 @@ class NewBranchDialog(QtWidgets.QDialog):
             warning_text.setWordWrap(True)
             warning_text.setStyleSheet("color: #856404;")
             warning_layout.addWidget(warning_text)
-            
+
             # List open files
             files_text = ""
             if self._open_docs:
                 files_text += "Open documents:\n"
                 for doc in self._open_docs[:5]:
                     import os
+
                     files_text += f"  • {os.path.basename(doc)}\n"
                 if len(self._open_docs) > 5:
                     files_text += f"  ... and {len(self._open_docs) - 5} more\n"
-            
+
             if self._lock_files:
                 if files_text:
                     files_text += "\n"
                 files_text += "Lock files detected:\n"
                 for lock in self._lock_files[:5]:
                     import os
+
                     files_text += f"  • {os.path.basename(lock)}\n"
                 if len(self._lock_files) > 5:
                     files_text += f"  ... and {len(self._lock_files) - 5} more\n"
-            
+
             files_label = QtWidgets.QLabel(files_text.strip())
             files_label.setStyleSheet(
                 "font-family: monospace; font-size: 9px; color: #856404; "
                 "background-color: #fffbf0; padding: 4px; border-radius: 2px;"
             )
             warning_layout.addWidget(files_label)
-            
+
             layout.addWidget(warning_frame)
 
         # Branch name
         name_layout = QtWidgets.QFormLayout()
-        name_layout.setFieldGrowthPolicy(
-            QtWidgets.QFormLayout.ExpandingFieldsGrow
-        )
-        
+        name_layout.setFieldGrowthPolicy(QtWidgets.QFormLayout.ExpandingFieldsGrow)
+
         self.name_edit = QtWidgets.QLineEdit()
         self.name_edit.setPlaceholderText("e.g., wheel-redesign or version-2.0")
         self.name_edit.setToolTip(
@@ -406,15 +405,13 @@ class NewBranchDialog(QtWidgets.QDialog):
         )
         self.name_edit.textChanged.connect(self._on_name_changed)
         name_layout.addRow("Version name:", self.name_edit)
-        
+
         layout.addLayout(name_layout)
 
         # Start point
         start_layout = QtWidgets.QFormLayout()
-        start_layout.setFieldGrowthPolicy(
-            QtWidgets.QFormLayout.ExpandingFieldsGrow
-        )
-        
+        start_layout.setFieldGrowthPolicy(QtWidgets.QFormLayout.ExpandingFieldsGrow)
+
         self.start_edit = QtWidgets.QLineEdit()
         self.start_edit.setText(default_start_point)
         self.start_edit.setToolTip(
@@ -423,7 +420,7 @@ class NewBranchDialog(QtWidgets.QDialog):
             "Git term: 'start point' or 'base branch' - where to branch from"
         )
         start_layout.addRow("Starting from:", self.start_edit)
-        
+
         layout.addLayout(start_layout)
 
         # Info label
@@ -452,7 +449,7 @@ class NewBranchDialog(QtWidgets.QDialog):
         self.ok_button.setEnabled(False)
 
         self.name_edit.setFocus()
-        
+
         # Update button state based on initial conditions
         self._on_name_changed()
 
@@ -477,4 +474,3 @@ __all__ = [
     "PushErrorDialog",
     "NewBranchDialog",
 ]
-

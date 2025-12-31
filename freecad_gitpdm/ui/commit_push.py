@@ -12,8 +12,7 @@ except ImportError:
         from PySide2 import QtCore, QtWidgets
     except ImportError as e:
         raise ImportError(
-            "Neither PySide6 nor PySide2 found. "
-            "FreeCAD installation may be incomplete."
+            "Neither PySide6 nor PySide2 found. FreeCAD installation may be incomplete."
         ) from e
 
 from freecad_gitpdm.core import log
@@ -23,7 +22,7 @@ from freecad_gitpdm.ui import dialogs
 class CommitPushHandler:
     """
     Handles commit and push operations.
-    
+
     Manages:
     - Commit workflow (stage, commit)
     - Push workflow (with upstream handling)
@@ -31,11 +30,11 @@ class CommitPushHandler:
     - Identity error dialogs
     - Behind upstream warnings
     """
-    
+
     def __init__(self, parent, git_client, job_runner):
         """
         Initialize commit/push handler.
-        
+
         Args:
             parent: GitPDMDockWidget - parent panel with UI widgets and state
             git_client: GitClient - for git operations
@@ -44,23 +43,23 @@ class CommitPushHandler:
         self._parent = parent
         self._git_client = git_client
         self._job_runner = job_runner
-        
+
         # Operation state
         self._is_committing = False
         self._is_pushing = False
         self._pending_commit_message = ""
-    
+
     # ========== Public API ==========
-    
+
     def commit_push_clicked(self):
         """Handle Commit & Push button click (routes to appropriate flow)."""
-        if self._parent._workflow_mode == 'both':
+        if self._parent._workflow_mode == "both":
             self.start_commit_push_sequence()
-        elif self._parent._workflow_mode == 'commit':
+        elif self._parent._workflow_mode == "commit":
             self.commit_clicked()
-        elif self._parent._workflow_mode == 'push':
+        elif self._parent._workflow_mode == "push":
             self.push_clicked()
-    
+
     def commit_clicked(self):
         """Handle Commit button click."""
         if not self._parent._current_repo_root:
@@ -72,13 +71,15 @@ class CommitPushHandler:
             return
 
         # Prefer message from main editor; fallback to compact field
-        message = self._parent.commit_message.toPlainText().strip() if hasattr(self._parent, "commit_message") else ""
+        message = (
+            self._parent.commit_message.toPlainText().strip()
+            if hasattr(self._parent, "commit_message")
+            else ""
+        )
         if not message and hasattr(self._parent, "compact_commit_message"):
             message = self._parent.compact_commit_message.text().strip()
         if not message:
-            self._parent._show_status_message(
-                "Commit message required", is_error=True
-            )
+            self._parent._show_status_message("Commit message required", is_error=True)
             return
 
         if self._parent._behind_count > 0:
@@ -132,16 +133,19 @@ class CommitPushHandler:
 
         git_cmd = self._git_client._get_git_command()
 
-        has_upstream = self._git_client.has_upstream(
-            self._parent._current_repo_root
-        )
+        has_upstream = self._git_client.has_upstream(self._parent._current_repo_root)
 
         if has_upstream:
             args = [git_cmd, "-C", self._parent._current_repo_root, "push"]
         else:
             args = [
-                git_cmd, "-C", self._parent._current_repo_root, "push", "-u",
-                self._parent._remote_name, "HEAD"
+                git_cmd,
+                "-C",
+                self._parent._current_repo_root,
+                "push",
+                "-u",
+                self._parent._remote_name,
+                "HEAD",
             ]
 
         self._job_runner.run_job(
@@ -156,19 +160,13 @@ class CommitPushHandler:
             log.warning("No repository to commit+push")
             return
 
-        if (
-            self._is_committing
-            or self._is_pushing
-            or self._job_runner.is_busy()
-        ):
+        if self._is_committing or self._is_pushing or self._job_runner.is_busy():
             log.debug("Job running, commit+push ignored")
             return
 
         message = self._parent.commit_message.toPlainText().strip()
         if not message:
-            self._parent._show_status_message(
-                "Commit message required", is_error=True
-            )
+            self._parent._show_status_message("Commit message required", is_error=True)
             return
 
         self._parent._clear_status_message()
@@ -192,11 +190,11 @@ class CommitPushHandler:
     def update_commit_push_button_label(self):
         """Update the commit/push button to its default label based on workflow mode."""
         mode = self._parent._workflow_mode
-        if mode == 'both':
+        if mode == "both":
             self._parent.commit_push_btn.setText("Commit and Push")
-        elif mode == 'commit':
+        elif mode == "commit":
             self._parent.commit_push_btn.setText("Commit")
-        elif mode == 'push':
+        elif mode == "push":
             self._parent.commit_push_btn.setText("Push")
         else:
             self._parent.commit_push_btn.setText("Commit and Push")
@@ -211,9 +209,7 @@ class CommitPushHandler:
         """Callback after staging completes."""
         result = job.get("result", {})
         if not result.get("success"):
-            log.warning(
-                f"Stage failed: {result.get('stderr', '')}"
-            )
+            log.warning(f"Stage failed: {result.get('stderr', '')}")
             self._handle_commit_failed("Stage failed")
             return
 
@@ -271,16 +267,12 @@ class CommitPushHandler:
             self._parent.compact_commit_message.clear()
 
         if self._parent._current_repo_root:
-            branch = self._git_client.current_branch(
-                self._parent._current_repo_root
-            )
+            branch = self._git_client.current_branch(self._parent._current_repo_root)
             self._parent.branch_label.setText(branch)
             self._parent._refresh_status_views(self._parent._current_repo_root)
             self._parent._update_upstream_info(self._parent._current_repo_root)
 
-        self._parent._show_status_message(
-            "Commit created", is_error=False
-        )
+        self._parent._show_status_message("Commit created", is_error=False)
 
         QtCore.QTimer.singleShot(2000, self._parent._clear_status_message)
         self._parent._update_button_states()
@@ -298,13 +290,11 @@ class CommitPushHandler:
         msg_box = QtWidgets.QMessageBox(self._parent)
         msg_box.setIcon(QtWidgets.QMessageBox.Warning)
         msg_box.setWindowTitle("Git Identity Not Configured")
-        msg_box.setText(
-            "Git needs your name and email before committing."
-        )
+        msg_box.setText("Git needs your name and email before committing.")
         details = (
             "Configure in GitHub Desktop or run:\n\n"
-            "git config --global user.name \"Your Name\"\n"
-            "git config --global user.email \"your@email.com\""
+            'git config --global user.name "Your Name"\n'
+            'git config --global user.email "your@email.com"'
         )
         msg_box.setInformativeText(details)
         msg_box.exec()
@@ -320,7 +310,10 @@ class CommitPushHandler:
 
         if not success:
             # Check for upstream mismatch error
-            if "upstream branch" in stderr.lower() and "does not match" in stderr.lower():
+            if (
+                "upstream branch" in stderr.lower()
+                and "does not match" in stderr.lower()
+            ):
                 # Upstream mismatch - offer to use current branch name
                 reply = QtWidgets.QMessageBox.question(
                     self._parent,
@@ -330,13 +323,13 @@ class CommitPushHandler:
                     f"and set it as upstream?\n\n"
                     f"This will create a new remote branch with the same name.",
                     QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-                    QtWidgets.QMessageBox.Yes
+                    QtWidgets.QMessageBox.Yes,
                 )
                 if reply == QtWidgets.QMessageBox.Yes:
                     # Retry with explicit branch name
                     self._retry_push_with_branch_name()
                     return
-            
+
             code = self._git_client._classify_push_error(stderr)
             self._show_push_error_dialog(code, stderr)
             log.warning(f"Push failed: {code}")
@@ -365,29 +358,34 @@ class CommitPushHandler:
         """Retry push using current branch name explicitly."""
         if not self._parent._current_repo_root:
             return
-        
-        current_branch = self._git_client.current_branch(self._parent._current_repo_root)
+
+        current_branch = self._git_client.current_branch(
+            self._parent._current_repo_root
+        )
         if not current_branch or current_branch.startswith("("):
             QtWidgets.QMessageBox.warning(
-                self._parent,
-                "Cannot Push",
-                "Cannot determine current branch name."
+                self._parent, "Cannot Push", "Cannot determine current branch name."
             )
             return
-        
+
         self._is_pushing = True
         self._parent._start_busy_feedback("Pushing…")
-        
+
         git_cmd = self._git_client._get_git_command()
         # Use: git push -u origin <branch>:<branch>
         # This explicitly pushes to a branch with the same name
         args = [
-            git_cmd, "-C", self._parent._current_repo_root,
-            "push", "-u", self._parent._remote_name, f"{current_branch}:{current_branch}"
+            git_cmd,
+            "-C",
+            self._parent._current_repo_root,
+            "push",
+            "-u",
+            self._parent._remote_name,
+            f"{current_branch}:{current_branch}",
         ]
-        
+
         log.info(f"Retrying push with explicit branch: {current_branch}")
-        
+
         self._job_runner.run_job(
             "push_retry",
             args,
@@ -403,12 +401,9 @@ class CommitPushHandler:
             f"You're {self._parent._behind_count} commits behind upstream. "
             "Push may be rejected."
         )
-        msg_box.setInformativeText(
-            "Consider Pull first to sync with upstream."
-        )
+        msg_box.setInformativeText("Consider Pull first to sync with upstream.")
         msg_box.setStandardButtons(
-            QtWidgets.QMessageBox.Cancel
-            | QtWidgets.QMessageBox.Ok
+            QtWidgets.QMessageBox.Cancel | QtWidgets.QMessageBox.Ok
         )
         msg_box.setDefaultButton(QtWidgets.QMessageBox.Cancel)
         result = msg_box.exec()
@@ -425,9 +420,7 @@ class CommitPushHandler:
         """Callback after staging in commit & push sequence."""
         result = job.get("result", {})
         if not result.get("success"):
-            log.warning(
-                f"Stage failed: {result.get('stderr', '')}"
-            )
+            log.warning(f"Stage failed: {result.get('stderr', '')}")
             self._handle_commit_push_failed("Stage failed")
             return
 
@@ -443,9 +436,7 @@ class CommitPushHandler:
             return
 
         git_cmd = self._git_client._get_git_command()
-        args = [
-            git_cmd, "-C", self._parent._current_repo_root, "commit", "-m", message
-        ]
+        args = [git_cmd, "-C", self._parent._current_repo_root, "commit", "-m", message]
 
         self._job_runner.run_job(
             "commit_push_commit",
@@ -472,9 +463,7 @@ class CommitPushHandler:
                     f"Commit failed: {stderr[:80]}", is_error=True
                 )
             log.warning(f"Commit failed: {code}")
-            self._handle_commit_push_failed(
-                "Commit failed, skipping push"
-            )
+            self._handle_commit_push_failed("Commit failed, skipping push")
             return
 
         log.info("Commit succeeded, now pushing")
@@ -485,16 +474,19 @@ class CommitPushHandler:
 
         git_cmd = self._git_client._get_git_command()
 
-        has_upstream = self._git_client.has_upstream(
-            self._parent._current_repo_root
-        )
+        has_upstream = self._git_client.has_upstream(self._parent._current_repo_root)
 
         if has_upstream:
             args = [git_cmd, "-C", self._parent._current_repo_root, "push"]
         else:
             args = [
-                git_cmd, "-C", self._parent._current_repo_root, "push", "-u",
-                self._parent._remote_name, "HEAD"
+                git_cmd,
+                "-C",
+                self._parent._current_repo_root,
+                "push",
+                "-u",
+                self._parent._remote_name,
+                "HEAD",
             ]
 
         self._job_runner.run_job(
@@ -528,9 +520,7 @@ class CommitPushHandler:
             self._parent.compact_commit_message.clear()
 
         if self._parent._current_repo_root:
-            branch = self._git_client.current_branch(
-                self._parent._current_repo_root
-            )
+            branch = self._git_client.current_branch(self._parent._current_repo_root)
             self._parent.branch_label.setText(branch)
 
             self._parent._refresh_status_views(self._parent._current_repo_root)

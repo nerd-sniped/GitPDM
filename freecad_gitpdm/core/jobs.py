@@ -12,7 +12,7 @@ from freecad_gitpdm.core import log
 def _get_qt_core():
     """
     Lazy import of QtCore to handle FreeCAD-only availability
-    
+
     Returns:
         QtCore module
     """
@@ -32,45 +32,47 @@ def _get_qt_core():
 class _CallableWorkerSignals:
     """
     Helper object that emits signals to marshal callbacks to UI thread.
-    This is a workaround for the fact that threading.Thread doesn't 
+    This is a workaround for the fact that threading.Thread doesn't
     integrate with Qt's event loop.
     """
+
     def __init__(self, qt_core):
         self.QtCore = qt_core
+
         # Create a QObject subclass dynamically to get signal support
         class _SignalEmitter(qt_core.QObject):
             success = qt_core.Signal(object, str)  # result, name
             error = qt_core.Signal(Exception, str)  # error, name
-        
+
         self._emitter = _SignalEmitter()
-    
+
     def connect_success(self, callback):
         """Connect success signal to callback"""
         self._emitter.success.connect(
             lambda result, name: self._invoke_success(callback, result, name)
         )
-    
+
     def connect_error(self, callback):
         """Connect error signal to callback"""
         self._emitter.error.connect(
             lambda error, name: self._invoke_error(callback, error, name)
         )
-    
+
     def emit_success(self, result, name):
         """Emit success signal (thread-safe)"""
         self._emitter.success.emit(result, name)
-    
+
     def emit_error(self, error, name):
         """Emit error signal (thread-safe)"""
         self._emitter.error.emit(error, name)
-    
+
     def _invoke_success(self, callback, result, name):
         """Called on UI thread"""
         try:
             callback(result)
         except Exception as e:
             log.error(f"Success callback error for {name}: {e}")
-    
+
     def _invoke_error(self, callback, error, name):
         """Called on UI thread"""
         try:
@@ -89,18 +91,18 @@ class GitJobRunner:
 
     def __init__(self):
         QtCore = _get_qt_core()
-        
+
         # Create as QObject subclass dynamically
         class _Runner(QtCore.QObject):
             job_finished = QtCore.Signal(object)
-            
+
             def __init__(self):
                 super().__init__()
                 self._process = None
                 self._current_job = None
                 self._pending_job = None
                 self._qt_core = QtCore
-        
+
         self._runner = _Runner()
 
     def run_job(self, job_type, command_args, callback=None):
@@ -143,12 +145,12 @@ class GitJobRunner:
     def _start_job(self, job):
         """
         Start a job immediately using QProcess
-        
+
         Args:
             job: dict - job descriptor
         """
         QtCore = self._runner._qt_core
-        
+
         if self._runner._process is not None:
             self._runner._process.deleteLater()
 
@@ -157,20 +159,15 @@ class GitJobRunner:
         self._runner._process.finished.connect(self._on_job_finished)
         self._runner._process.errorOccurred.connect(self._on_job_error)
 
-        log.debug(
-            f"Starting job {job['type']}: "
-            f"{' '.join(job['args'][:2])}"
-        )
+        log.debug(f"Starting job {job['type']}: {' '.join(job['args'][:2])}")
 
         # Start process without shell
-        self._runner._process.start(
-            job["args"][0], job["args"][1:]
-        )
+        self._runner._process.start(job["args"][0], job["args"][1:])
 
     def _on_job_finished(self, exit_code):
         """
         Called when a job finishes
-        
+
         Args:
             exit_code: int - process exit code
         """
@@ -182,12 +179,12 @@ class GitJobRunner:
         stderr = ""
 
         if self._runner._process is not None:
-            stdout = bytes(
-                self._runner._process.readAllStandardOutput()
-            ).decode("utf-8", errors="replace")
-            stderr = bytes(
-                self._runner._process.readAllStandardError()
-            ).decode("utf-8", errors="replace")
+            stdout = bytes(self._runner._process.readAllStandardOutput()).decode(
+                "utf-8", errors="replace"
+            )
+            stderr = bytes(self._runner._process.readAllStandardError()).decode(
+                "utf-8", errors="replace"
+            )
 
         job["result"] = {
             "stdout": stdout.strip(),
@@ -196,9 +193,7 @@ class GitJobRunner:
             "success": exit_code == 0,
         }
 
-        log.debug(
-            f"Job {job['type']} finished with code {exit_code}"
-        )
+        log.debug(f"Job {job['type']} finished with code {exit_code}")
 
         # Call the callback if provided
         if job["callback"]:
@@ -221,7 +216,7 @@ class GitJobRunner:
     def _on_job_error(self, error):
         """
         Called when job process encounters an error
-        
+
         Args:
             error: QProcess.ProcessError
         """
@@ -229,9 +224,7 @@ class GitJobRunner:
             return
 
         job = self._runner._current_job
-        log.error(
-            f"Job {job['type']} process error: {error}"
-        )
+        log.error(f"Job {job['type']} process error: {error}")
 
         job["error"] = str(error)
         job["result"] = {
@@ -262,26 +255,21 @@ class GitJobRunner:
     def is_busy(self):
         """
         Check if a job is currently running
-        
+
         Returns:
             bool: True if a job is running
         """
         return self._runner._current_job is not None
 
     def run_callable(
-        self,
-        name,
-        func,
-        on_success=None,
-        on_error=None,
-        cancel_token=None
+        self, name, func, on_success=None, on_error=None, cancel_token=None
     ):
         """
         Run a Python callable in a worker thread.
-        
+
         This method is useful for network operations (e.g., OAuth polling) that
         would block the UI if run on the main thread.
-        
+
         Args:
             name: str - Name for this callable job (for logging)
             func: callable() -> result - Function to run in worker thread
@@ -292,37 +280,37 @@ class GitJobRunner:
             on_error: callable(exception) -> None - Called on UI thread if func raises
             cancel_token: CancelToken or None - Token with is_cancelled property
                           that func can check to support cancellation
-                          
+
         Returns:
             None
         """
         QtCore = self._runner._qt_core
-        
+
         # Create signal emitter for this job
         signals = _CallableWorkerSignals(QtCore)
-        
+
         # Connect callbacks to signals
         if on_success:
             signals.connect_success(on_success)
         if on_error:
             signals.connect_error(on_error)
-        
+
         def _worker():
             try:
                 log.debug(f"Callable job {name} starting")
                 result = func()
                 log.debug(f"Callable job {name} completed")
-                
+
                 # Emit success signal (thread-safe, marshals to UI thread)
                 if on_success:
                     signals.emit_success(result, name)
             except Exception as e:
                 log.error(f"Callable job {name} failed: {e}")
-                
+
                 # Emit error signal (thread-safe, marshals to UI thread)
                 if on_error:
                     signals.emit_error(e, name)
-        
+
         thread = threading.Thread(target=_worker, daemon=True)
         log.debug(f"Starting callable job {name}")
         thread.start()
@@ -341,7 +329,7 @@ def get_job_runner():
     """
     Get or create the global job runner instance.
     Only initializes when first called (lazy init).
-    
+
     Returns:
         GitJobRunner: The global job runner
     """

@@ -13,18 +13,19 @@ PARAM_GROUP_PATH = "User parameter:BaseApp/Preferences/Mod/GitPDM"
 def get_param_group():
     """
     Get the FreeCAD parameter group for GitPDM settings
-    
+
     Returns:
         ParameterGrp object for GitPDM settings
     """
     import FreeCAD
+
     return FreeCAD.ParamGet(PARAM_GROUP_PATH)
 
 
 def save_repo_path(path):
     """
     Save the repository path to persistent storage
-    
+
     Args:
         path: Repository path string
     """
@@ -39,7 +40,7 @@ def save_repo_path(path):
 def load_repo_path():
     """
     Load the repository path from persistent storage
-    
+
     Returns:
         Repository path string (empty if not set)
     """
@@ -57,7 +58,7 @@ def load_repo_path():
 def save_setting(key, value):
     """
     Save a generic string setting
-    
+
     Args:
         key: Setting key name
         value: Setting value (string)
@@ -73,11 +74,11 @@ def save_setting(key, value):
 def load_setting(key, default=""):
     """
     Load a generic string setting
-    
+
     Args:
         key: Setting key name
         default: Default value if not found
-        
+
     Returns:
         Setting value string
     """
@@ -92,7 +93,7 @@ def load_setting(key, default=""):
 def save_bool_setting(key, value):
     """
     Save a boolean setting
-    
+
     Args:
         key: Setting key name
         value: Boolean value
@@ -108,11 +109,11 @@ def save_bool_setting(key, value):
 def load_bool_setting(key, default=False):
     """
     Load a boolean setting
-    
+
     Args:
         key: Setting key name
         default: Default value if not found
-        
+
     Returns:
         Boolean value
     """
@@ -127,7 +128,7 @@ def load_bool_setting(key, default=False):
 def save_remote_name(remote):
     """
     Save the remote name to persistent storage
-    
+
     Args:
         remote: Remote name string (e.g., "origin")
     """
@@ -137,7 +138,7 @@ def save_remote_name(remote):
 def load_remote_name():
     """
     Load the remote name from persistent storage
-    
+
     Returns:
         Remote name string (default "origin")
     """
@@ -149,7 +150,7 @@ def save_last_fetch_at(timestamp):
     Save the last fetch timestamp to persistent storage.
     MVP: Single timestamp for current repo.
     Future: Per-repo timestamps using repo root as key.
-    
+
     Args:
         timestamp: ISO 8601 timestamp string
     """
@@ -159,7 +160,7 @@ def save_last_fetch_at(timestamp):
 def load_last_fetch_at():
     """
     Load the last fetch timestamp from persistent storage
-    
+
     Returns:
         ISO 8601 timestamp string (empty if not set)
     """
@@ -171,7 +172,7 @@ def save_last_pull_at(timestamp):
     Save the last pull timestamp to persistent storage.
     MVP: Single timestamp for current repo.
     Future: Per-repo timestamps using repo root as key.
-    
+
     Args:
         timestamp: ISO 8601 timestamp string
     """
@@ -181,7 +182,7 @@ def save_last_pull_at(timestamp):
 def load_last_pull_at():
     """
     Load the last pull timestamp from persistent storage
-    
+
     Returns:
         ISO 8601 timestamp string (empty if not set)
     """
@@ -189,6 +190,7 @@ def load_last_pull_at():
 
 
 # --- Sprint 6: Preview export settings ---
+
 
 def save_last_preview_at(timestamp):
     """
@@ -230,8 +232,7 @@ def save_stage_previews(value):
 
 # --- Sprint 5: CAD extensions configuration ---
 
-_DEFAULT_CAD_EXT_STR = \
-    ".FCStd;.STEP;.STP;.IGES;.IGS;.STL;.DXF;.SVG"
+_DEFAULT_CAD_EXT_STR = ".FCStd;.STEP;.STP;.IGES;.IGS;.STL;.DXF;.SVG"
 
 
 def _normalize_ext(ext):
@@ -302,6 +303,7 @@ def save_cad_extensions(ext_list):
 
 # --- Sprint OAUTH-3: Clone defaults ---
 
+
 def save_default_clone_dir(path: str):
     """Persist default clone destination directory (user-friendly)."""
     save_setting("DefaultCloneDir", path or "")
@@ -314,10 +316,11 @@ def load_default_clone_dir() -> str:
 
 # --- Sprint OAUTH-0: GitHub OAuth settings (metadata only) ---
 
+
 def save_github_connected(connected):
     """
     Save GitHub connection status (metadata only, no tokens).
-    
+
     Args:
         connected: bool indicating if user is connected to GitHub
     """
@@ -327,7 +330,7 @@ def save_github_connected(connected):
 def load_github_connected():
     """
     Load GitHub connection status.
-    
+
     Returns:
         bool: True if GitHub is connected, False otherwise
     """
@@ -337,7 +340,7 @@ def load_github_connected():
 def save_github_login(login):
     """
     Save GitHub username (metadata only, no tokens).
-    
+
     Args:
         login: str GitHub username or None to clear
     """
@@ -347,7 +350,7 @@ def save_github_login(login):
 def load_github_login():
     """
     Load GitHub username.
-    
+
     Returns:
         str | None: GitHub username if set, None otherwise
     """
@@ -358,7 +361,7 @@ def load_github_login():
 def save_github_host(host):
     """
     Save GitHub host (supports GitHub Enterprise).
-    
+
     Args:
         host: str GitHub host (e.g., "github.com")
     """
@@ -368,7 +371,7 @@ def save_github_host(host):
 def load_github_host():
     """
     Load GitHub host.
-    
+
     Returns:
         str: GitHub host (default "github.com")
     """
@@ -376,6 +379,7 @@ def load_github_host():
 
 
 # --- Sprint OAUTH-2: Session verification metadata ---
+
 
 def save_github_user_id(user_id: int | None):
     """Save GitHub user id (metadata only)."""

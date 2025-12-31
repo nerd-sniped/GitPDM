@@ -62,7 +62,9 @@ def main(argv: list[str]) -> int:
                 print(f"- {rel}: missing (limit {limit})")
             else:
                 print(f"- {rel}: {actual} lines (limit {limit})")
-        print("\nIf this growth is intentional, bump limits in tools/architecture_baseline.json as part of the same PR.")
+        print(
+            "\nIf this growth is intentional, bump limits in tools/architecture_baseline.json as part of the same PR."
+        )
         return 1
 
     print("Architecture guard OK")

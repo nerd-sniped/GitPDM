@@ -32,8 +32,17 @@ class Result(Generic[T]):
         return Result(ok=True, value=value, error=None)
 
     @staticmethod
-    def failure(code: str, message: str, details: str = "", meta: Optional[Dict[str, Any]] = None) -> "Result[T]":
-        return Result(ok=False, value=None, error=AppError(code=code, message=message, details=details, meta=meta))
+    def failure(
+        code: str,
+        message: str,
+        details: str = "",
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> "Result[T]":
+        return Result(
+            ok=False,
+            value=None,
+            error=AppError(code=code, message=message, details=details, meta=meta),
+        )
 
     def unwrap_or(self, default: T) -> T:
         return self.value if self.ok and self.value is not None else default

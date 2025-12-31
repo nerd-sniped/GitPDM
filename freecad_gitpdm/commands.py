@@ -16,8 +16,7 @@ except ImportError:
         from PySide2 import QtCore, QtWidgets
     except ImportError:
         raise ImportError(
-            "Neither PySide6 nor PySide2 found. "
-            "FreeCAD installation may be incomplete."
+            "Neither PySide6 nor PySide2 found. FreeCAD installation may be incomplete."
         )
 
 
@@ -43,9 +42,7 @@ class GitPDMTogglePanelCommand:
         from freecad_gitpdm.ui import panel
 
         mw = FreeCADGui.getMainWindow()
-        dock = mw.findChild(
-            QtWidgets.QDockWidget, "GitPDM_DockWidget"
-        )
+        dock = mw.findChild(QtWidgets.QDockWidget, "GitPDM_DockWidget")
 
         if dock is None:
             # Create the dock widget if it doesn't exist

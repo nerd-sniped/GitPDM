@@ -47,7 +47,7 @@ def _extract_next_link(headers: dict) -> Optional[str]:
             continue
         url_part = section[0].strip()
         rel_part = ";".join(section[1:]).strip().lower()
-        if "rel=\"next\"" in rel_part:
+        if 'rel="next"' in rel_part:
             if url_part.startswith("<") and url_part.endswith(">"):
                 return url_part[1:-1]
             return url_part
@@ -73,17 +73,17 @@ def list_repos(
     - Paginates using the Link header.
     - Checks cache first (120s TTL) if use_cache=True.
     - Raises GitHubApiError for HTTP failures with friendly messages.
-    
+
     Args:
         client: GitHubApiClient instance
         per_page: Items per page (default 100, max 100)
         max_pages: Maximum pages to fetch
         use_cache: Whether to use/populate cache (default True)
         cache_key_user: Username/ID for cache key isolation
-        
+
     Returns:
         List[RepoInfo]: List of repositories
-        
+
     Raises:
         GitHubApiError: With code (UNAUTHORIZED, RATE_LIMITED, NETWORK, etc.)
     """
@@ -91,14 +91,12 @@ def list_repos(
     if use_cache:
         cache = get_github_api_cache()
         cached_repos, cache_hit = cache.get(
-            "api.github.com",
-            cache_key_user,
-            "repos_list"
+            "api.github.com", cache_key_user, "repos_list"
         )
         if cache_hit and cached_repos is not None:
             log.debug(f"Using cached repo list ({len(cached_repos)} repos)")
             return cached_repos
-    
+
     results: List[RepoInfo] = []
 
     if per_page <= 0 or per_page > 100:
@@ -147,7 +145,9 @@ def list_repos(
                     name = item.get("name") or ""
                     full_name = f"{owner}/{name}".strip("/")
                 else:
-                    owner = full_name.split("/", 1)[0] if "/" in full_name else full_name
+                    owner = (
+                        full_name.split("/", 1)[0] if "/" in full_name else full_name
+                    )
 
                 repo = RepoInfo(
                     owner=owner,

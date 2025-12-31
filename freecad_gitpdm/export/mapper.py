@@ -41,11 +41,11 @@ def preview_paths_rel(source_rel: str) -> Tuple[str, str]:
 def stl_root_path_rel(source_rel: str) -> str:
     """
     Return the STL file path at the previews root (not in part subfolder).
-    
+
     Example:
       source:  cad/parts/BRK-001/BRK-001.FCStd
       output:  previews/BRK-001.stl
-    
+
     The STL uses just the part name without the directory structure.
     """
     p = Path(source_rel)

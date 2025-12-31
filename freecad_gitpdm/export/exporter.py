@@ -183,18 +183,20 @@ def export_active_document(repo_root: str) -> ExportResult:
 
         # GLB Export (Sprint 7)
         glb_err, mesh_stats = export_glb(doc, glb_path, preset, part_name)
-        
+
         # Determine which model file actually exists (prefer OBJ; STL as converted)
         # OBJ and GLB stay in the part folder
         # STL gets moved to the previews root folder
         model_file = None
         obj_path = glb_path.with_suffix(".obj")
-        stl_path_in_part = glb_path.with_suffix(".stl")  # Where STL is generated initially
-        
+        stl_path_in_part = glb_path.with_suffix(
+            ".stl"
+        )  # Where STL is generated initially
+
         # STL root path (where it will be placed)
         stl_root_rel = stl_root_path_rel(rel)
         stl_root_abs = core_paths.safe_join_repo(repo_root_n, stl_root_rel)
-        
+
         if obj_path.exists() and obj_path.stat().st_size > 100:
             model_file = rel_dir + f"{part_name}.obj"
         elif glb_path.exists() and glb_path.stat().st_size > 100:
@@ -202,13 +204,13 @@ def export_active_document(repo_root: str) -> ExportResult:
         elif stl_path_in_part.exists() and stl_path_in_part.stat().st_size > 100:
             # If no OBJ or GLB, STL is the primary model (still point to root location)
             model_file = stl_root_rel
-        
+
         # Also include STL in artifacts if it was generated (GitHub preview support)
         # STL is stored in the previews root
         model_artifacts = {}
         if model_file:
             model_artifacts["model"] = model_file
-        
+
         # Move STL to root if it was generated in the part folder
         if stl_path_in_part.exists() and stl_path_in_part.stat().st_size > 100:
             try:
@@ -235,7 +237,7 @@ def export_active_document(repo_root: str) -> ExportResult:
                         stl_path_in_part.unlink()
                     except Exception:
                         pass
-        
+
         # Move FCBak file to previews folder if it exists
         # FCBak files are FreeCAD's auto-backup files created alongside FCStd
         # This waits briefly for the file to appear since FreeCAD creates it asynchronously
@@ -248,7 +250,7 @@ def export_active_document(repo_root: str) -> ExportResult:
             except Exception:
                 pass
         move_fcbak_to_previews(Path(file_name), out_dir, part_name, max_backups)
-        
+
         # Only warn if we had to fall back to STL or nothing was created
         if not model_file:
             if glb_err:
@@ -273,7 +275,7 @@ def export_active_document(repo_root: str) -> ExportResult:
 
         # Source hash
         src_hash = sha256_file(Path(file_name))
-        
+
         # Load existing maxBackups setting from previous JSON if it exists
         max_backups = 3  # Default value
         if json_path.exists():

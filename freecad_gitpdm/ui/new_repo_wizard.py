@@ -18,8 +18,7 @@ except ImportError:
         from PySide2 import QtCore, QtGui, QtWidgets
     except ImportError as e:
         raise ImportError(
-            "Neither PySide6 nor PySide2 found. "
-            "FreeCAD installation may be incomplete."
+            "Neither PySide6 nor PySide2 found. FreeCAD installation may be incomplete."
         ) from e
 
 import os
@@ -127,7 +126,9 @@ class _InputPage(QtWidgets.QWizardPage):
 
         # Description (optional)
         self._desc_edit = QtWidgets.QLineEdit()
-        self._desc_edit.setPlaceholderText("Optional description (can be edited on GitHub)")
+        self._desc_edit.setPlaceholderText(
+            "Optional description (can be edited on GitHub)"
+        )
         layout.addRow("Description:", self._desc_edit)
 
         # Status label
@@ -156,14 +157,14 @@ class _InputPage(QtWidgets.QWizardPage):
         """Return dict with folder, name, private, description."""
         selected_folder = self._folder_edit.text().strip()
         repo_name = self._name_edit.text().strip()
-        
+
         # Create subfolder with repo name inside selected folder
         if selected_folder and repo_name:
             # Normalize paths to handle spaces and special characters properly
             repo_folder = os.path.normpath(os.path.join(selected_folder, repo_name))
         else:
             repo_folder = selected_folder
-        
+
         return {
             "folder": repo_folder,
             "name": repo_name,
@@ -191,7 +192,7 @@ class _InputPage(QtWidgets.QWizardPage):
             self._status_label.setText("")
             return False
 
-        if not re.match(r'^[a-zA-Z0-9._-]+$', name):
+        if not re.match(r"^[a-zA-Z0-9._-]+$", name):
             self._status_label.setText(
                 "Invalid name. Use letters, numbers, dash, dot, underscore."
             )
@@ -290,7 +291,9 @@ class _ProgressPage(QtWidgets.QWizardPage):
         # Result banner
         self._result_label = QtWidgets.QLabel("")
         self._result_label.setWordWrap(True)
-        self._result_label.setStyleSheet("background: #f0f0f0; padding: 8px; border-radius: 4px;")
+        self._result_label.setStyleSheet(
+            "background: #f0f0f0; padding: 8px; border-radius: 4px;"
+        )
         layout.addWidget(self._result_label)
 
         layout.addStretch()
@@ -305,12 +308,12 @@ class _ProgressPage(QtWidgets.QWizardPage):
             self._git_client = self._parent_wizard._git_client
             self._inputs = self._parent_wizard._input_page.get_inputs()
             self._options = self._parent_wizard._options_page.get_options()
-            
+
             log.info(f"API client available: {self._api_client is not None}")
             log.info(f"Git client available: {self._git_client is not None}")
             log.info(f"Inputs received: {self._inputs}")
             log.info(f"Options received: {self._options}")
-            
+
             # Start workflow in a deferred way (after UI renders)
             QtCore.QTimer.singleShot(100, self._start_workflow)
 
@@ -321,10 +324,10 @@ class _ProgressPage(QtWidgets.QWizardPage):
         self._progress_list.clear()
         self._status_text.clear()
         self._result_label.setText("")
-        
+
         log.info(f"Inputs: {self._inputs}")
         log.info(f"Options: {self._options}")
-        
+
         self.run_workflow(
             self._api_client,
             self._git_client,
@@ -357,13 +360,13 @@ class _ProgressPage(QtWidgets.QWizardPage):
         log.info(f"folder input: {folder}")
         log.info(f"folder_abs after normpath: {folder_abs}")
         log.info(f"name: {name}")
-        
+
         try:
             # Check parent directory exists BEFORE trying to create anything
             parent_dir = os.path.dirname(folder_abs)
             log.info(f"Parent directory: {parent_dir}")
             log.info(f"Parent exists: {os.path.exists(parent_dir)}")
-            
+
             if not os.path.exists(parent_dir):
                 msg = f"Parent directory does not exist: {parent_dir}"
                 log.error(msg)
@@ -375,14 +378,14 @@ class _ProgressPage(QtWidgets.QWizardPage):
             self._add_step(f"Creating folder: {name}/")
             log.info(f"Step 0: About to create folder at {folder_abs}")
             log.info(f"  Folder exists before: {os.path.exists(folder_abs)}")
-            
+
             # Ensure the folder doesn't already exist to avoid conflicts
             if os.path.exists(folder_abs) and not os.path.isdir(folder_abs):
                 msg = f"Path exists but is not a folder: {folder_abs}"
                 log.error(msg)
                 self._update_step_error(0, msg)
                 return
-            
+
             # Create folder - try multiple approaches
             if not os.path.exists(folder_abs):
                 log.info(f"Folder doesn't exist, creating it...")
@@ -391,33 +394,40 @@ class _ProgressPage(QtWidgets.QWizardPage):
                     log.info(f"Attempt 1: os.makedirs('{folder_abs}')")
                     os.makedirs(folder_abs, exist_ok=True)
                     log.info(f"  Return from makedirs")
-                    
+
                     # Verify immediately
                     exists_check1 = os.path.exists(folder_abs)
                     isdir_check1 = os.path.isdir(folder_abs)
-                    log.info(f"  After makedirs - exists: {exists_check1}, isdir: {isdir_check1}")
-                    
+                    log.info(
+                        f"  After makedirs - exists: {exists_check1}, isdir: {isdir_check1}"
+                    )
+
                     if not exists_check1:
-                        log.warning(f"  os.path.exists() says False immediately after makedirs!")
+                        log.warning(
+                            f"  os.path.exists() says False immediately after makedirs!"
+                        )
                         # Try alternative check
                         import pathlib
+
                         pathlib_exists = pathlib.Path(folder_abs).exists()
                         log.info(f"  pathlib.Path.exists(): {pathlib_exists}")
-                        
+
                         if pathlib_exists:
-                            log.info(f"  pathlib says it exists, issue with os.path.exists()?")
+                            log.info(
+                                f"  pathlib says it exists, issue with os.path.exists()?"
+                            )
                         else:
                             log.error(f"  pathlib also says it doesn't exist!")
-                    
+
                     if not isdir_check1:
                         msg = f"Failed to create directory (isdir=False): {folder_abs}"
                         log.error(msg)
                         self._update_step_error(0, msg)
                         return
-                    
+
                     log.info(f"Step 0: Folder created successfully")
                     self._update_step_success(0, f"Created: {folder_abs}")
-                    
+
                 except PermissionError as e:
                     msg = f"Permission denied creating folder: {folder_abs}\nError: {e}"
                     log.error(msg)
@@ -441,7 +451,9 @@ class _ProgressPage(QtWidgets.QWizardPage):
             else:
                 log.info(f"Folder already exists, using it")
                 if not os.path.isdir(folder_abs):
-                    self._update_step_error(0, f"Path exists but is not a folder: {folder_abs}")
+                    self._update_step_error(
+                        0, f"Path exists but is not a folder: {folder_abs}"
+                    )
                     return
                 self._update_step_success(0, "Using existing folder")
 
@@ -457,16 +469,18 @@ class _ProgressPage(QtWidgets.QWizardPage):
             try:
                 repo_info = create_user_repo(api_client, req)
                 log.info(f"GitHub repo created: {repo_info.full_name}")
-                self._update_step_success(1, f"GitHub repo created: {repo_info.full_name}")
+                self._update_step_success(
+                    1, f"GitHub repo created: {repo_info.full_name}"
+                )
             except GitHubApiError as e:
                 # Check if session expired (401)
-                if hasattr(e, 'code') and e.code == "UNAUTHORIZED":
+                if hasattr(e, "code") and e.code == "UNAUTHORIZED":
                     log.error(f"GitHub session expired: {e}")
                     self._update_step_error(1, "Session expired. Please reconnect.")
                     if self._parent_wizard._on_session_expired:
                         self._parent_wizard._on_session_expired()
                     return
-                
+
                 log.error(f"GitHub repo creation failed: {e}")
                 self._update_step_error(1, str(e))
                 return
@@ -474,20 +488,28 @@ class _ProgressPage(QtWidgets.QWizardPage):
             # === STEP 2: Init local repo ===
             self._add_step("Initializing local git…")
             log.info(f"Step 2: Initializing git in {folder_abs}")
-            log.info(f"  Before init - exists: {os.path.exists(folder_abs)}, isdir: {os.path.isdir(folder_abs)}")
-            
+            log.info(
+                f"  Before init - exists: {os.path.exists(folder_abs)}, isdir: {os.path.isdir(folder_abs)}"
+            )
+
             if not os.path.isdir(folder_abs):
                 msg = f"Folder disappeared before git init: {folder_abs}"
                 log.error(msg)
                 self._update_step_error(2, msg)
-                self._show_recovery("repo exists on GitHub", folder_abs, repo_info.html_url)
+                self._show_recovery(
+                    "repo exists on GitHub", folder_abs, repo_info.html_url
+                )
                 return
-            
+
             init_result = git_client.init_repo(folder_abs)
-            log.info(f"Git init result: ok={init_result.ok}, stderr={init_result.stderr}")
+            log.info(
+                f"Git init result: ok={init_result.ok}, stderr={init_result.stderr}"
+            )
             if not init_result.ok:
                 self._update_step_error(2, init_result.stderr)
-                self._show_recovery("repo exists on GitHub", folder_abs, repo_info.html_url)
+                self._show_recovery(
+                    "repo exists on GitHub", folder_abs, repo_info.html_url
+                )
                 return
             self._update_step_success(2, "Local git initialized")
 
@@ -496,9 +518,13 @@ class _ProgressPage(QtWidgets.QWizardPage):
             log.info(f"Step 3: Writing scaffolding")
             if enable_scaffold:
                 try:
-                    scaffold.apply_scaffold(folder_abs, enable_lfs=enable_lfs, write_preset=True)
+                    scaffold.apply_scaffold(
+                        folder_abs, enable_lfs=enable_lfs, write_preset=True
+                    )
                     log.info(f"Scaffolding created successfully")
-                    self._update_step_success(3, "Scaffolding created (cad/, previews/, .freecad-pdm/)")
+                    self._update_step_success(
+                        3, "Scaffolding created (cad/, previews/, .freecad-pdm/)"
+                    )
                 except OSError as e:
                     log.error(f"Scaffolding failed: {e}")
                     self._update_step_error(3, str(e))
@@ -525,7 +551,9 @@ class _ProgressPage(QtWidgets.QWizardPage):
                     self._update_step_success(5, "Git LFS configured")
                 else:
                     log.warning(f"Git LFS install had issues: {lfs_result.stderr}")
-                    self._update_step_success(5, "Git LFS config written (install may be needed)")
+                    self._update_step_success(
+                        5, "Git LFS config written (install may be needed)"
+                    )
             else:
                 log.info(f"Git LFS skipped")
                 self._update_step_success(5, "Git LFS skipped")
@@ -536,17 +564,16 @@ class _ProgressPage(QtWidgets.QWizardPage):
             stage_result = git_client.stage_all(folder_abs)
             if not stage_result.ok:
                 log.error(f"Failed to stage files: {stage_result.stderr}")
-                self._update_step_error(6, f"Failed to stage files: {stage_result.stderr}")
+                self._update_step_error(
+                    6, f"Failed to stage files: {stage_result.stderr}"
+                )
                 return
             self._update_step_success(6, "Files staged")
 
             # === STEP 7: First commit ===
             self._add_step("Creating first commit…")
             log.info(f"Step 7: Creating first commit")
-            commit_result = git_client.commit(
-                folder_abs,
-                f"Initial commit: {name}"
-            )
+            commit_result = git_client.commit(folder_abs, f"Initial commit: {name}")
             if not commit_result.ok:
                 if "MISSING_IDENTITY" in (commit_result.error_code or ""):
                     msg = (
@@ -605,8 +632,10 @@ class _ProgressPage(QtWidgets.QWizardPage):
                 f"Local folder: {folder_abs}\n\n"
                 f"<a href='{repo_info.html_url}'>View on GitHub</a>"
             )
-            self._result_label.setStyleSheet("background: #e8f5e9; padding: 8px; border-radius: 4px; color: green;")
-            
+            self._result_label.setStyleSheet(
+                "background: #e8f5e9; padding: 8px; border-radius: 4px; color: green;"
+            )
+
             # Allow finishing
             self.setFinalPage(True)
             self._parent_wizard.button(QtWidgets.QWizard.FinishButton).setEnabled(True)

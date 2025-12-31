@@ -48,13 +48,13 @@ class GitHubAuthHandler:
         if self._is_checking_connection:
             log.debug("Connection status check already in progress")
             return
-        
+
         self._is_checking_connection = True
-        
+
         # Show checking state
         self.panel.github_status_label.setText("GitHub: Checking…")
         self.panel._set_strong_label(self.panel.github_status_label, "orange")
-        
+
         # Sprint PERF-4: Check credentials in background
         def _check_credentials():
             """Background job to check GitHub credentials."""
@@ -68,14 +68,14 @@ class GitHubAuthHandler:
             except Exception as e:
                 log.debug(f"Failed to check GitHub credentials: {e}")
                 return {"connected": False, "login": None}
-        
+
         # Use job_runner if available (panel initialization), fallback to sync for tests
-        if hasattr(self.panel, '_job_runner') and self.panel._job_runner:
+        if hasattr(self.panel, "_job_runner") and self.panel._job_runner:
             self.panel._job_runner.run_callable(
                 "check_github_credentials",
                 _check_credentials,
                 on_success=self._on_connection_status_checked,
-                on_error=self._on_connection_status_error
+                on_error=self._on_connection_status_error,
             )
         else:
             # Fallback for tests without job_runner
@@ -85,22 +85,22 @@ class GitHubAuthHandler:
     def _on_connection_status_checked(self, result):
         """Callback when connection status check completes (Sprint PERF-4)."""
         self._is_checking_connection = False
-        
+
         is_connected = result.get("connected", False)
         login = result.get("login", None)
-        
+
         settings.save_github_connected(is_connected)
         self.update_ui_state()
-        
+
         if is_connected:
             log.info("GitHub token found in credential store")
         else:
             log.debug("No GitHub token in credential store")
-    
+
     def _on_connection_status_error(self, error_msg):
         """Callback when connection status check fails (Sprint PERF-4)."""
         self._is_checking_connection = False
-        
+
         log.debug(f"Failed to check GitHub connection: {error_msg}")
         settings.save_github_connected(False)
         self.update_ui_state()
@@ -165,6 +165,7 @@ class GitHubAuthHandler:
             self.update_ui_state()
             # Safe to show in UI - log module handles redaction
             from freecad_gitpdm.core.log import _redact_sensitive
+
             QtWidgets.QMessageBox.critical(
                 self.panel,
                 "GitHub Connection Error",
@@ -221,6 +222,7 @@ class GitHubAuthHandler:
         except Exception as e:
             log.error_safe("Error disconnecting GitHub", e)
             from freecad_gitpdm.core.log import _redact_sensitive
+
             QtWidgets.QMessageBox.critical(
                 self.panel,
                 "Disconnect Failed",
@@ -233,6 +235,7 @@ class GitHubAuthHandler:
 
     def maybe_auto_verify_identity(self):
         """Auto-verify identity on panel open with 10-minute cooldown (Sprint PERF-4: fully async)."""
+
         # Sprint PERF-4: Move all checks to background including cooldown
         def _check_should_verify():
             """Background job to check if verification is needed."""
@@ -241,20 +244,21 @@ class GitHubAuthHandler:
                 host = settings.load_github_host()
                 account = settings.load_github_login()
                 token = store.load(host, account)
-                
+
                 if not token:
                     return {"should_verify": False, "reason": "no_token"}
-                
+
                 last_verified = settings.load_last_verified_at() or ""
                 if not last_verified:
                     return {"should_verify": True, "reason": "never_verified"}
-                
+
                 from datetime import datetime, timezone
+
                 try:
                     dt = datetime.fromisoformat(last_verified)
                     now = datetime.now(timezone.utc)
                     age_s = (now - dt).total_seconds()
-                    
+
                     if age_s > 10 * 60:  # 10 minute cooldown
                         return {"should_verify": True, "reason": "cooldown_expired"}
                     else:
@@ -264,25 +268,25 @@ class GitHubAuthHandler:
             except Exception as e:
                 log.debug(f"Auto verify check failed: {e}")
                 return {"should_verify": False, "reason": "error"}
-        
+
         # Use job_runner if available
-        if hasattr(self.panel, '_job_runner') and self.panel._job_runner:
+        if hasattr(self.panel, "_job_runner") and self.panel._job_runner:
             self.panel._job_runner.run_callable(
                 "check_auto_verify_needed",
                 _check_should_verify,
                 on_success=self._on_auto_verify_check_complete,
-                on_error=lambda error: log.debug(f"Auto verify check error: {error}")
+                on_error=lambda error: log.debug(f"Auto verify check error: {error}"),
             )
         else:
             # Fallback for tests
             result = _check_should_verify()
             self._on_auto_verify_check_complete(result)
-    
+
     def _on_auto_verify_check_complete(self, result):
         """Callback when auto-verify check completes (Sprint PERF-4)."""
         should_verify = result.get("should_verify", False)
         reason = result.get("reason", "unknown")
-        
+
         if should_verify:
             log.debug(f"Auto-verifying identity: {reason}")
             self.verify_identity_async(force=False)
@@ -297,17 +301,13 @@ class GitHubAuthHandler:
             client = self.services.github_api_client()
             if not client:
                 self.panel.github_status_label.setText("GitHub: Not connected")
-                self.panel._set_strong_label(
-                    self.panel.github_status_label, "gray"
-                )
+                self.panel._set_strong_label(self.panel.github_status_label, "gray")
                 self.update_ui_state()
                 return
 
             # Show verifying state
             self.panel.github_status_label.setText("GitHub: Verifying…")
-            self.panel._set_strong_label(
-                self.panel.github_status_label, "orange"
-            )
+            self.panel._set_strong_label(self.panel.github_status_label, "orange")
             self.panel.github_refresh_btn.setEnabled(False)
 
             # Run in background
@@ -374,11 +374,11 @@ class GitHubAuthHandler:
         code_layout = QtWidgets.QVBoxLayout()
         code_layout.setSpacing(4)
         code_container.setLayout(code_layout)
-        
+
         code_title = QtWidgets.QLabel("Your Authorization Code:")
         code_title.setStyleSheet("font-weight: bold; color: #555;")
         code_layout.addWidget(code_title)
-        
+
         code_label = QtWidgets.QLabel(device_code_response.user_code)
         code_font = QtGui.QFont("Courier")
         code_font.setPointSize(18)
@@ -391,16 +391,20 @@ class GitHubAuthHandler:
         )
         code_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         code_layout.addWidget(code_label)
-        
-        hint_label = QtWidgets.QLabel("\u2713 Code already copied to clipboard - just paste it!")
+
+        hint_label = QtWidgets.QLabel(
+            "\u2713 Code already copied to clipboard - just paste it!"
+        )
         hint_label.setStyleSheet("color: green; font-style: italic; font-size: 10px;")
         hint_label.setAlignment(QtCore.Qt.AlignCenter)
         code_layout.addWidget(hint_label)
-        
+
         layout.addWidget(code_container)
 
         # Status label
-        self._oauth_status_label = QtWidgets.QLabel("Waiting for you to authorize on GitHub...")
+        self._oauth_status_label = QtWidgets.QLabel(
+            "Waiting for you to authorize on GitHub..."
+        )
         self._oauth_status_label.setStyleSheet(
             "color: orange; font-style: italic; font-size: 11px;"
         )
@@ -421,9 +425,7 @@ class GitHubAuthHandler:
         open_btn = QtWidgets.QPushButton("Open GitHub Page")
         open_btn.setToolTip("Open the GitHub authorization page in your browser")
         open_btn.clicked.connect(
-            lambda: self._open_verification_uri(
-                device_code_response.verification_uri
-            )
+            lambda: self._open_verification_uri(device_code_response.verification_uri)
         )
         buttons_layout.addWidget(open_btn)
 
@@ -528,11 +530,11 @@ class GitHubAuthHandler:
             except OSError as storage_err:
                 # Credential storage failed - this is a critical security issue
                 log.error_safe("Failed to store token securely", storage_err)
-                
+
                 # Close OAuth dialog first
                 if self._oauth_dialog:
                     self._oauth_dialog.close()
-                
+
                 # Show critical warning to user
                 QtWidgets.QMessageBox.critical(
                     self.panel,
@@ -545,7 +547,7 @@ class GitHubAuthHandler:
                     "You'll need to sign in again next time you open FreeCAD.\n\n"
                     f"Technical details: {storage_err}",
                 )
-                
+
                 # Don't mark as connected since we couldn't store the token
                 self._oauth_in_progress = False
                 self._oauth_cancel_token = None
@@ -564,12 +566,13 @@ class GitHubAuthHandler:
 
             # Show success message
             QtWidgets.QMessageBox.information(
-                self.panel, "\u2713 Connected to GitHub!", 
+                self.panel,
+                "\u2713 Connected to GitHub!",
                 "Great! You're now connected to GitHub.\n\n"
                 "You can now:\n"
                 "  \u2022 Create new projects\n"
                 "  \u2022 Share your work with your team\n"
-                "  \u2022 Download team projects"
+                "  \u2022 Download team projects",
             )
 
             log.info("GitHub OAuth flow completed successfully")
@@ -612,9 +615,7 @@ class GitHubAuthHandler:
                 msg = f"Couldn't connect to GitHub.\n\nMake sure you're connected to the internet and try again."
 
             log.error(f"OAuth error: {msg}")
-            QtWidgets.QMessageBox.warning(
-                self.panel, "Couldn't Connect to GitHub", msg
-            )
+            QtWidgets.QMessageBox.warning(self.panel, "Couldn't Connect to GitHub", msg)
         except Exception as e:
             log.error_safe("Error handling token poll error", e)
         finally:
@@ -630,10 +631,13 @@ class GitHubAuthHandler:
             if self._oauth_dialog:
                 self._oauth_dialog.close()
 
-            log.error_safe("OAuth flow error", error if isinstance(error, Exception) else None)
+            log.error_safe(
+                "OAuth flow error", error if isinstance(error, Exception) else None
+            )
             if not isinstance(error, Exception):
                 log.error(f"OAuth flow error: {error}")
             from freecad_gitpdm.core.log import _redact_sensitive
+
             QtWidgets.QMessageBox.critical(
                 self.panel,
                 "GitHub Connection Error",
@@ -662,9 +666,7 @@ class GitHubAuthHandler:
                     self.panel.github_status_label.setText(
                         "GitHub: Session expired; please reconnect"
                     )
-                    self.panel._set_strong_label(
-                        self.panel.github_status_label, "red"
-                    )
+                    self.panel._set_strong_label(self.panel.github_status_label, "red")
                 elif result and result.error_code == "RATE_LIMITED":
                     self.panel.github_status_label.setText(
                         "GitHub: Rate limit reached; try later"
@@ -683,9 +685,7 @@ class GitHubAuthHandler:
                     self.panel.github_status_label.setText(
                         "GitHub: Verification failed"
                     )
-                    self.panel._set_strong_label(
-                        self.panel.github_status_label, "red"
-                    )
+                    self.panel._set_strong_label(self.panel.github_status_label, "red")
                 self.panel.github_refresh_btn.setEnabled(True)
                 self.update_ui_state()
                 return
@@ -697,15 +697,11 @@ class GitHubAuthHandler:
             settings.save_github_user_id(uid)
             settings.save_github_connected(True)
             settings.save_last_api_error(None, None)
-            settings.save_last_verified_at(
-                datetime.now(timezone.utc).isoformat()
-            )
+            settings.save_last_verified_at(datetime.now(timezone.utc).isoformat())
 
             # Update UI
             if login:
-                self.panel.github_status_label.setText(
-                    f"GitHub: Signed in as {login}"
-                )
+                self.panel.github_status_label.setText(f"GitHub: Signed in as {login}")
             else:
                 self.panel.github_status_label.setText("GitHub: Connected")
             self.panel._set_strong_label(self.panel.github_status_label, "green")

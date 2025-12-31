@@ -15,10 +15,10 @@ from freecad_gitpdm.export.stl_converter import obj_to_stl
 def compute_bbox_mm(doc) -> Optional[Tuple[float, float, float]]:
     """
     Compute bounding box size in mm (robust across API variants).
-    
+
     Args:
         doc: FreeCAD document
-    
+
     Returns:
         Tuple of (width, height, depth) in mm, or None if computation fails
     """
@@ -104,13 +104,13 @@ def export_glb(
     """
     Export GLB mesh artifact. Best-effort across FreeCAD versions.
     Returns (error_msg, mesh_stats).
-    
+
     Args:
         doc: FreeCAD document
         out_path: Output path for model file (base path; extensions vary)
         preset: Export preset configuration
         part_name: Name of the part for file naming (used in .obj/.stl filenames)
-    
+
     Returns:
         Tuple of (error_message, mesh_stats_dict). error_message is None on success.
     """
@@ -128,7 +128,8 @@ def export_glb(
             objs = [export_obj]
         else:
             objs = [
-                o for o in doc.Objects
+                o
+                for o in doc.Objects
                 if getattr(o, "Shape", None)
                 and getattr(getattr(o, "ViewObject", None), "Visibility", True)
             ]
@@ -158,7 +159,9 @@ def export_glb(
                     Relative=relative,
                 )
             except Exception as e_tess:
-                log.debug(f"Tessellate failed for object {getattr(obj,'Name','?')}: {e_tess}")
+                log.debug(
+                    f"Tessellate failed for object {getattr(obj, 'Name', '?')}: {e_tess}"
+                )
                 continue
         # Best-effort recompute
         try:
@@ -226,14 +229,14 @@ def export_glb(
         try:
             import importGLTF
 
-            if not hasattr(importGLTF, 'export') or not callable(importGLTF.export):
+            if not hasattr(importGLTF, "export") or not callable(importGLTF.export):
                 raise Exception("importGLTF.export not available")
 
             importGLTF.export(mesh_objs, str(out_path))
 
             if out_path.exists() and out_path.stat().st_size > 100:
-                with open(out_path, 'rb') as f:
-                    if f.read(4) != b'glTF':
+                with open(out_path, "rb") as f:
+                    if f.read(4) != b"glTF":
                         out_path.unlink()
                         raise Exception("Invalid GLB header")
 

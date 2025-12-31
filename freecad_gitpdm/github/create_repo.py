@@ -21,6 +21,7 @@ from freecad_gitpdm.github.errors import GitHubApiError, GitHubApiNetworkError
 @dataclass
 class CreateRepoRequest:
     """Request to create a new repository."""
+
     name: str
     private: bool
     description: Optional[str] = None
@@ -30,6 +31,7 @@ class CreateRepoRequest:
 @dataclass
 class CreatedRepoInfo:
     """Response data from successful repo creation."""
+
     full_name: str
     html_url: str
     clone_url: str
@@ -67,7 +69,8 @@ def create_user_repo(
 
     # Validate repo name (simple check: letters, numbers, ., -, _)
     import re
-    if not re.match(r'^[a-zA-Z0-9._-]+$', req.name):
+
+    if not re.match(r"^[a-zA-Z0-9._-]+$", req.name):
         raise GitHubApiError(
             f"Invalid repository name '{req.name}'. "
             "Use letters, numbers, dash, dot, or underscore."
@@ -111,8 +114,7 @@ def create_user_repo(
             except (AttributeError, TypeError):
                 pass
             raise GitHubApiError(
-                "Repository creation failed (422). "
-                "Check name is unique and valid."
+                "Repository creation failed (422). Check name is unique and valid."
             )
         elif status == 401:
             log.warning("Unauthorized: token may have expired")
@@ -123,15 +125,15 @@ def create_user_repo(
             )
         elif status == 403:
             # Check rate limit
-            remaining = headers.get("X-RateLimit-Remaining") or headers.get("x-ratelimit-remaining")
+            remaining = headers.get("X-RateLimit-Remaining") or headers.get(
+                "x-ratelimit-remaining"
+            )
             if remaining is not None and str(remaining) == "0":
                 raise GitHubApiError(
-                    "GitHub rate limit reached. "
-                    "Wait a moment and try again."
+                    "GitHub rate limit reached. Wait a moment and try again."
                 )
             raise GitHubApiError(
-                "Permission denied. "
-                "Check that your token has repo creation scope."
+                "Permission denied. Check that your token has repo creation scope."
             )
         else:
             raise GitHubApiError(
@@ -152,9 +154,7 @@ def create_user_repo(
         )
 
         if not repo_info.full_name or not repo_info.clone_url:
-            raise GitHubApiError(
-                "Incomplete response from GitHub API"
-            )
+            raise GitHubApiError("Incomplete response from GitHub API")
 
         log.info(f"Repository created: {repo_info.full_name}")
         return repo_info

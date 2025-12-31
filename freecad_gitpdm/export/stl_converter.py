@@ -15,20 +15,21 @@ from dataclasses import dataclass
 @dataclass
 class Vector3:
     """3D vector for geometry calculations."""
+
     x: float
     y: float
     z: float
 
-    def __sub__(self, other: 'Vector3') -> 'Vector3':
+    def __sub__(self, other: "Vector3") -> "Vector3":
         return Vector3(self.x - other.x, self.y - other.y, self.z - other.z)
 
-    def __add__(self, other: 'Vector3') -> 'Vector3':
+    def __add__(self, other: "Vector3") -> "Vector3":
         return Vector3(self.x + other.x, self.y + other.y, self.z + other.z)
 
-    def __mul__(self, scalar: float) -> 'Vector3':
+    def __mul__(self, scalar: float) -> "Vector3":
         return Vector3(self.x * scalar, self.y * scalar, self.z * scalar)
 
-    def cross(self, other: 'Vector3') -> 'Vector3':
+    def cross(self, other: "Vector3") -> "Vector3":
         """Compute cross product."""
         return Vector3(
             self.y * other.z - self.z * other.y,
@@ -38,9 +39,9 @@ class Vector3:
 
     def magnitude(self) -> float:
         """Compute vector length."""
-        return (self.x ** 2 + self.y ** 2 + self.z ** 2) ** 0.5
+        return (self.x**2 + self.y**2 + self.z**2) ** 0.5
 
-    def normalize(self) -> 'Vector3':
+    def normalize(self) -> "Vector3":
         """Return normalized (unit) vector."""
         mag = self.magnitude()
         if mag < 1e-10:
@@ -54,6 +55,7 @@ class Vector3:
 @dataclass
 class Triangle:
     """Triangle with vertices (indices into vertex list)."""
+
     v0: int
     v1: int
     v2: int
@@ -103,7 +105,9 @@ def parse_obj(obj_path: Path) -> Tuple[List[Vector3], List[Triangle], Optional[s
                         # Triangulate: for n-gons, split into triangles from first vertex
                         if len(indices) >= 3:
                             for i in range(1, len(indices) - 1):
-                                triangles.append(Triangle(indices[0], indices[i], indices[i + 1]))
+                                triangles.append(
+                                    Triangle(indices[0], indices[i], indices[i + 1])
+                                )
                     except (ValueError, IndexError):
                         pass
 

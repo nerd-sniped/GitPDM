@@ -8,4 +8,3 @@ Modules:
 - mapper: Map source path to preview output dir
 - exporter: Deterministic PNG + JSON export
 """
-

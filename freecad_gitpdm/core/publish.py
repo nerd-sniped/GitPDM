@@ -46,17 +46,14 @@ class PublishCoordinator:
         self.current_step = PublishStep.PRECHECK
         self.abort_requested = False
 
-    def precheck(
-        self,
-        repo_root: str,
-        remote: str = "origin"
-    ) -> PublishResult:
+    def precheck(self, repo_root: str, remote: str = "origin") -> PublishResult:
         """
         Run preflight checks before publish.
         Returns PublishResult with ok=True if ready.
         """
         try:
             import FreeCAD
+
             doc = FreeCAD.ActiveDocument
         except Exception:
             doc = None
@@ -174,23 +171,17 @@ class PublishCoordinator:
 
         # Artifacts
         if export_result.png_path and export_result.png_path.exists():
-            png_rel = core_paths.to_repo_rel(
-                str(export_result.png_path), repo_root
-            )
+            png_rel = core_paths.to_repo_rel(str(export_result.png_path), repo_root)
             if png_rel:
                 paths_to_stage.append(png_rel)
 
         if export_result.json_path and export_result.json_path.exists():
-            json_rel = core_paths.to_repo_rel(
-                str(export_result.json_path), repo_root
-            )
+            json_rel = core_paths.to_repo_rel(str(export_result.json_path), repo_root)
             if json_rel:
                 paths_to_stage.append(json_rel)
 
         if export_result.glb_path and export_result.glb_path.exists():
-            glb_rel = core_paths.to_repo_rel(
-                str(export_result.glb_path), repo_root
-            )
+            glb_rel = core_paths.to_repo_rel(str(export_result.glb_path), repo_root)
             if glb_rel:
                 paths_to_stage.append(glb_rel)
 
@@ -221,9 +212,7 @@ class PublishCoordinator:
             details={"staged_paths": paths_to_stage},
         )
 
-    def commit_changes(
-        self, repo_root: str, message: str
-    ) -> PublishResult:
+    def commit_changes(self, repo_root: str, message: str) -> PublishResult:
         """
         Create commit with message.
         """
@@ -267,9 +256,7 @@ class PublishCoordinator:
             message="Commit created",
         )
 
-    def push_to_remote(
-        self, repo_root: str, remote: str = "origin"
-    ) -> PublishResult:
+    def push_to_remote(self, repo_root: str, remote: str = "origin") -> PublishResult:
         """
         Push to remote.
         """

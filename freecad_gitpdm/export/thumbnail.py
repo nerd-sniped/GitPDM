@@ -13,11 +13,11 @@ from typing import Any, Dict, Optional
 def set_view_for_thumbnail(view, preset: Dict[str, Any]) -> bool:
     """
     Configure view for thumbnail capture according to preset.
-    
+
     Args:
         view: FreeCAD view object
         preset: Preset configuration dictionary
-    
+
     Returns:
         True if view was configured successfully, False otherwise
     """
@@ -75,19 +75,19 @@ def set_view_for_thumbnail(view, preset: Dict[str, Any]) -> bool:
 def save_thumbnail(view, preset: Dict[str, Any], out_path: Path) -> Optional[str]:
     """
     Save thumbnail PNG from FreeCAD view.
-    
+
     Args:
         view: FreeCAD view object
         preset: Preset configuration dictionary
         out_path: Output path for PNG file
-    
+
     Returns:
         None on success, error message string on failure
     """
     size = preset.get("thumbnail", {}).get("size", [512, 512])
     w, h = int(size[0]), int(size[1])
     bg = preset.get("thumbnail", {}).get("background", "transparent")
-    
+
     # Handle transparent background
     if bg.lower() in ["transparent", "none", ""]:
         # Set view background to transparent before capturing
@@ -98,7 +98,7 @@ def save_thumbnail(view, preset: Dict[str, Any], out_path: Path) -> Optional[str
                 orig_bg_color = view.getBackgroundColor()
             except Exception:
                 pass
-            
+
             # Set transparent/white background (FreeCAD doesn't support true transparency in viewport)
             # We'll make it transparent in the image processing
             try:
@@ -109,9 +109,9 @@ def save_thumbnail(view, preset: Dict[str, Any], out_path: Path) -> Optional[str
                     view.setBackgroundColor(1.0, 1.0, 1.0)
                 except Exception:
                     pass
-            
+
             pm = view.getPixmap(w, h)
-            
+
             # Restore original background
             if orig_bg_color is not None:
                 try:
@@ -121,7 +121,7 @@ def save_thumbnail(view, preset: Dict[str, Any], out_path: Path) -> Optional[str
                         view.setBackgroundColor(*orig_bg_color)
                 except Exception:
                     pass
-            
+
             try:
                 from PySide6.QtGui import QImage, QColor
                 from PySide6.QtCore import Qt
@@ -131,29 +131,33 @@ def save_thumbnail(view, preset: Dict[str, Any], out_path: Path) -> Optional[str
                     from PySide2.QtCore import Qt
                 except Exception as e:
                     return f"Thumbnail requires FreeCAD GUI ({e})"
-            
+
             try:
                 # Create image with alpha channel
                 img = QImage(w, h, QImage.Format_ARGB32)
                 # Fill with transparent background
                 img.fill(Qt.transparent)
-                
+
                 # Convert pixmap to image for processing
                 pm_img = pm.toImage().convertToFormat(QImage.Format_ARGB32)
-                
+
                 # Make white/near-white background pixels transparent
                 # This processes the image to remove white backgrounds
                 width = pm_img.width()
                 height = pm_img.height()
-                
+
                 for y in range(height):
                     for x in range(width):
                         pixel = pm_img.pixel(x, y)
                         color = QColor(pixel)
                         # If pixel is very close to white (all RGB > 250), make it transparent
-                        if color.red() > 250 and color.green() > 250 and color.blue() > 250:
+                        if (
+                            color.red() > 250
+                            and color.green() > 250
+                            and color.blue() > 250
+                        ):
                             pm_img.setPixel(x, y, 0x00FFFFFF)  # Transparent white
-                
+
                 # Save the processed image
                 pm_img.save(str(out_path), "PNG")
                 return None
@@ -161,7 +165,7 @@ def save_thumbnail(view, preset: Dict[str, Any], out_path: Path) -> Optional[str
                 return f"Transparent thumbnail export failed: {e}"
         except Exception as e:
             return f"Thumbnail requires FreeCAD GUI ({e})"
-    
+
     # Try native screenshot API first (for solid backgrounds)
     try:
         # Some versions: saveImage(path, width, height, "White")

@@ -24,6 +24,7 @@ CRED_PRESERVE_CREDENTIAL_BLOB = 0x04000000
 # ctypes definitions for Windows credential manager
 class CREDENTIAL(ctypes.Structure):
     """Windows CREDENTIAL structure"""
+
     pass
 
 
@@ -47,17 +48,17 @@ CREDENTIAL._fields_ = [
 def _get_cred_functions():
     """
     Get Windows credential manager functions from advapi32.dll
-    
+
     Returns:
         tuple: (CredWriteW, CredReadW, CredDeleteW, CredFree)
     """
     advapi32 = ctypes.windll.advapi32
-    
+
     # CredWriteW: BOOL CredWriteW(PCREDENTIALW Credential, DWORD Flags);
     CredWriteW = advapi32.CredWriteW
     CredWriteW.argtypes = [ctypes.POINTER(CREDENTIAL), wintypes.DWORD]
     CredWriteW.restype = wintypes.BOOL
-    
+
     # CredReadW: BOOL CredReadW(LPCWSTR TargetName, DWORD Type,
     #                           DWORD Flags, PCREDENTIALW *Credential);
     CredReadW = advapi32.CredReadW
@@ -65,74 +66,68 @@ def _get_cred_functions():
         wintypes.LPCWSTR,
         wintypes.DWORD,
         wintypes.DWORD,
-        ctypes.POINTER(ctypes.POINTER(CREDENTIAL))
+        ctypes.POINTER(ctypes.POINTER(CREDENTIAL)),
     ]
     CredReadW.restype = wintypes.BOOL
-    
+
     # CredDeleteW: BOOL CredDeleteW(LPCWSTR TargetName, DWORD Type,
     #                               DWORD Flags);
     CredDeleteW = advapi32.CredDeleteW
     CredDeleteW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD]
     CredDeleteW.restype = wintypes.BOOL
-    
+
     # CredFree: VOID CredFree(PVOID Buffer);
     CredFree = advapi32.CredFree
     CredFree.argtypes = [wintypes.LPVOID]
     CredFree.restype = None
-    
+
     return CredWriteW, CredReadW, CredDeleteW, CredFree
 
 
 class WindowsCredentialStore(TokenStore):
     """
     Secure token storage using Windows Credential Manager.
-    
+
     Stores token as JSON in the credential blob. Uses the target name
     from auth/keys.py to organize credentials.
     """
-    
+
     def __init__(self):
         """Initialize Windows Credential Manager functions."""
         try:
-            (
-                self._cred_write,
-                self._cred_read,
-                self._cred_delete,
-                self._cred_free
-            ) = _get_cred_functions()
+            (self._cred_write, self._cred_read, self._cred_delete, self._cred_free) = (
+                _get_cred_functions()
+            )
             self._available = True
         except (AttributeError, OSError) as e:
             # Windows API not available (e.g., on non-Windows)
             from freecad_gitpdm.core import log
+
             log.warning(f"Windows Credential Manager not available: {e}")
             self._available = False
-    
-    def save(
-        self,
-        host: str,
-        account: str | None,
-        token: TokenResponse
-    ) -> None:
+
+    def save(self, host: str, account: str | None, token: TokenResponse) -> None:
         """
         Save token to Windows Credential Manager.
-        
+
         Args:
             host: GitHub host
             account: GitHub username (optional)
             token: TokenResponse to store
-            
+
         Raises:
             OSError: If credential storage fails
         """
         if not self._available:
             from freecad_gitpdm.core import log
+
             log.error("Windows Credential Manager not available")
             raise OSError("Windows Credential Manager not available")
-        
+
         from freecad_gitpdm.core import log
-        
+
         target_name = credential_target_name(host, account)
-        
+
         # Serialize token to JSON
         token_data = {
             "access_token": token.access_token,
@@ -145,7 +140,7 @@ class WindowsCredentialStore(TokenStore):
         }
         token_json = json.dumps(token_data)
         token_bytes = token_json.encode("utf-8")
-        
+
         # Create CREDENTIAL structure
         cred = CREDENTIAL()
         cred.Type = CRED_TYPE_GENERIC
@@ -153,53 +148,49 @@ class WindowsCredentialStore(TokenStore):
         cred.Comment = ctypes.c_wchar_p("")
         cred.CredentialBlobSize = len(token_bytes)
         cred.CredentialBlob = ctypes.cast(
-            ctypes.c_char_p(token_bytes),
-            ctypes.POINTER(wintypes.BYTE)
+            ctypes.c_char_p(token_bytes), ctypes.POINTER(wintypes.BYTE)
         )
         cred.Persist = CRED_PERSIST_LOCAL_MACHINE
         cred.AttributeCount = 0
         cred.Attributes = None
         cred.UserName = ctypes.c_wchar_p("GitPDM")
-        
+
         # Write credential
         log.debug(f"Storing token for {target_name} in Windows Credential Manager")
-        
+
         # Clear any previous error state
         ctypes.set_last_error(0)
-        
+
         result = self._cred_write(ctypes.byref(cred), 0)
-        
+
         if not result:
             error_code = ctypes.get_last_error()
             log.error(f"CredWriteW failed: {error_code}")
             raise OSError(f"CredWriteW failed: {error_code}")
-        
+
         log.debug(f"Token stored successfully for {target_name}")
-    
-    def load(
-        self,
-        host: str,
-        account: str | None
-    ) -> TokenResponse | None:
+
+    def load(self, host: str, account: str | None) -> TokenResponse | None:
         """
         Load token from Windows Credential Manager.
-        
+
         Args:
             host: GitHub host
             account: GitHub username (optional)
-            
+
         Returns:
             TokenResponse or None if not found
-            
+
         Raises:
             OSError: If credential lookup fails
             ValueError: If stored data is invalid
         """
         if not self._available:
             from freecad_gitpdm.core import log
+
             log.debug("Windows Credential Manager not available")
             return None
-        
+
         from freecad_gitpdm.core import log
 
         def _read_target(target_name: str) -> TokenResponse | None:
@@ -235,8 +226,7 @@ class WindowsCredentialStore(TokenStore):
                 # Extract credential blob
                 cred = pCred.contents
                 token_bytes = bytes(
-                    cred.CredentialBlob[i]
-                    for i in range(cred.CredentialBlobSize)
+                    cred.CredentialBlob[i] for i in range(cred.CredentialBlobSize)
                 )
                 token_json = token_bytes.decode("utf-8")
                 token_data = json.loads(token_json)
@@ -249,9 +239,7 @@ class WindowsCredentialStore(TokenStore):
                     scope=token_data.get("scope", ""),
                     refresh_token=token_data.get("refresh_token"),
                     expires_in=token_data.get("expires_in"),
-                    refresh_token_expires_in=token_data.get(
-                        "refresh_token_expires_in"
-                    ),
+                    refresh_token_expires_in=token_data.get("refresh_token_expires_in"),
                     obtained_at_utc=token_data.get("obtained_at_utc", ""),
                 )
             finally:
@@ -273,27 +261,24 @@ class WindowsCredentialStore(TokenStore):
                 return _read_target(fallback_target)
 
         return None
-    
-    def delete(
-        self,
-        host: str,
-        account: str | None
-    ) -> None:
+
+    def delete(self, host: str, account: str | None) -> None:
         """
         Delete token from Windows Credential Manager.
-        
+
         Args:
             host: GitHub host
             account: GitHub username (optional)
-            
+
         Raises:
             OSError: If credential deletion fails
         """
         if not self._available:
             from freecad_gitpdm.core import log
+
             log.error("Windows Credential Manager not available")
             raise OSError("Windows Credential Manager not available")
-        
+
         from freecad_gitpdm.core import log
 
         targets = [credential_target_name(host, account)]

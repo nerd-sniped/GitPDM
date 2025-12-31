@@ -47,11 +47,11 @@ class GitHubApiClient:
     - Robust error handling and JSON parsing
     - Never exposes tokens or Authorization headers in logs
     """
-    
+
     # Retry configuration
     MAX_RETRIES = 3
     RETRY_BACKOFF = [0.5, 1.0, 2.0]  # seconds for attempt 1, 2, 3
-    
+
     # Error codes that should NOT be retried (non-transient)
     NO_RETRY_CODES = {401, 403, 422, 400}
 
@@ -70,23 +70,23 @@ class GitHubApiClient:
     ) -> Tuple[int, Optional[Dict[str, Any]], Dict[str, str]]:
         """
         Perform an HTTP request with retry logic.
-        
+
         Returns:
             (status, parsed_json, headers) tuple
-            
+
         Raises:
             GitHubApiError: For HTTP errors with classified code (after retries exhausted)
             GitHubApiNetworkError: For network-level errors (after retries exhausted)
         """
         attempt = 0
         last_error: Optional[Exception] = None
-        
+
         while attempt < self.MAX_RETRIES:
             try:
                 status, body_data, resp_headers = self._request_json_once(
                     method, url, headers, body, timeout_s
                 )
-                
+
                 # Check if we should retry based on status
                 if status not in self.NO_RETRY_CODES and status >= 500:
                     # Transient error (5xx), could retry
@@ -99,10 +99,10 @@ class GitHubApiClient:
                         time.sleep(wait_s)
                         attempt += 1
                         continue
-                
+
                 # Success or non-retryable error
                 return status, body_data, resp_headers
-                
+
             except GitHubApiNetworkError as e:
                 # Network errors are potentially transient; retry
                 last_error = e
@@ -116,7 +116,7 @@ class GitHubApiClient:
                     continue
                 # Exhausted retries
                 raise e
-                
+
             except GitHubApiError as e:
                 # Non-transient errors are not retried
                 if e.code not in ("NETWORK", "TIMEOUT"):
@@ -132,14 +132,14 @@ class GitHubApiClient:
                     attempt += 1
                     continue
                 raise e
-        
+
         # Should not reach here, but handle just in case
         if last_error:
             raise last_error
         raise GitHubApiError(
             code="UNKNOWN",
             message="Request failed after retries.",
-            details="Max retry attempts exhausted"
+            details="Max retry attempts exhausted",
         )
 
     def _request_json_once(
@@ -152,7 +152,7 @@ class GitHubApiClient:
     ) -> Tuple[int, Optional[Dict[str, Any]], Dict[str, str]]:
         """
         Perform a single HTTP request without retry logic.
-        
+
         Raises:
             GitHubApiError: For HTTP errors
             GitHubApiNetworkError: For network-level errors
@@ -190,10 +190,11 @@ class GitHubApiClient:
                 req_headers["Content-Type"] = "application/json"
             except Exception as e:
                 from freecad_gitpdm.core.log import _redact_sensitive
+
                 raise GitHubApiError(
                     code="BAD_RESPONSE",
                     message="Failed to prepare request.",
-                    details=_redact_sensitive(str(e))
+                    details=_redact_sensitive(str(e)),
                 )
 
         req = request.Request(target, data=data, method=(method or "GET").upper())
@@ -205,7 +206,7 @@ class GitHubApiClient:
         status = 0
         raw_headers: Dict[str, str] = {}
         raw: bytes = b""
-        
+
         try:
             ctx = ssl.create_default_context()
             with request.urlopen(req, timeout=float(timeout_s), context=ctx) as resp:
@@ -214,7 +215,11 @@ class GitHubApiClient:
                 raw = resp.read()
         except error.HTTPError as e:
             status = e.code
-            raw_headers = {k: v for k, v in getattr(e, "headers", {}).items()} if getattr(e, "headers", None) else {}
+            raw_headers = (
+                {k: v for k, v in getattr(e, "headers", {}).items()}
+                if getattr(e, "headers", None)
+                else {}
+            )
             raw = e.read() if hasattr(e, "read") else b""
         except (error.URLError, ssl.SSLError, socket.timeout, socket.error) as e:
             # Map to friendly network error
@@ -278,6 +283,7 @@ class GitHubApiClient:
             )
         except Exception as e:
             from freecad_gitpdm.core.log import _redact_sensitive
+
             return Result.failure(
                 "UNKNOWN",
                 "An unexpected error occurred.",

@@ -20,11 +20,12 @@ from typing import Optional, Callable
 class DeviceFlowError(Exception):
     """
     Exception raised for OAuth device flow errors.
-    
+
     Attributes:
         error_code: str - OAuth error code (e.g., "authorization_pending")
         error_description: str - Human-readable error description
     """
+
     def __init__(self, error_code: str, error_description: str = ""):
         self.error_code = error_code
         self.error_description = error_description
@@ -38,7 +39,7 @@ class DeviceFlowError(Exception):
 class DeviceCodeResponse:
     """
     Response from GitHub's device code endpoint.
-    
+
     Attributes:
         device_code: str - Code used by device to poll for token
         user_code: str - Short code user enters on GitHub.com
@@ -46,6 +47,7 @@ class DeviceCodeResponse:
         expires_in: int - Seconds until device_code expires
         interval: int - Minimum seconds to wait between polls (default 5)
     """
+
     device_code: str
     user_code: str
     verification_uri: str
@@ -57,7 +59,7 @@ class DeviceCodeResponse:
 class TokenResponse:
     """
     Response from GitHub's token endpoint after successful authorization.
-    
+
     Attributes:
         access_token: str - OAuth access token for API calls
         token_type: str - Type of token (typically "bearer")
@@ -67,6 +69,7 @@ class TokenResponse:
         refresh_token_expires_in: int | None - Seconds until refresh_token expires
         obtained_at_utc: str - ISO 8601 UTC timestamp when token was obtained
     """
+
     access_token: str
     token_type: str
     scope: str
@@ -79,23 +82,23 @@ class TokenResponse:
 def request_device_code(
     client_id: str,
     scopes: list[str],
-    device_code_url: str = "https://github.com/login/device/code"
+    device_code_url: str = "https://github.com/login/device/code",
 ) -> DeviceCodeResponse:
     """
     Request a device code from GitHub.
-    
+
     This is the first step of the OAuth Device Flow. The user will need to
     visit the verification_uri and enter the user_code displayed by the
     client application to grant access.
-    
+
     Args:
         client_id: str - GitHub OAuth app client ID
         scopes: list[str] - OAuth scopes (e.g., ["read:user", "repo"])
         device_code_url: str - GitHub endpoint URL (for testing, can override)
-        
+
     Returns:
         DeviceCodeResponse with device code and verification instructions
-        
+
     Raises:
         DeviceFlowError: If request fails
         urllib.error.URLError: If network request fails
@@ -109,19 +112,20 @@ def request_device_code(
             @staticmethod
             def debug(msg):
                 pass
+
             @staticmethod
             def error(msg):
                 pass
-    
+
     scope_str = " ".join(scopes)
-    
+
     # Build request body (form-urlencoded)
     body_data = {
         "client_id": client_id,
         "scope": scope_str,
     }
     body_encoded = urllib.parse.urlencode(body_data).encode("utf-8")
-    
+
     # Create request with proper headers
     request = urllib.request.Request(
         device_code_url,
@@ -130,11 +134,11 @@ def request_device_code(
             "Accept": "application/json",
             "User-Agent": "GitPDM/1.0",
         },
-        method="POST"
+        method="POST",
     )
-    
+
     log.debug(f"Requesting device code from {device_code_url}")
-    
+
     try:
         # Set timeout to 10 seconds
         with urllib.request.urlopen(request, timeout=10) as response:
@@ -149,20 +153,20 @@ def request_device_code(
     except json.JSONDecodeError as e:
         log.error(f"Device code response is not valid JSON: {e}")
         raise
-    
+
     # Parse response
     device_code = response_data.get("device_code")
     user_code = response_data.get("user_code")
     verification_uri = response_data.get("verification_uri")
     expires_in = response_data.get("expires_in")
     interval = response_data.get("interval", 5)
-    
+
     if not all([device_code, user_code, verification_uri, expires_in]):
         log.error(f"Device code response missing required fields: {response_data}")
         raise DeviceFlowError("invalid_response", "Missing required fields")
-    
+
     log.debug(f"Device code received, expires in {expires_in}s")
-    
+
     return DeviceCodeResponse(
         device_code=device_code,
         user_code=user_code,
@@ -182,14 +186,14 @@ def poll_for_token(
 ) -> TokenResponse:
     """
     Poll GitHub for an access token using the device code.
-    
+
     This function blocks (but can be run in a worker thread) until the user
     approves the request on GitHub, the request is denied, or the device code
     expires.
-    
+
     The cancel_cb callable, if provided, should return True to signal that
     polling should stop. This allows the UI thread to interrupt waiting.
-    
+
     Args:
         client_id: str - GitHub OAuth app client ID
         device_code: str - Device code from request_device_code()
@@ -197,10 +201,10 @@ def poll_for_token(
         expires_in: int - Seconds until device_code expires (from response)
         cancel_cb: callable() -> bool - Called each iteration; return True to cancel
         token_url: str - GitHub endpoint URL (for testing, can override)
-        
+
     Returns:
         TokenResponse with access token and metadata
-        
+
     Raises:
         DeviceFlowError: If device flow fails (expired, denied, etc.)
         urllib.error.URLError: If network request fails
@@ -214,34 +218,36 @@ def poll_for_token(
             @staticmethod
             def debug(msg):
                 pass
+
             @staticmethod
             def info(msg):
                 pass
+
             @staticmethod
             def error(msg):
                 pass
-    
+
     from datetime import datetime, timezone
-    
+
     start_time = time.time()
     deadline = start_time + expires_in
-    
+
     log.debug(f"Starting token poll (expires in {expires_in}s)")
-    
+
     while True:
         # Check for cancellation
         if cancel_cb and cancel_cb():
             log.debug("Token poll cancelled by user")
             raise DeviceFlowError("user_cancelled", "User cancelled the flow")
-        
+
         # Check for expiry
         if time.time() >= deadline:
             log.error("Device code expired")
             raise DeviceFlowError("expired_token", "Device code expired")
-        
+
         # Sleep before polling (respecting minimum interval)
         time.sleep(interval)
-        
+
         # Build request body (form-urlencoded)
         body_data = {
             "client_id": client_id,
@@ -249,7 +255,7 @@ def poll_for_token(
             "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
         }
         body_encoded = urllib.parse.urlencode(body_data).encode("utf-8")
-        
+
         # Create request with proper headers
         request = urllib.request.Request(
             token_url,
@@ -258,9 +264,9 @@ def poll_for_token(
                 "Accept": "application/json",
                 "User-Agent": "GitPDM/1.0",
             },
-            method="POST"
+            method="POST",
         )
-        
+
         try:
             # Set timeout to 10 seconds
             with urllib.request.urlopen(request, timeout=10) as response:
@@ -276,12 +282,12 @@ def poll_for_token(
         except json.JSONDecodeError as e:
             log.error(f"Token poll response is not valid JSON: {e}")
             raise
-        
+
         # Check for OAuth error in response
         if "error" in response_data:
             error_code = response_data.get("error")
             error_description = response_data.get("error_description", "")
-            
+
             if error_code == "authorization_pending":
                 # User hasn't approved yet; continue polling
                 log.debug("Authorization pending, continuing poll")
@@ -300,31 +306,30 @@ def poll_for_token(
             else:
                 log.error(f"GitHub returned error: {error_code}")
                 raise DeviceFlowError(error_code, error_description)
-        
+
         # Success: extract token
         access_token = response_data.get("access_token")
         token_type = response_data.get("token_type", "bearer")
         scope = response_data.get("scope", "")
         refresh_token = response_data.get("refresh_token")
         expires_in_response = response_data.get("expires_in")
-        refresh_token_expires_in = response_data.get(
-            "refresh_token_expires_in"
-        )
-        
+        refresh_token_expires_in = response_data.get("refresh_token_expires_in")
+
         if not access_token:
             # Import redaction helper to prevent token leaks in logs
             try:
                 from freecad_gitpdm.core.log import _redact_sensitive
+
                 safe_response = _redact_sensitive(str(response_data))
             except ImportError:
                 safe_response = "[response redacted]"
             log.error(f"Token response missing access_token: {safe_response}")
             raise DeviceFlowError("invalid_response", "Missing access_token")
-        
+
         obtained_at = datetime.now(timezone.utc).isoformat()
-        
+
         log.info(f"Token obtained successfully")
-        
+
         return TokenResponse(
             access_token=access_token,
             token_type=token_type,

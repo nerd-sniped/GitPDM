@@ -18,8 +18,7 @@ except ImportError:  # pragma: no cover
         from PySide2 import QtCore, QtGui, QtWidgets
     except ImportError as e:  # pragma: no cover
         raise ImportError(
-            "Neither PySide6 nor PySide2 found. "
-            "FreeCAD installation may be incomplete."
+            "Neither PySide6 nor PySide2 found. FreeCAD installation may be incomplete."
         ) from e
 
 from freecad_gitpdm.core import log, settings, jobs
@@ -82,9 +81,7 @@ class RepoPickerDialog(QtWidgets.QDialog):
         self._connect_message = QtWidgets.QLabel(
             "Sign in to GitHub to list repositories."
         )
-        self._connect_message.setStyleSheet(
-            "color: gray; font-style: italic;"
-        )
+        self._connect_message.setStyleSheet("color: gray; font-style: italic;")
         self._connect_message.hide()
         layout.addWidget(self._connect_message)
 
@@ -101,26 +98,26 @@ class RepoPickerDialog(QtWidgets.QDialog):
         url_section = QtWidgets.QGroupBox("Or Clone from External URL")
         url_layout = QtWidgets.QVBoxLayout()
         url_section.setLayout(url_layout)
-        
+
         url_help = QtWidgets.QLabel(
             "Enter a GitHub repository URL to clone a project not in your account:"
         )
         url_help.setWordWrap(True)
         url_help.setStyleSheet("color: gray; font-size: 9pt;")
         url_layout.addWidget(url_help)
-        
+
         self.url_input = QtWidgets.QLineEdit()
         self.url_input.setPlaceholderText("https://github.com/owner/repository")
         self.url_input.textChanged.connect(self._on_url_changed)
         url_layout.addWidget(self.url_input)
-        
+
         layout.addWidget(url_section)
 
         self._connect_btn = QtWidgets.QPushButton("Connect GitHub")
         self._connect_btn.clicked.connect(self._on_connect_clicked)
         self._connect_btn.hide()
         layout.addWidget(self._connect_btn)
-        
+
         self._reconnect_btn = QtWidgets.QPushButton("Reconnect GitHub")
         self._reconnect_btn.clicked.connect(self._on_reconnect_clicked)
         self._reconnect_btn.hide()
@@ -143,9 +140,15 @@ class RepoPickerDialog(QtWidgets.QDialog):
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(
+            0, QtWidgets.QHeaderView.Stretch
+        )
+        self.table.horizontalHeader().setSectionResizeMode(
+            1, QtWidgets.QHeaderView.ResizeToContents
+        )
+        self.table.horizontalHeader().setSectionResizeMode(
+            2, QtWidgets.QHeaderView.ResizeToContents
+        )
         self.table.verticalHeader().setVisible(False)
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.table.doubleClicked.connect(self._on_clone_clicked)
@@ -221,13 +224,13 @@ class RepoPickerDialog(QtWidgets.QDialog):
 
         self._hide_connect_prompt()
         self._set_loading_state(True, "Loading…")
-        
+
         # Set bypass flag for cache and reset it
         cache = get_github_api_cache()
         if self._bypass_cache:
             cache.set_bypass(True)
             self._bypass_cache = False
-        
+
         # Get username for cache key
         username = settings.load_github_login() or "default"
 
@@ -248,11 +251,11 @@ class RepoPickerDialog(QtWidgets.QDialog):
         # Reset cache bypass flag
         cache = get_github_api_cache()
         cache.set_bypass(False)
-        
+
         self._repos = repo_list or []
         self._apply_filter()
         count = len(self._repos)
-        
+
         # Check cache age to show cache status
         username = settings.load_github_login() or "default"
         age = cache.age("api.github.com", username, "repos_list")
@@ -263,7 +266,7 @@ class RepoPickerDialog(QtWidgets.QDialog):
             )
         else:
             self.status_label.setText(f"Loaded {count} repositories")
-        
+
         self.status_label.setStyleSheet("color: gray;")
         self._set_loading_state(False)
 
@@ -271,26 +274,26 @@ class RepoPickerDialog(QtWidgets.QDialog):
         # Reset cache bypass flag
         cache = get_github_api_cache()
         cache.set_bypass(False)
-        
+
         msg = "Failed to load repositories."
         color = "red;"
-        
+
         if isinstance(error, GitHubApiError):
             # Structured error handling with code classification
-            msg = str(error.message) if hasattr(error, 'message') else str(error)
-            
+            msg = str(error.message) if hasattr(error, "message") else str(error)
+
             # Special handling for 401 UNAUTHORIZED
-            if hasattr(error, 'code') and error.code == "UNAUTHORIZED":
+            if hasattr(error, "code") and error.code == "UNAUTHORIZED":
                 self._show_session_expired_prompt()
                 return
-            
+
             # Rate limit message already in msg
-            if hasattr(error, 'retry_after_s') and error.retry_after_s:
+            if hasattr(error, "retry_after_s") and error.retry_after_s:
                 msg = f"{msg} (retry in {error.retry_after_s}s)"
-        
+
         elif isinstance(error, GitHubApiNetworkError):
             msg = "Network error. Check your connection and try again."
-        
+
         log.warning(f"Repo picker load error: {msg}")
         self.status_label.setText(msg)
         self.status_label.setStyleSheet(f"color: {color}")
@@ -313,7 +316,9 @@ class RepoPickerDialog(QtWidgets.QDialog):
             repo_item = QtWidgets.QTableWidgetItem(repo.full_name)
             vis_text = "Private" if repo.private else "Public"
             vis_item = QtWidgets.QTableWidgetItem(vis_text)
-            vis_item.setForeground(QtGui.QBrush(QtGui.QColor("#c62828" if repo.private else "#2e7d32")))
+            vis_item.setForeground(
+                QtGui.QBrush(QtGui.QColor("#c62828" if repo.private else "#2e7d32"))
+            )
             updated_item = QtWidgets.QTableWidgetItem(repo.updated_at or "")
 
             repo_item.setFlags(repo_item.flags() ^ QtCore.Qt.ItemIsEditable)
@@ -336,53 +341,57 @@ class RepoPickerDialog(QtWidgets.QDialog):
         return self._visible_repos[row]
 
     def _on_selection_changed(self):
-        has_selection = bool(self._selected_repo_from_table()) or bool(self.url_input.text().strip())
+        has_selection = bool(self._selected_repo_from_table()) or bool(
+            self.url_input.text().strip()
+        )
         self.clone_btn.setEnabled(has_selection and not self._is_loading)
 
     def _on_url_changed(self, text: str):
         """Handle URL input text changes."""
         self._external_url = text.strip() if text.strip() else None
-        has_selection = bool(self._selected_repo_from_table()) or bool(self._external_url)
+        has_selection = bool(self._selected_repo_from_table()) or bool(
+            self._external_url
+        )
         self.clone_btn.setEnabled(has_selection and not self._is_loading)
 
     def _parse_repo_url(self, url: str) -> Optional[tuple]:
         """
         Parse a GitHub URL and extract clone URL and repo name.
         Returns (clone_url, repo_name) or None if invalid.
-        
+
         Supports:
         - https://github.com/owner/repo
         - https://github.com/owner/repo.git
         - git@github.com:owner/repo.git
         """
         import re
-        
+
         url = url.strip()
         if not url:
             return None
-        
+
         # Pattern for HTTPS URLs
-        https_pattern = r'https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$'
+        https_pattern = r"https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$"
         match = re.match(https_pattern, url, re.IGNORECASE)
         if match:
             owner, repo = match.groups()
             clone_url = f"https://github.com/{owner}/{repo}.git"
             return (clone_url, repo)
-        
+
         # Pattern for SSH URLs
-        ssh_pattern = r'git@github\.com:([^/]+)/(.+?)(?:\.git)?$'
+        ssh_pattern = r"git@github\.com:([^/]+)/(.+?)(?:\.git)?$"
         match = re.match(ssh_pattern, url)
         if match:
             owner, repo = match.groups()
             clone_url = f"https://github.com/{owner}/{repo}.git"
             return (clone_url, repo)
-        
+
         return None
 
     def _on_clone_clicked(self):
         if self._is_loading:
             return
-        
+
         # Check if external URL is provided
         if self._external_url:
             parsed = self._parse_repo_url(self._external_url)
@@ -393,15 +402,15 @@ class RepoPickerDialog(QtWidgets.QDialog):
                     "Please enter a valid GitHub repository URL.\n\n"
                     "Examples:\n"
                     "• https://github.com/owner/repository\n"
-                    "• git@github.com:owner/repository.git"
+                    "• git@github.com:owner/repository.git",
                 )
                 return
-            
+
             clone_url, repo_name = parsed
             dest_path = self._ask_destination_for_url(repo_name)
             if not dest_path:
                 return
-            
+
             self._start_clone_from_url(clone_url, repo_name, dest_path)
         else:
             # Original table selection logic
@@ -509,7 +518,9 @@ class RepoPickerDialog(QtWidgets.QDialog):
         self._job_runner.run_job(
             "clone_repo",
             args,
-            callback=lambda job: self._on_clone_from_url_finished(job, repo_name, dest_path),
+            callback=lambda job: self._on_clone_from_url_finished(
+                job, repo_name, dest_path
+            ),
         )
 
     def _on_clone_from_url_finished(self, job, repo_name: str, dest_path: str):
@@ -535,7 +546,9 @@ class RepoPickerDialog(QtWidgets.QDialog):
             )
         elif "not found" in stderr_lower or "repository" in stderr_lower:
             message = "Repository not found or access denied."
-        QtWidgets.QMessageBox.warning(self, "Clone Failed", f"{message}\n\nDetails:\n{stderr}")
+        QtWidgets.QMessageBox.warning(
+            self, "Clone Failed", f"{message}\n\nDetails:\n{stderr}"
+        )
         self.status_label.setText(message)
         self.status_label.setStyleSheet("color: red;")
         self._set_loading_state(False)
@@ -562,7 +575,9 @@ class RepoPickerDialog(QtWidgets.QDialog):
             )
         elif "not found" in stderr_lower or "repository" in stderr_lower:
             message = "Repository not found or access denied."
-        QtWidgets.QMessageBox.warning(self, "Clone Failed", f"{message}\n\nDetails:\n{stderr}")
+        QtWidgets.QMessageBox.warning(
+            self, "Clone Failed", f"{message}\n\nDetails:\n{stderr}"
+        )
         self.status_label.setText(message)
         self.status_label.setStyleSheet("color: red;")
         self._set_loading_state(False)
@@ -602,7 +617,9 @@ class RepoPickerDialog(QtWidgets.QDialog):
     def _set_loading_state(self, loading: bool, message: Optional[str] = None):
         self._is_loading = loading
         self.refresh_btn.setEnabled(not loading)
-        has_selection = bool(self._selected_repo_from_table()) or bool(self._external_url)
+        has_selection = bool(self._selected_repo_from_table()) or bool(
+            self._external_url
+        )
         self.clone_btn.setEnabled(not loading and has_selection)
         self.search_box.setEnabled(not loading)
         if message:

@@ -40,12 +40,10 @@ def fetch_viewer_identity(client: GitHubApiClient) -> IdentityResult:
     # request_json().
     request_json_result = getattr(client, "request_json_result", None)
     if callable(request_json_result):
-        res = request_json_result(
-            "GET", "/user", headers=None, body=None, timeout_s=10
-        )
+        res = request_json_result("GET", "/user", headers=None, body=None, timeout_s=10)
         if not res.ok:
             err = res.error
-            code = (err.code if err else "UNKNOWN")
+            code = err.code if err else "UNKNOWN"
             raw_status = 0
             try:
                 raw_status = int((err.meta or {}).get("status") or 0) if err else 0

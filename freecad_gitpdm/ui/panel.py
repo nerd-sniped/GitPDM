@@ -12,8 +12,7 @@ except ImportError:
         from PySide2 import QtCore, QtGui, QtWidgets
     except ImportError as e:
         raise ImportError(
-            "Neither PySide6 nor PySide2 found. "
-            "FreeCAD installation may be incomplete."
+            "Neither PySide6 nor PySide2 found. FreeCAD installation may be incomplete."
         ) from e
 
 import os
@@ -37,7 +36,7 @@ from freecad_gitpdm.core import publish
 
 class _DocumentObserver:
     """Observer to detect document saves and trigger status refresh."""
-    
+
     def __init__(self, panel):
         self._panel = panel
         # Bind timer to the panel (Qt QObject) so it lives on the UI thread
@@ -46,23 +45,24 @@ class _DocumentObserver:
         self._refresh_timer.setInterval(500)
         self._refresh_timer.timeout.connect(self._do_refresh)
         log.debug("DocumentObserver created")
-    
+
     def slotFinishSaveDocument(self, doc, filename):
         """Called after a document is saved."""
         log.info(f"Document saved: {filename}")
-        
+
         if not self._panel._current_repo_root:
             log.debug("No repo configured, skipping refresh")
             return
-        
+
         try:
             import os
             import glob
+
             filename = os.path.normpath(filename)
             repo_root = os.path.normpath(self._panel._current_repo_root)
-            
+
             log.debug(f"Checking if {filename} is in {repo_root}")
-            
+
             if filename.startswith(repo_root):
                 log.info(f"Document saved in repo, scheduling refresh")
                 # Stop/start the timer on its owning thread to avoid
@@ -92,15 +92,13 @@ class _DocumentObserver:
                 log.debug(f"Document outside repo, no refresh")
         except Exception as e:
             log.error(f"Error in save handler: {e}")
-    
+
     def _do_refresh(self):
         """Execute deferred refresh after save."""
         try:
             if self._panel._current_repo_root:
                 log.info("Auto-refreshing status after save")
-                self._panel._refresh_status_views(
-                    self._panel._current_repo_root
-                )
+                self._panel._refresh_status_views(self._panel._current_repo_root)
                 log.debug("Refresh complete")
         except Exception as e:
             log.error(f"Refresh after save failed: {e}")
@@ -132,11 +130,15 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         # Initialize handlers (Sprint 4)
         self._github_auth = GitHubAuthHandler(self, self._services)
-        self._file_browser = FileBrowserHandler(self, self._git_client, self._job_runner)
+        self._file_browser = FileBrowserHandler(
+            self, self._git_client, self._job_runner
+        )
         self._fetch_pull = FetchPullHandler(self, self._git_client, self._job_runner)
         self._commit_push = CommitPushHandler(self, self._git_client, self._job_runner)
         self._repo_validator = RepoValidationHandler(self, self._git_client)
-        self._branch_ops = BranchOperationsHandler(self, self._git_client, self._job_runner)
+        self._branch_ops = BranchOperationsHandler(
+            self, self._git_client, self._job_runner
+        )
 
         # State tracking
         self._current_repo_root = None
@@ -148,16 +150,20 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._busy_timer.setInterval(5000)
         self._busy_timer.timeout.connect(self._on_busy_timer_tick)
         self._busy_label = ""
-        self._active_operations = set()  # Sprint PERF-4: Track multiple concurrent operations
+        self._active_operations = (
+            set()
+        )  # Sprint PERF-4: Track multiple concurrent operations
         self._button_update_timer = QtCore.QTimer(self)
         self._button_update_timer.setSingleShot(True)
         self._button_update_timer.setInterval(300)
-        self._button_update_timer.timeout.connect(
-            self._do_deferred_button_update
-        )
+        self._button_update_timer.timeout.connect(self._do_deferred_button_update)
         self._cached_has_remote = False
-        self._is_refreshing_status = False  # Sprint PERF-1: prevent concurrent status refreshes
-        self._is_updating_upstream = False  # Sprint PERF-1: prevent concurrent upstream updates
+        self._is_refreshing_status = (
+            False  # Sprint PERF-1: prevent concurrent status refreshes
+        )
+        self._is_updating_upstream = (
+            False  # Sprint PERF-1: prevent concurrent upstream updates
+        )
         self._doc_observer = None
         self._group_git_check = None
         self._group_repo_selector = None
@@ -208,7 +214,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         scroll_area.setFrameShape(QtWidgets.QFrame.NoFrame)
         scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
-        
+
         self.setWidget(scroll_area)
 
         # Load remote name
@@ -217,7 +223,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # Sprint PERF: Defer initialization as soon as possible (10ms instead of 100ms)
         # This makes the panel interactive almost immediately
         QtCore.QTimer.singleShot(10, self._deferred_initialization)
-        
+
         log.info("GitPDM dock panel created")
 
     def _build_compact_commit_section(self, layout):
@@ -233,7 +239,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         row.addWidget(msg_label)
 
         self.compact_commit_message = QtWidgets.QLineEdit()
-        self.compact_commit_message.setPlaceholderText("Example: Updated wheel design, Fixed bracket")
+        self.compact_commit_message.setPlaceholderText(
+            "Example: Updated wheel design, Fixed bracket"
+        )
         self.compact_commit_message.setToolTip(
             "Describe what you changed to help you remember later\n"
             "(Git term: 'commit message')"
@@ -255,15 +263,11 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._compact_commit_container = container
 
     def _set_meta_label(self, label, color="gray"):
-        label.setStyleSheet(
-            f"color: {color}; font-size: {self._meta_font_size}px;"
-        )
+        label.setStyleSheet(f"color: {color}; font-size: {self._meta_font_size}px;")
 
     def _set_strong_label(self, label, color="black"):
         label.setStyleSheet(
-            "font-weight: bold; "
-            f"font-size: {self._strong_font_size}px; "
-            f"color: {color};"
+            f"font-weight: bold; font-size: {self._strong_font_size}px; color: {color};"
         )
 
     def _build_view_toggle(self, layout):
@@ -292,9 +296,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     def _set_compact_mode(self, compact):
         self._is_compact = bool(compact)
         if hasattr(self, "compact_toggle_btn"):
-            self.compact_toggle_btn.setText(
-                "Expand" if compact else "Collapse"
-            )
+            self.compact_toggle_btn.setText("Expand" if compact else "Collapse")
         show_full = not compact
         # Only toggle visibility for sections meant to be user-toggleable.
         # System and Branch sections are permanently hidden per current UX.
@@ -311,38 +313,39 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # Show compact commit mini section only when collapsed
         if hasattr(self, "_compact_commit_container"):
             self._compact_commit_container.setVisible(compact)
-    
+
     def _deferred_initialization(self):
         """Run heavy initialization after panel is shown (Sprint PERF-2: fully async)."""
         try:
             # Sprint PERF-2: Check git availability in background (immediate)
             QtCore.QTimer.singleShot(10, self._check_git_available_async)
-            
+
             # Sprint PERF-2: Load saved repo path and validate in background (immediate)
             QtCore.QTimer.singleShot(20, self._load_saved_repo_path_async)
-            
+
             # Register document observer to auto-refresh on save
             self._register_document_observer()
-            
+
             # Load GitHub connection status (Sprint OAUTH-1) - slightly delayed
             QtCore.QTimer.singleShot(50, self._github_auth.refresh_connection_status)
             # Sprint OAUTH-2: Auto-verify identity in background with cooldown
             QtCore.QTimer.singleShot(100, self._github_auth.maybe_auto_verify_identity)
-            
+
             # Check if user is editing from wrong folder (worktree mismatch) - low priority
             QtCore.QTimer.singleShot(500, self._check_for_wrong_folder_editing)
-            
+
             # Start periodic working directory refresh to maintain repo folder as default
             self._start_working_directory_refresh()
-            
+
             log.info("GitPDM dock panel initialized")
         except Exception as e:
             log.error(f"Deferred initialization failed: {e}")
-    
+
     def _register_document_observer(self):
         """Register observer to detect document saves."""
         try:
             import FreeCAD
+
             if self._doc_observer is None:
                 self._doc_observer = _DocumentObserver(self)
                 FreeCAD.addDocumentObserver(self._doc_observer)
@@ -351,23 +354,25 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 log.debug("Document observer already registered")
         except Exception as e:
             log.error(f"Failed to register document observer: {e}")
-    
+
     def closeEvent(self, event):
         """Handle dock widget close - cleanup observers."""
         if self._doc_observer is not None:
             try:
                 import FreeCAD
+
                 FreeCAD.removeDocumentObserver(self._doc_observer)
                 log.debug("Document observer unregistered")
             except Exception as e:
                 log.warning(f"Failed to unregister observer: {e}")
-        
+
         super().closeEvent(event)
 
     def _schedule_auto_preview_generation(self, filename):
         """Best-effort automatic preview export after a save/close."""
         try:
             import os
+
             if not filename or not filename.lower().endswith(".fcstd"):
                 return
             if not self._current_repo_root:
@@ -381,6 +386,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             def _do_export():
                 try:
                     import FreeCAD
+
                     active = getattr(FreeCAD, "ActiveDocument", None)
                     active_path = getattr(active, "FileName", "") if active else ""
                     if not active_path:
@@ -390,9 +396,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                         log.debug("Saved doc is not active; skipping auto preview")
                         return
 
-                    result = exporter.export_active_document(
-                        self._current_repo_root
-                    )
+                    result = exporter.export_active_document(self._current_repo_root)
                 except Exception as e_export:
                     log.warning(f"Auto preview export failed: {e_export}")
                     return
@@ -404,9 +408,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                     return
 
                 from datetime import datetime, timezone
-                settings.save_last_preview_at(
-                    datetime.now(timezone.utc).isoformat()
-                )
+
+                settings.save_last_preview_at(datetime.now(timezone.utc).isoformat())
                 if result.rel_dir:
                     settings.save_last_preview_dir(result.rel_dir)
                 self._update_preview_status_labels()
@@ -419,7 +422,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     def _build_git_check_section(self, layout):
         """
         Build the git availability check section
-        
+
         Args:
             layout: Parent layout to add widgets to
         """
@@ -431,9 +434,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         # Git availability (compact)
         self.git_label = QtWidgets.QLabel("● Checking…")
-        self.git_label.setTextInteractionFlags(
-            QtCore.Qt.TextSelectableByMouse
-        )
+        self.git_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         self.git_label.setStyleSheet("color: orange;")
         group_layout.addRow("Git", self.git_label)
 
@@ -453,26 +454,27 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self.git_label.setText("● Not found")
             self.git_label.setStyleSheet("color: red;")
             log.warning("Git not available on PATH")
-    
+
     def _check_git_available_async(self):
         """Check if git is available on system (Sprint PERF-2: async version)."""
+
         def _check_git():
             is_available = self._git_client.is_git_available()
             version = self._git_client.git_version() if is_available else None
             return {"is_available": is_available, "version": version}
-        
+
         self._job_runner.run_callable(
             "check_git",
             _check_git,
             on_success=self._on_git_check_complete,
             on_error=lambda e: log.error(f"Git check error: {e}"),
         )
-    
+
     def _on_git_check_complete(self, result):
         """Callback when async git check completes (Sprint PERF-2)."""
         is_available = result.get("is_available")
         version = result.get("version")
-        
+
         if is_available:
             self.git_label.setText(f"● OK ({version})")
             self.git_label.setStyleSheet("color: green;")
@@ -484,7 +486,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     def _build_repo_selector(self, layout):
         """
         Build the repository selector section
-        
+
         Args:
             layout: Parent layout to add widgets to
         """
@@ -498,9 +500,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         path_layout = QtWidgets.QHBoxLayout()
         path_layout.setSpacing(4)
         self.repo_path_field = QtWidgets.QLineEdit()
-        self.repo_path_field.setPlaceholderText(
-            "Select your project folder..."
-        )
+        self.repo_path_field.setPlaceholderText("Select your project folder...")
         self.repo_path_field.setToolTip(
             "The folder where your FreeCAD project files are stored\n"
             "(Git term: 'repository' or 'repo' - the project folder tracked by Git)"
@@ -541,14 +541,10 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.root_toggle_btn = QtWidgets.QToolButton()
         self.root_toggle_btn.setText("Show root")
         self.root_toggle_btn.setArrowType(QtCore.Qt.RightArrow)
-        self.root_toggle_btn.setToolButtonStyle(
-            QtCore.Qt.ToolButtonTextBesideIcon
-        )
+        self.root_toggle_btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
         self.root_toggle_btn.setCheckable(True)
         self.root_toggle_btn.setEnabled(False)
-        self.root_toggle_btn.toggled.connect(
-            self._on_root_toggle
-        )
+        self.root_toggle_btn.toggled.connect(self._on_root_toggle)
         # Hide the Show root dropdown entirely
         self.root_toggle_btn.setVisible(False)
         group_layout.addWidget(self.root_toggle_btn)
@@ -561,12 +557,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         repo_root_layout.addWidget(QtWidgets.QLabel("Root:"))
         self.repo_root_label = QtWidgets.QLabel("—")
-        self.repo_root_label.setStyleSheet(
-            "color: gray; font-size: 10px;"
-        )
-        self.repo_root_label.setTextInteractionFlags(
-            QtCore.Qt.TextSelectableByMouse
-        )
+        self.repo_root_label.setStyleSheet("color: gray; font-size: 10px;")
+        self.repo_root_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         self.repo_root_label.setWordWrap(True)
         repo_root_layout.addWidget(self.repo_root_label)
         self.repo_root_row.setVisible(False)
@@ -579,9 +571,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.validate_caption = QtWidgets.QLabel("Validate:")
         validation_layout.addWidget(self.validate_caption)
         self.validate_label = QtWidgets.QLabel("Not checked")
-        self.validate_label.setStyleSheet(
-            "color: gray; font-style: italic;"
-        )
+        self.validate_label.setStyleSheet("color: gray; font-style: italic;")
         validation_layout.addWidget(self.validate_label)
         validation_layout.addStretch()
 
@@ -629,7 +619,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         Build the GitHub Account section (Sprint OAUTH-1)
         Shows connection status and connect/disconnect buttons.
         Implements OAuth Device Flow workflow.
-        
+
         Args:
             layout: Parent layout to add widgets to
         """
@@ -640,15 +630,14 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         group.setLayout(group_layout)
 
         # Connection status label
-        self.github_status_label = QtWidgets.QLabel(
-            "GitHub: Not connected"
-        )
+        self.github_status_label = QtWidgets.QLabel("GitHub: Not connected")
         self._set_strong_label(self.github_status_label, "gray")
         group_layout.addWidget(self.github_status_label)
 
         # Check if OAuth is configured
         try:
             from freecad_gitpdm.auth import config as auth_config
+
             client_id = auth_config.get_client_id()
             oauth_configured = client_id is not None
         except Exception:
@@ -656,9 +645,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         # Config hint (shown if OAuth not configured)
         if not oauth_configured:
-            hint_label = QtWidgets.QLabel(
-                "GitHub OAuth not configured. See docs."
-            )
+            hint_label = QtWidgets.QLabel("GitHub OAuth not configured. See docs.")
             hint_label.setWordWrap(True)
             hint_label.setStyleSheet(
                 "color: orange; font-style: italic; font-size: 9px;"
@@ -669,9 +656,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         buttons_layout = QtWidgets.QHBoxLayout()
         buttons_layout.setSpacing(4)
 
-        self.github_connect_btn = QtWidgets.QPushButton(
-            "Connect GitHub"
-        )
+        self.github_connect_btn = QtWidgets.QPushButton("Connect GitHub")
         self.github_connect_btn.setEnabled(oauth_configured)
         self.github_connect_btn.setToolTip(
             "Connect to GitHub using OAuth Device Flow"
@@ -681,13 +666,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.github_connect_btn.clicked.connect(self._on_github_connect_clicked)
         buttons_layout.addWidget(self.github_connect_btn)
 
-        self.github_disconnect_btn = QtWidgets.QPushButton(
-            "Disconnect"
-        )
+        self.github_disconnect_btn = QtWidgets.QPushButton("Disconnect")
         self.github_disconnect_btn.setEnabled(False)
-        self.github_disconnect_btn.setToolTip(
-            "Disconnect GitHub account"
-        )
+        self.github_disconnect_btn.setToolTip("Disconnect GitHub account")
         self.github_disconnect_btn.clicked.connect(self._on_github_disconnect_clicked)
         buttons_layout.addWidget(self.github_disconnect_btn)
 
@@ -699,14 +680,13 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         group_layout.addLayout(buttons_layout)
 
-
         layout.addWidget(group)
         self._group_github_account = group
 
     def _build_status_section(self, layout):
         """
         Build the status information section
-        
+
         Args:
             layout: Parent layout to add widgets to
         """
@@ -721,9 +701,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         header_layout.setSpacing(4)
         header_layout.addWidget(QtWidgets.QLabel("Operation:"))
         self.operation_status_label = QtWidgets.QLabel("Ready")
-        self.operation_status_label.setStyleSheet(
-            "color: gray; font-size: 9px;"
-        )
+        self.operation_status_label.setStyleSheet("color: gray; font-size: 9px;")
         self.operation_status_label.setAlignment(QtCore.Qt.AlignRight)
         header_layout.addWidget(self.operation_status_label, 1)
         group_layout.addLayout(header_layout)
@@ -742,9 +720,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         # Value labels
         self.working_tree_label = QtWidgets.QLabel("—")
-        self.working_tree_label.setTextInteractionFlags(
-            QtCore.Qt.TextSelectableByMouse
-        )
+        self.working_tree_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         self.working_tree_label.setToolTip(
             "Files you've modified but haven't saved as a version yet\n"
             "(Git term: 'working tree status' or 'dirty/clean state')"
@@ -752,9 +728,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._set_strong_label(self.working_tree_label, "black")
 
         self.ahead_behind_label = QtWidgets.QLabel("—")
-        self.ahead_behind_label.setTextInteractionFlags(
-            QtCore.Qt.TextSelectableByMouse
-        )
+        self.ahead_behind_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         self.ahead_behind_label.setToolTip(
             "How many changes you need to share or get from your team\n"
             "(Git term: 'ahead/behind' - commits to push/pull)"
@@ -762,9 +736,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._set_strong_label(self.ahead_behind_label, "black")
 
         self.branch_label = QtWidgets.QLabel("—")
-        self.branch_label.setTextInteractionFlags(
-            QtCore.Qt.TextSelectableByMouse
-        )
+        self.branch_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         self.branch_label.setToolTip(
             "The work version you're currently using\n"
             "(Git term: 'current branch' - active line of development)"
@@ -772,9 +744,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._set_meta_label(self.branch_label, "gray")
 
         self.upstream_label = QtWidgets.QLabel("—")
-        self.upstream_label.setTextInteractionFlags(
-            QtCore.Qt.TextSelectableByMouse
-        )
+        self.upstream_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         self.upstream_label.setToolTip(
             "The GitHub version your work is synced with\n"
             "(Git term: 'upstream' or 'tracking branch' - remote reference)"
@@ -782,9 +752,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._set_meta_label(self.upstream_label, "gray")
 
         self.last_fetch_label = QtWidgets.QLabel("—")
-        self.last_fetch_label.setTextInteractionFlags(
-            QtCore.Qt.TextSelectableByMouse
-        )
+        self.last_fetch_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         self.last_fetch_label.setToolTip(
             "When you last checked for updates from your team\n"
             "(Git term: 'last fetch time')"
@@ -802,9 +770,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # Error/message area (Sprint 2)
         self.status_message_label = QtWidgets.QLabel("")
         self.status_message_label.setWordWrap(True)
-        self.status_message_label.setStyleSheet(
-            "color: red; font-size: 10px;"
-        )
+        self.status_message_label.setStyleSheet("color: red; font-size: 10px;")
         self.status_message_label.hide()
         group_layout.addWidget(self.status_message_label)
 
@@ -814,7 +780,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     def _build_branch_section(self, layout):
         """
         Build the branch management section with selector and actions.
-        
+
         Args:
             layout: Parent layout to add widgets to
         """
@@ -829,18 +795,17 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         selector_layout.setSpacing(4)
 
         selector_layout.addWidget(QtWidgets.QLabel("Current:"))
-        
+
         self.branch_combo = QtWidgets.QComboBox()
         self.branch_combo.setMinimumWidth(120)
         self.branch_combo.setSizePolicy(
-            QtWidgets.QSizePolicy.Expanding,
-            QtWidgets.QSizePolicy.Preferred
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred
         )
         self.branch_combo.currentIndexChanged.connect(
             self._branch_ops.branch_combo_changed
         )
         selector_layout.addWidget(self.branch_combo)
-        
+
         group_layout.addLayout(selector_layout)
 
         # Action buttons row
@@ -896,7 +861,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     def _build_changes_section(self, layout):
         """
         Build the changes list section
-        
+
         Args:
             layout: Parent layout to add widgets to
         """
@@ -932,9 +897,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             "When saving, include all files you've modified (recommended)\n"
             "(Git term: 'stage' or 'add' - marks files to include in the next commit)"
         )
-        self.stage_all_checkbox.stateChanged.connect(
-            self._update_button_states
-        )
+        self.stage_all_checkbox.stateChanged.connect(self._update_button_states)
         stage_layout.addWidget(self.stage_all_checkbox)
         stage_layout.addStretch()
         group_layout.addLayout(stage_layout)
@@ -945,7 +908,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     def _build_buttons_section(self, layout):
         """
         Build the action buttons section
-        
+
         Args:
             layout: Parent layout to add widgets to
         """
@@ -1001,14 +964,12 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             "Describe what you changed in this version. Be specific so you can find this version later!\n"
             "(This creates a 'commit' - a saved checkpoint in your project's history)"
         )
-        self.commit_message.textChanged.connect(
-            self._on_commit_message_changed
-        )
+        self.commit_message.textChanged.connect(self._on_commit_message_changed)
         extra_layout.addWidget(self.commit_message)
 
         row2_layout = QtWidgets.QHBoxLayout()
         row2_layout.setSpacing(4)
-        
+
         # Combined Commit & Push button (regular push button)
         self.commit_push_btn = QtWidgets.QPushButton("Commit and Push")
         self.commit_push_btn.setEnabled(False)
@@ -1016,10 +977,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             "Save your work and share it with your team on GitHub\n"
             "(Git terms: 'commit' = save checkpoint, 'push' = upload to GitHub)"
         )
-        self.commit_push_btn.clicked.connect(
-            self._commit_push.commit_push_clicked
-        )
-        
+        self.commit_push_btn.clicked.connect(self._commit_push.commit_push_clicked)
+
         # Dropdown menu for workflow selection
         self.workflow_menu = QtWidgets.QMenu(self)
         self.workflow_action_both = self.workflow_menu.addAction(
@@ -1027,33 +986,29 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         )
         self.workflow_action_both.setCheckable(True)
         self.workflow_action_both.setChecked(True)
-        self.workflow_action_both.triggered.connect(
-            self._on_workflow_changed
-        )
+        self.workflow_action_both.triggered.connect(self._on_workflow_changed)
         self.workflow_action_commit = self.workflow_menu.addAction(
             "Save Only (don't share yet)"
         )
         self.workflow_action_commit.setCheckable(True)
-        self.workflow_action_commit.triggered.connect(
-            self._on_workflow_changed
-        )
+        self.workflow_action_commit.triggered.connect(self._on_workflow_changed)
         self.workflow_action_push = self.workflow_menu.addAction(
             "Share Only (already saved)"
         )
         self.workflow_action_push.setCheckable(True)
-        self.workflow_action_push.triggered.connect(
-            self._on_workflow_changed
-        )
-        
-        self._workflow_mode = 'both'
-        
+        self.workflow_action_push.triggered.connect(self._on_workflow_changed)
+
+        self._workflow_mode = "both"
+
         # Dropdown menu button (plain QPushButton to avoid duplicate indicators)
         workflow_menu_btn = QtWidgets.QPushButton("▼")
         workflow_menu_btn.setAutoDefault(False)
         workflow_menu_btn.setDefault(False)
         workflow_menu_btn.setFlat(True)
         workflow_menu_btn.setFixedWidth(24)
-        workflow_menu_btn.setToolTip("Select workflow: Commit and Push (recommended), Commit only, or Push only")
+        workflow_menu_btn.setToolTip(
+            "Select workflow: Commit and Push (recommended), Commit only, or Push only"
+        )
         workflow_menu_btn.clicked.connect(
             lambda: self.workflow_menu.exec_(
                 workflow_menu_btn.mapToGlobal(
@@ -1061,7 +1016,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 )
             )
         )
-        
+
         row2_layout.addWidget(self.commit_push_btn)
         row2_layout.addWidget(workflow_menu_btn)
 
@@ -1076,13 +1031,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         rowp = QtWidgets.QHBoxLayout()
         rowp.setSpacing(4)
-        self.generate_previews_btn = QtWidgets.QPushButton(
-            "Generate Previews"
-        )
+        self.generate_previews_btn = QtWidgets.QPushButton("Generate Previews")
         self.generate_previews_btn.setEnabled(False)
-        self.generate_previews_btn.clicked.connect(
-            self._on_generate_previews_clicked
-        )
+        self.generate_previews_btn.clicked.connect(self._on_generate_previews_clicked)
         rowp.addWidget(self.generate_previews_btn)
 
         self.stage_previews_checkbox = QtWidgets.QCheckBox(
@@ -1092,10 +1043,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             settings.load_stage_previews_default_on()
         )
         self.stage_previews_checkbox.stateChanged.connect(
-            lambda _:
-                settings.save_stage_previews(
-                    self.stage_previews_checkbox.isChecked()
-                )
+            lambda _: settings.save_stage_previews(
+                self.stage_previews_checkbox.isChecked()
+            )
         )
         rowp.addWidget(self.stage_previews_checkbox)
         rowp.addStretch()
@@ -1104,15 +1054,11 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # Status area
         status_row = QtWidgets.QHBoxLayout()
         status_row.setSpacing(6)
-        self.preview_status_label = QtWidgets.QLabel(
-            "Last generated: (never)"
-        )
+        self.preview_status_label = QtWidgets.QLabel("Last generated: (never)")
         self._set_meta_label(self.preview_status_label, "gray")
         status_row.addWidget(self.preview_status_label)
         status_row.addStretch()
-        self.open_preview_folder_btn = QtWidgets.QPushButton(
-            "Open Folder"
-        )
+        self.open_preview_folder_btn = QtWidgets.QPushButton("Open Folder")
         self.open_preview_folder_btn.setEnabled(False)
         self.open_preview_folder_btn.clicked.connect(
             self._on_open_preview_folder_clicked
@@ -1152,13 +1098,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         row.addWidget(label)
         row.addStretch()
 
-        self.browser_window_btn = QtWidgets.QPushButton(
-            "Open Browser"
-        )
+        self.browser_window_btn = QtWidgets.QPushButton("Open Browser")
         self.browser_window_btn.setEnabled(False)
-        self.browser_window_btn.clicked.connect(
-            self._file_browser.open_browser
-        )
+        self.browser_window_btn.clicked.connect(self._file_browser.open_browser)
         row.addWidget(self.browser_window_btn)
 
         layout.addWidget(container)
@@ -1173,7 +1115,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self,
             "Select Repository Folder",
             current_path if current_path else "",
-            QtWidgets.QFileDialog.ShowDirsOnly
+            QtWidgets.QFileDialog.ShowDirsOnly,
         )
 
         if folder:
@@ -1202,7 +1144,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                     settings.save_repo_path(cloned_path)
                     self.repo_path_field.setText(cloned_path)
                     self._validate_repo_path(cloned_path)
-                    
+
                     # Offer to open the cloned folder
                     self._show_repo_opened_dialog(cloned_path, "cloned")
         except Exception as e:
@@ -1242,7 +1184,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                     settings.save_repo_path(repo_path)
                     self.repo_path_field.setText(repo_path)
                     self._validate_repo_path(repo_path)
-                    
+
                     # Show success dialog with option to open folder
                     self._show_repo_opened_dialog(repo_path, "created", repo_name)
         except Exception as e:
@@ -1268,9 +1210,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.root_toggle_btn.setArrowType(
             QtCore.Qt.DownArrow if checked else QtCore.Qt.RightArrow
         )
-        self.root_toggle_btn.setText(
-            "Hide root" if checked else "Show root"
-        )
+        self.root_toggle_btn.setText("Hide root" if checked else "Show root")
 
     def _validate_repo_path(self, path):
         """Validate repository path - delegated to RepoValidationHandler."""
@@ -1284,26 +1224,26 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         """
         Update upstream ref and ahead/behind counts (async via job_runner).
         Uses tracking upstream (@{u}) if available, otherwise falls back to default.
-        
+
         Args:
             repo_root: str - repository root path
         """
         # Sprint PERF-1: Move to background to avoid blocking UI
         if not repo_root:
             return
-        
+
         # Prevent concurrent upstream updates
         if self._is_updating_upstream:
             log.debug("Upstream update already in progress, skipping")
             return
-        
+
         self._is_updating_upstream = True
-        
+
         # Check remote status (fast, local operation)
         self._cached_has_remote = self._git_client.has_remote(
             repo_root, self._remote_name
         )
-        
+
         if not self._cached_has_remote:
             self._is_updating_upstream = False
             self._ahead_count = 0
@@ -1315,34 +1255,34 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self._upstream_ref = None
             self._update_button_states()
             return
-        
+
         # Show calculating state
         self.ahead_behind_label.setText("Calculating…")
         self._set_strong_label(self.ahead_behind_label, "gray")
-        
+
         # Run ahead/behind calculation in background
         def _fetch_upstream():
             ab_result = self._git_client.get_ahead_behind_with_upstream(repo_root)
             return ab_result
-        
+
         self._job_runner.run_callable(
             "update_upstream",
             _fetch_upstream,
             on_success=self._on_upstream_update_complete,
             on_error=self._on_upstream_update_error,
         )
-    
+
     def _on_upstream_update_complete(self, ab_result):
         """Callback when async upstream update completes (Sprint PERF-1)."""
         try:
             self._is_updating_upstream = False
-            
+
             upstream_ref = ab_result.get("upstream")
-            
+
             # Log upstream status
             msg = f"Upstream: {upstream_ref if upstream_ref else '(not set)'}"
             log.info(msg)
-            
+
             if not upstream_ref:
                 # No upstream configured for this branch
                 self._ahead_count = 0
@@ -1354,20 +1294,20 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 self._upstream_ref = None
                 self._update_button_states()
                 return
-            
+
             # Display upstream
             self.upstream_label.setText(upstream_ref)
             self._set_meta_label(self.upstream_label, "#4db6ac")
             self._upstream_ref = upstream_ref
-            
+
             # Display ahead/behind
             if ab_result["ok"]:
                 ahead = ab_result["ahead"]
                 behind = ab_result["behind"]
-                
+
                 self._ahead_count = ahead
                 self._behind_count = behind
-                
+
                 if ahead == 0 and behind == 0:
                     ab_text = "Up to date"
                 elif ahead > 0 and behind > 0:
@@ -1376,35 +1316,27 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                     ab_text = f"{ahead} to share \u2191"
                 else:
                     ab_text = f"{behind} to get \u2193"
-                
+
                 if ahead == 0 and behind == 0:
-                    self._set_strong_label(
-                        self.ahead_behind_label, "green"
-                    )
+                    self._set_strong_label(self.ahead_behind_label, "green")
                 elif behind > 0:
-                    self._set_strong_label(
-                        self.ahead_behind_label, "orange"
-                    )
+                    self._set_strong_label(self.ahead_behind_label, "orange")
                 else:
-                    self._set_strong_label(
-                        self.ahead_behind_label, "#4db6ac"
-                    )
-                
+                    self._set_strong_label(self.ahead_behind_label, "#4db6ac")
+
                 self.ahead_behind_label.setText(ab_text)
             else:
                 self.ahead_behind_label.setText("(error)")
                 self._set_strong_label(self.ahead_behind_label, "red")
                 if ab_result["error"]:
-                    log.debug(
-                        f"Ahead/behind error: {ab_result['error']}"
-                    )
-            
+                    log.debug(f"Ahead/behind error: {ab_result['error']}")
+
             self._update_button_states()
             log.debug("Upstream update complete")
         except Exception as e:
             log.error(f"Error processing upstream update result: {e}")
             self._is_updating_upstream = False
-    
+
     def _on_upstream_update_error(self, error):
         """Callback when async upstream update fails (Sprint PERF-1)."""
         self._is_updating_upstream = False
@@ -1432,10 +1364,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         Called frequently during typing/UI changes.
         """
         git_ok = self._git_client.is_git_available()
-        repo_ok = (
-            self._current_repo_root is not None
-            and self._current_repo_root != ""
-        )
+        repo_ok = self._current_repo_root is not None and self._current_repo_root != ""
         upstream_ok = self._upstream_ref is not None
         changes_present = len(self._file_statuses) > 0
         commit_msg_ok = False
@@ -1446,29 +1375,25 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         )
 
         if hasattr(self, "commit_message"):
-            commit_msg_ok = bool(
-                self.commit_message.toPlainText().strip()
-            )
+            commit_msg_ok = bool(self.commit_message.toPlainText().strip())
         # Also consider compact commit message when present
         if hasattr(self, "compact_commit_message") and not commit_msg_ok:
             commit_msg_ok = bool(self.compact_commit_message.text().strip())
 
-        fetch_enabled = (
-            git_ok and repo_ok and self._cached_has_remote
-            and not busy
-        )
+        fetch_enabled = git_ok and repo_ok and self._cached_has_remote and not busy
         self.fetch_btn.setEnabled(fetch_enabled)
 
         pull_enabled = (
-            git_ok and repo_ok and self._cached_has_remote
+            git_ok
+            and repo_ok
+            and self._cached_has_remote
             and upstream_ok
             and self._behind_count > 0
             and not busy
         )
         self.pull_btn.setEnabled(pull_enabled)
         commit_enabled = (
-            git_ok and repo_ok and changes_present and commit_msg_ok
-            and not busy
+            git_ok and repo_ok and changes_present and commit_msg_ok and not busy
         )
         # Enable compact commit button in collapsed mode
         if hasattr(self, "compact_commit_btn"):
@@ -1477,34 +1402,39 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             )
 
         commit_push_enabled = (
-            git_ok and repo_ok and self._cached_has_remote and not busy
+            git_ok
+            and repo_ok
+            and self._cached_has_remote
+            and not busy
             and ((self._ahead_count > 0) or not upstream_ok)
         )
-        if self._workflow_mode == 'both':
+        if self._workflow_mode == "both":
             commit_push_enabled = (
-                git_ok and repo_ok and changes_present and commit_msg_ok
-                and not busy
+                git_ok and repo_ok and changes_present and commit_msg_ok and not busy
             ) or (
-                git_ok and repo_ok and self._cached_has_remote and not busy
-                and ((self._ahead_count > 0) or not upstream_ok)
-            )
-        elif self._workflow_mode == 'commit':
-            commit_push_enabled = (
-                git_ok and repo_ok and changes_present and commit_msg_ok
+                git_ok
+                and repo_ok
+                and self._cached_has_remote
                 and not busy
-            )
-        elif self._workflow_mode == 'push':
-            commit_push_enabled = (
-                git_ok and repo_ok and self._cached_has_remote and not busy
                 and ((self._ahead_count > 0) or not upstream_ok)
             )
-        
+        elif self._workflow_mode == "commit":
+            commit_push_enabled = (
+                git_ok and repo_ok and changes_present and commit_msg_ok and not busy
+            )
+        elif self._workflow_mode == "push":
+            commit_push_enabled = (
+                git_ok
+                and repo_ok
+                and self._cached_has_remote
+                and not busy
+                and ((self._ahead_count > 0) or not upstream_ok)
+            )
+
         self.commit_push_btn.setEnabled(commit_push_enabled)
 
         if hasattr(self, "stage_all_checkbox"):
-            self.stage_all_checkbox.setEnabled(
-                repo_ok and changes_present
-            )
+            self.stage_all_checkbox.setEnabled(repo_ok and changes_present)
 
         self.changes_list.setEnabled(repo_ok)
 
@@ -1512,6 +1442,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         doc_saved = False
         try:
             import FreeCAD
+
             ad = FreeCAD.ActiveDocument
             doc_saved = bool(getattr(ad, "FileName", ""))
         except Exception:
@@ -1523,10 +1454,10 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # Update Create Repo button visibility
         # Show when: path is specified, valid directory, but NOT a git repo
         import os
+
         current_path = self.repo_path_field.text()
-        path_is_valid_dir = (
-            current_path
-            and os.path.isdir(os.path.normpath(os.path.expanduser(current_path)))
+        path_is_valid_dir = current_path and os.path.isdir(
+            os.path.normpath(os.path.expanduser(current_path))
         )
         create_repo_visible = path_is_valid_dir and not repo_ok and git_ok
         self.create_repo_btn.setVisible(create_repo_visible)
@@ -1536,7 +1467,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.connect_remote_btn.setVisible(remote_missing)
         # Allow connecting even while other tasks might be considered busy,
         # but still require git/repo to be valid.
-        
+
         # Update branch button states
         self._update_branch_button_states()
         self.connect_remote_btn.setEnabled(remote_missing)
@@ -1544,7 +1475,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     def _show_status_message(self, message, is_error=True):
         """
         Show a status message in the status section
-        
+
         Args:
             message: str - message to display
             is_error: bool - whether this is an error message
@@ -1552,9 +1483,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         if message:
             self.status_message_label.setText(message)
             if is_error:
-                self.status_message_label.setStyleSheet(
-                    "color: red; font-size: 10px;"
-                )
+                self.status_message_label.setStyleSheet("color: red; font-size: 10px;")
             else:
                 self.status_message_label.setStyleSheet(
                     "color: #4db6ac; font-size: 10px;"
@@ -1580,21 +1509,19 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         """Update enabled/disabled state of branch action buttons (delegates to handler)."""
         self._branch_ops.update_branch_button_states()
 
-
-
-
-
-    def _show_repo_opened_dialog(self, repo_path: str, action: str, repo_name: str = None):
+    def _show_repo_opened_dialog(
+        self, repo_path: str, action: str, repo_name: str = None
+    ):
         """
         Show success dialog after cloning or creating a repo, with option to open folder.
-        
+
         Args:
             repo_path: Absolute path to the repo
             action: "cloned" or "created"
             repo_name: Repository name (optional, for created repos)
         """
         msg_box = QtWidgets.QMessageBox(self)
-        
+
         if action == "created":
             title = "Repository Created"
             if repo_name:
@@ -1619,54 +1546,53 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 "GitPDM is now configured to work with this repository.\n\n"
                 "Click 'Open Folder' below to view the repository in File Explorer."
             )
-        
+
         msg_box.setWindowTitle(title)
         msg_box.setIcon(QtWidgets.QMessageBox.Information)
         msg_box.setText(msg)
-        
+
         # Add custom buttons
         open_btn = msg_box.addButton("Open Folder", QtWidgets.QMessageBox.AcceptRole)
         close_btn = msg_box.addButton("Close", QtWidgets.QMessageBox.RejectRole)
         msg_box.setDefaultButton(open_btn)
-        
+
         msg_box.exec_()
-        
+
         if msg_box.clickedButton() == open_btn:
             self._open_folder_in_explorer(repo_path)
-
-
 
     def _check_for_wrong_folder_editing(self):
         """Check if user has FreeCAD documents open from a different folder than current repo root."""
         if not self._current_repo_root:
             return
-        
+
         try:
             import FreeCAD
+
             list_docs = getattr(FreeCAD, "listDocuments", None)
             if not callable(list_docs):
                 return
-            
+
             # Get current repo root (normalized)
             current_root = os.path.normcase(os.path.normpath(self._current_repo_root))
-            
+
             # Find any open .FCStd files that are NOT in the current repo root
             wrong_folder_docs = []
             for doc in list_docs().values():
                 path = getattr(doc, "FileName", "") or ""
                 if not path or not path.lower().endswith(".fcstd"):
                     continue
-                
+
                 path_norm = os.path.normcase(os.path.normpath(path))
                 # If document is from a different folder entirely, warn
                 if not path_norm.startswith(current_root):
                     wrong_folder_docs.append(path)
-            
+
             if wrong_folder_docs:
                 doc_list = "\n".join(f"  • {d}" for d in wrong_folder_docs[:5])
                 if len(wrong_folder_docs) > 5:
                     doc_list += f"\n  ... and {len(wrong_folder_docs) - 5} more"
-                
+
                 msg = (
                     "⚠️ WRONG FOLDER DETECTED\n\n"
                     "You have FreeCAD documents open from a different folder than the current repo:\n\n"
@@ -1678,26 +1604,27 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                     "2. Open files from the current worktree folder shown above\n"
                     "3. Use 'Open Folder' button after creating worktrees"
                 )
-                
+
                 QtWidgets.QMessageBox.warning(
-                    self,
-                    "Wrong Folder - Risk of Corruption",
-                    msg
+                    self, "Wrong Folder - Risk of Corruption", msg
                 )
-                log.warning(f"User has {len(wrong_folder_docs)} documents open from wrong folder")
-        
+                log.warning(
+                    f"User has {len(wrong_folder_docs)} documents open from wrong folder"
+                )
+
         except Exception as e:
             log.debug(f"Could not check for wrong folder editing: {e}")
 
     def _get_open_repo_documents(self):
         """
         Return list of open FreeCAD documents that live inside the current repo.
-        
+
         CRITICAL: This checks for .FCStd files from the CURRENT repo root only.
         For worktree safety, use _get_all_open_fcstd_documents() to check ALL open files.
         """
         try:
             import FreeCAD
+
             list_docs = getattr(FreeCAD, "listDocuments", None)
             if not callable(list_docs):
                 return []
@@ -1724,13 +1651,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             return []
         return open_paths
 
-
-
-
-
     def _start_working_directory_refresh(self):
         """Start periodic timer to maintain repo folder as FreeCAD's working directory."""
-        if not hasattr(self, '_wd_refresh_timer'):
+        if not hasattr(self, "_wd_refresh_timer"):
             self._wd_refresh_timer = QtCore.QTimer(self)
             self._wd_refresh_timer.timeout.connect(self._refresh_working_directory)
             # Refresh every 10 seconds to maintain working directory
@@ -1740,15 +1663,15 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     def _set_freecad_working_directory(self, directory: str):
         """
         Set FreeCAD's working directory to ensure Save As dialog defaults to repo folder.
-        
+
         This prevents users from accidentally saving files outside the repo.
         Delegates to repo_validator for the actual implementation.
-        
+
         Args:
             directory: Absolute path to set as working directory
         """
         self._repo_validator._set_freecad_working_directory(directory)
-    
+
     def _refresh_working_directory(self):
         """Periodic refresh of working directory to maintain repo folder as default."""
         if self._current_repo_root:
@@ -1756,17 +1679,15 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 current_wd = os.getcwd()
                 repo_norm = os.path.normcase(os.path.normpath(self._current_repo_root))
                 current_norm = os.path.normcase(os.path.normpath(current_wd))
-                
+
                 # Only update if working directory has drifted from repo
                 if current_norm != repo_norm:
-                    log.debug(f"Working directory drifted to {current_wd}, resetting to {self._current_repo_root}")
+                    log.debug(
+                        f"Working directory drifted to {current_wd}, resetting to {self._current_repo_root}"
+                    )
                     self._set_freecad_working_directory(self._current_repo_root)
             except Exception as e:
                 log.debug(f"Working directory refresh error: {e}")
-
-
-
-
 
     def _refresh_after_branch_operation(self):
         """Refresh UI after branch operations (delegates to handler)."""
@@ -1777,36 +1698,28 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     def _update_operation_status(self, status_text):
         """
         Update the operation status label.
-        
+
         Args:
             status_text: str - status message
         """
         self.operation_status_label.setText(status_text)
         if status_text == "Ready":
-            self.operation_status_label.setStyleSheet(
-                "color: gray; font-size: 9px;"
-            )
+            self.operation_status_label.setStyleSheet("color: gray; font-size: 9px;")
         elif "…" in status_text:
-            self.operation_status_label.setStyleSheet(
-                "color: orange; font-size: 9px;"
-            )
+            self.operation_status_label.setStyleSheet("color: orange; font-size: 9px;")
         elif status_text == "Synced":
-            self.operation_status_label.setStyleSheet(
-                "color: green; font-size: 9px;"
-            )
+            self.operation_status_label.setStyleSheet("color: green; font-size: 9px;")
         else:
-            self.operation_status_label.setStyleSheet(
-                "color: red; font-size: 9px;"
-            )
+            self.operation_status_label.setStyleSheet("color: red; font-size: 9px;")
 
     def _start_busy_feedback(self, label, operation_id=None):
         """Show progress indicator and periodic status updates (Sprint PERF-4: enhanced)."""
         self._busy_label = label
-        
+
         # Sprint PERF-4: Track operation for better state management
         if operation_id:
             self._active_operations.add(operation_id)
-        
+
         if hasattr(self, "busy_bar"):
             self.busy_bar.show()
         self._update_operation_status(label)
@@ -1818,7 +1731,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # Sprint PERF-4: Remove operation from tracking
         if operation_id and operation_id in self._active_operations:
             self._active_operations.discard(operation_id)
-        
+
         # Only hide busy UI if no operations are active
         if not self._active_operations:
             try:
@@ -1845,6 +1758,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
     def _set_ready_later(self, delay_ms=1500, status_text="Ready"):
         """Return UI to Ready after a short delay if idle (Sprint PERF-4: enhanced)."""
+
         def _to_ready():
             # Sprint PERF-4: Check all operation states including active_operations
             if not (
@@ -1856,14 +1770,13 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 or self._branch_ops._is_loading_branches
             ):
                 self._update_operation_status(status_text)
+
         QtCore.QTimer.singleShot(delay_ms, _to_ready)
-
-
 
     def _display_working_tree_status(self, status):
         """
         Display working tree status in UI
-        
+
         Args:
             status: dict - status summary from GitClient
         """
@@ -1890,24 +1803,24 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # Sprint PERF-1: Move to background to avoid blocking UI
         if not repo_root:
             return
-        
+
         # Prevent concurrent status refreshes
         if self._is_refreshing_status:
             log.debug("Status refresh already in progress, skipping")
             return
-        
+
         self._is_refreshing_status = True
-        
+
         # Show loading state
         self.working_tree_label.setText("Refreshing…")
         self._set_strong_label(self.working_tree_label, "gray")
-        
+
         # Run git status operations in background
         def _fetch_status():
             status = self._git_client.status_summary(repo_root)
             file_statuses = self._git_client.status_porcelain(repo_root)
             return {"status": status, "file_statuses": file_statuses}
-        
+
         self._job_runner.run_callable(
             "refresh_status",
             _fetch_status,
@@ -1919,23 +1832,23 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         """Callback when async status refresh completes (Sprint PERF-1)."""
         try:
             self._is_refreshing_status = False
-            
+
             status = result.get("status")
             file_statuses = result.get("file_statuses")
-            
+
             if status:
                 self._display_working_tree_status(status)
-            
+
             if file_statuses is not None:
                 self._file_statuses = file_statuses
                 self._populate_changes_list()
-            
+
             self._update_button_states()
             log.debug("Status refresh complete")
         except Exception as e:
             log.error(f"Error processing status refresh result: {e}")
             self._is_refreshing_status = False
-    
+
     def _on_status_refresh_error(self, error):
         """Callback when async status refresh fails (Sprint PERF-1)."""
         self._is_refreshing_status = False
@@ -1943,7 +1856,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.working_tree_label.setText("(error)")
         self._set_strong_label(self.working_tree_label, "red")
         self._update_button_states()
-    
+
     def _populate_changes_list(self):
         """Update changes list widget with current file statuses using friendly labels."""
         self.changes_list.clear()
@@ -1956,70 +1869,64 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             status_text = self._friendly_status_text(entry.x, entry.y)
             text = f"{status_text} {entry.path}"
             self.changes_list.addItem(text)
-    
+
     def _friendly_status_text(self, x, y):
         """
         Convert Git status codes to friendly text with visual indicators.
-        
+
         Args:
             x: index status character
             y: working tree status character
-            
+
         Returns:
             str: Friendly status text with icon/emoji
         """
         # Handle common two-character combinations first
         code = f"{x}{y}"
-        
+
         # Modified in working tree
         if code in [" M", "MM", "AM"]:
             return "📝 Modified"
-        
+
         # New file (untracked or added)
         if code in ["??", "A ", "AM"]:
             return "➕ New"
-        
+
         # Deleted
         if code in [" D", "D ", "AD"]:
             return "➖ Deleted"
-        
+
         # Renamed
         if code in ["R ", "RM"]:
             return "📋 Renamed"
-        
+
         # Copied
         if code in ["C ", "CM"]:
             return "📋 Copied"
-        
+
         # Updated but unmerged (conflict)
         if code in ["UU", "AA", "DD"]:
             return "⚠️ Conflict"
-        
+
         # Default: show the code if we don't recognize it
         return f"[{code}]"
 
     def _on_workflow_changed(self):
         """Handle workflow selection change."""
         sender = self.sender()
-        
+
         if sender == self.workflow_action_both:
-            self._workflow_mode = 'both'
+            self._workflow_mode = "both"
         elif sender == self.workflow_action_commit:
-            self._workflow_mode = 'commit'
+            self._workflow_mode = "commit"
         elif sender == self.workflow_action_push:
-            self._workflow_mode = 'push'
-        
+            self._workflow_mode = "push"
+
         # Update checkmarks
-        self.workflow_action_both.setChecked(
-            self._workflow_mode == 'both'
-        )
-        self.workflow_action_commit.setChecked(
-            self._workflow_mode == 'commit'
-        )
-        self.workflow_action_push.setChecked(
-            self._workflow_mode == 'push'
-        )
-        
+        self.workflow_action_both.setChecked(self._workflow_mode == "both")
+        self.workflow_action_commit.setChecked(self._workflow_mode == "commit")
+        self.workflow_action_push.setChecked(self._workflow_mode == "push")
+
         # Update button label and states for the new mode
         self._update_commit_push_button_default_label()
         self._update_button_states()
@@ -2032,9 +1939,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         """Called when commit message text changes (debounced)."""
         self._button_update_timer.stop()
         self._button_update_timer.start()
-
-
-
 
     def _on_refresh_clicked(self):
         """Handle Refresh Status button click."""
@@ -2052,13 +1956,13 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         """
         Callback when a background job finishes.
         Sprint 2: Handle fetch results
-        
+
         Args:
             job: dict - job result descriptor
         """
         job_type = job.get("type")
         log.debug(f"Job finished: {job_type}")
-        
+
         if job_type == "fetch":
             self._fetch_pull.handle_fetch_result(job)
         elif job_type == "stage_previews":
@@ -2074,18 +1978,15 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         if ts:
             try:
                 from datetime import datetime
+
                 dt = datetime.fromisoformat(ts)
                 display = dt.strftime("%Y-%m-%d %H:%M:%S")
             except Exception:
                 display = ts
-            self.preview_status_label.setText(
-                f"Last generated: {display}"
-            )
+            self.preview_status_label.setText(f"Last generated: {display}")
             self._set_meta_label(self.preview_status_label, "#4db6ac")
         else:
-            self.preview_status_label.setText(
-                "Last generated: (never)"
-            )
+            self.preview_status_label.setText("Last generated: (never)")
             self._set_meta_label(self.preview_status_label, "gray")
         self.open_preview_folder_btn.setEnabled(bool(rel_dir))
 
@@ -2093,12 +1994,11 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         rel_dir = settings.load_last_preview_dir()
         if not rel_dir or not self._current_repo_root:
             return
-        abs_dir = core_paths.safe_join_repo(
-            self._current_repo_root, rel_dir
-        )
+        abs_dir = core_paths.safe_join_repo(self._current_repo_root, rel_dir)
         if not abs_dir:
             return
         import os
+
         try:
             os.startfile(str(abs_dir))
         except Exception as e:
@@ -2106,36 +2006,27 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
     def _on_generate_previews_clicked(self):
         if not self._current_repo_root:
-            self._show_status_message(
-                "Repo not selected / invalid", is_error=True
-            )
+            self._show_status_message("Repo not selected / invalid", is_error=True)
             return
         try:
             import FreeCAD
+
             ad = FreeCAD.ActiveDocument
         except Exception:
             ad = None
         if not ad:
-            self._show_status_message(
-                "No active document", is_error=True
-            )
+            self._show_status_message("No active document", is_error=True)
             return
         file_name = getattr(ad, "FileName", "")
         if not file_name:
-            self._show_status_message(
-                "Document not saved", is_error=True
-            )
+            self._show_status_message("Document not saved", is_error=True)
             return
         if not core_paths.is_inside_repo(file_name, self._current_repo_root):
-            self._show_status_message(
-                "Document outside selected repo", is_error=True
-            )
+            self._show_status_message("Document outside selected repo", is_error=True)
             return
 
         # Modal progress dialog (best-effort, keeps UI responsive)
-        progress = QtWidgets.QProgressDialog(
-            "Generating previews…", None, 0, 0, self
-        )
+        progress = QtWidgets.QProgressDialog("Generating previews…", None, 0, 0, self)
         progress.setWindowTitle("GitPDM")
         progress.setModal(True)
         progress.setMinimumDuration(0)
@@ -2153,9 +2044,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         # Update status labels and remember last output dir
         from datetime import datetime, timezone
-        settings.save_last_preview_at(
-            datetime.now(timezone.utc).isoformat()
-        )
+
+        settings.save_last_preview_at(datetime.now(timezone.utc).isoformat())
         if result.rel_dir:
             settings.save_last_preview_dir(result.rel_dir)
         self._update_preview_status_labels()
@@ -2166,17 +2056,20 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             png_rel = result.rel_dir + "preview.png"
             json_rel = result.rel_dir + "preview.json"
             args = [
-                git_cmd, "-C", self._current_repo_root,
-                "add", "--", png_rel, json_rel
+                git_cmd,
+                "-C",
+                self._current_repo_root,
+                "add",
+                "--",
+                png_rel,
+                json_rel,
             ]
             self._start_busy_feedback("Staging previews…")
             self._job_runner.run_job(
                 "stage_previews", args, callback=self._on_stage_previews_completed
             )
         else:
-            self._show_status_message(
-                "Previews generated", is_error=False
-            )
+            self._show_status_message("Previews generated", is_error=False)
             self._refresh_status_views(self._current_repo_root)
             QtCore.QTimer.singleShot(2000, self._clear_status_message)
 
@@ -2189,13 +2082,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         result = job.get("result", {})
         success = result.get("success", False)
         if success:
-            self._show_status_message(
-                "Previews generated and staged", is_error=False
-            )
+            self._show_status_message("Previews generated and staged", is_error=False)
         else:
-            self._show_status_message(
-                "Staging failed; outputs kept", is_error=True
-            )
+            self._show_status_message("Staging failed; outputs kept", is_error=True)
             log.warning(result.get("stderr", ""))
         if self._current_repo_root:
             self._refresh_status_views(self._current_repo_root)
@@ -2204,45 +2093,38 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     def _on_publish_clicked(self):
         """Sprint 7: Handle Publish button click (one-click workflow)."""
         if not self._current_repo_root:
-            self._show_status_message(
-                "Repo not selected / invalid", is_error=True
-            )
+            self._show_status_message("Repo not selected / invalid", is_error=True)
             return
-        
+
         # Check if busy
         if self._job_runner.is_busy():
             log.debug("Job running, publish ignored")
             return
-        
+
         try:
             import FreeCAD
+
             ad = FreeCAD.ActiveDocument
         except Exception:
             ad = None
         if not ad:
-            self._show_status_message(
-                "No active document", is_error=True
-            )
+            self._show_status_message("No active document", is_error=True)
             return
-        
+
         file_name = getattr(ad, "FileName", "")
         if not file_name:
-            self._show_status_message(
-                "Document not saved", is_error=True
-            )
+            self._show_status_message("Document not saved", is_error=True)
             return
-        
+
         # Use commit message from the text box
         message = self.commit_message.toPlainText().strip()
         if not message:
-            self._show_status_message(
-                "Commit message required", is_error=True
-            )
+            self._show_status_message("Commit message required", is_error=True)
             return
-        
+
         # Run publish workflow with progress
         self._run_publish_workflow(message)
-    
+
     def _run_publish_workflow(self, commit_message):
         """Execute the publish workflow with progress feedback."""
         # Modal progress dialog
@@ -2254,14 +2136,14 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         progress.setMinimumDuration(0)
         progress.show()
         QtWidgets.QApplication.processEvents()
-        
+
         coordinator = publish.PublishCoordinator(self._git_client)
-        
+
         # Step 1: Precheck
         progress.setLabelText("Running preflight checks…")
         progress.setValue(0)
         QtWidgets.QApplication.processEvents()
-        
+
         result = coordinator.precheck(self._current_repo_root)
         if not result.ok:
             progress.close()
@@ -2269,7 +2151,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             return
 
         precheck_details = result.details or {}
-        
+
         # Check if behind upstream
         details = result.details or {}
         behind = details.get("behind", 0)
@@ -2282,7 +2164,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 "Recommendation: Pull changes first to avoid conflicts.\n\n"
                 "Publish anyway?",
                 QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-                QtWidgets.QMessageBox.No
+                QtWidgets.QMessageBox.No,
             )
             if choice != QtWidgets.QMessageBox.Yes:
                 log.info("User chose not to publish while behind")
@@ -2296,12 +2178,12 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             progress.setMinimumDuration(0)
             progress.show()
             QtWidgets.QApplication.processEvents()
-        
+
         # Step 2: Export previews
         progress.setLabelText("Exporting previews (PNG + JSON + GLB)…")
         progress.setValue(1)
         QtWidgets.QApplication.processEvents()
-        
+
         result = coordinator.export_previews(self._current_repo_root)
         if not result.ok:
             progress.close()
@@ -2311,12 +2193,12 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         export_result = None
         if result.details:
             export_result = result.details.get("export_result")
-        
+
         # Step 3: Stage files
         progress.setLabelText("Staging files…")
         progress.setValue(2)
         QtWidgets.QApplication.processEvents()
-        
+
         source_path = precheck_details.get("file_name") if precheck_details else None
         result = coordinator.stage_files(
             self._current_repo_root,
@@ -2328,40 +2210,39 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             progress.close()
             self._handle_publish_error(result)
             return
-        
+
         # Step 4: Commit
         progress.setLabelText("Creating commit…")
         progress.setValue(3)
         QtWidgets.QApplication.processEvents()
-        
+
         result = coordinator.commit_changes(self._current_repo_root, commit_message)
         if not result.ok:
             progress.close()
             # Special handling for NOTHING_TO_COMMIT
-            if result.step == publish.PublishStep.COMMIT and "nothing" in result.message.lower():
-                self._show_status_message(
-                    "No changes to commit", is_error=False
-                )
+            if (
+                result.step == publish.PublishStep.COMMIT
+                and "nothing" in result.message.lower()
+            ):
+                self._show_status_message("No changes to commit", is_error=False)
             else:
                 self._handle_publish_error(result)
             return
-        
+
         # Step 5: Push
         progress.setLabelText("Pushing to remote…")
         progress.setValue(4)
         QtWidgets.QApplication.processEvents()
-        
+
         result = coordinator.push_to_remote(self._current_repo_root)
         progress.close()
-        
+
         if not result.ok:
             self._handle_publish_error(result)
             return
-        
+
         # Success!
-        self._show_status_message(
-            "Published successfully", is_error=False
-        )
+        self._show_status_message("Published successfully", is_error=False)
 
         # Clear commit message after successful publish
         try:
@@ -2373,27 +2254,26 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             except Exception:
                 pass
         self._on_commit_message_changed()
-        
+
         # Update preview status
         from datetime import datetime, timezone
-        settings.save_last_preview_at(
-            datetime.now(timezone.utc).isoformat()
-        )
+
+        settings.save_last_preview_at(datetime.now(timezone.utc).isoformat())
         export_details = result.details or {}
         if export_details.get("rel_dir"):
             settings.save_last_preview_dir(export_details["rel_dir"])
         self._update_preview_status_labels()
-        
+
         # Refresh status views
         self._refresh_status_views(self._current_repo_root)
 
     # Preview operations delegated to self._file_browser handler
-    
+
     def _handle_publish_error(self, result):
         """Display publish error to user."""
         step_name = result.step.name if result.step else "Unknown"
         error_msg = result.message or "Unknown error"
-        
+
         # Provide helpful guidance for common errors
         detailed_msg = error_msg
         if "Remote 'origin' not found" in error_msg:
@@ -2403,28 +2283,22 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 "No remote configured. Connect a remote now?\n\n"
                 "Tip: Create the repo in GitHub Desktop, copy its URL, then paste here.",
                 QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.Cancel,
-                QtWidgets.QMessageBox.Yes
+                QtWidgets.QMessageBox.Yes,
             )
             if choice == QtWidgets.QMessageBox.Yes:
                 self._start_connect_remote_flow()
             else:
-                self._show_status_message(
-                    f"Publish failed: {step_name}", is_error=True
-                )
+                self._show_status_message(f"Publish failed: {step_name}", is_error=True)
                 log.error(f"Publish failed at {step_name}: {error_msg}")
                 return
             # Do not continue to generic message box if user handled prompt
             return
-        
+
         QtWidgets.QMessageBox.critical(
-            self,
-            f"Publish Failed ({step_name})",
-            detailed_msg
+            self, f"Publish Failed ({step_name})", detailed_msg
         )
-        
-        self._show_status_message(
-            f"Publish failed: {step_name}", is_error=True
-        )
+
+        self._show_status_message(f"Publish failed: {step_name}", is_error=True)
         log.error(f"Publish failed at {step_name}: {error_msg}")
 
     def _load_saved_repo_path(self):
@@ -2438,12 +2312,10 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self.repo_path_field.blockSignals(False)
             # Auto-validate on load
             self._validate_repo_path(saved_path)
-            log.info(
-                f"Restored repo path from settings: {saved_path}"
-            )
+            log.info(f"Restored repo path from settings: {saved_path}")
         # Initialize preview status area
         self._update_preview_status_labels()
-    
+
     def _load_saved_repo_path_async(self):
         """Load saved repository path and validate in background (Sprint PERF-2)."""
         saved_path = settings.load_repo_path()
@@ -2457,6 +2329,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self._validate_repo_path(saved_path)
         # Initialize preview status area
         self._update_preview_status_labels()
+
     # ========== GitHub OAuth/Auth (Sprint 4: Delegated to GitHubAuthHandler) ==========
 
     def _on_github_connect_clicked(self):

@@ -85,7 +85,11 @@ def _sanitize_preset(data: Dict[str, Any]) -> Dict[str, Any]:
         view = "isometric"
     t_out["view"] = view
 
-    bg = str(t_in.get("background", t_out.get("background", "transparent"))).strip().lower()
+    bg = (
+        str(t_in.get("background", t_out.get("background", "transparent")))
+        .strip()
+        .lower()
+    )
     # Allow transparent, hex colors, or none
     if bg in ("transparent", "none", ""):
         bg = "transparent"
@@ -112,18 +116,14 @@ def _sanitize_preset(data: Dict[str, Any]) -> Dict[str, Any]:
     m_in = data.get("mesh", {}) or {}
     m_out = result["mesh"]
     try:
-        lin_def = float(m_in.get(
-            "linearDeflection", m_out["linearDeflection"]
-        ))
+        lin_def = float(m_in.get("linearDeflection", m_out["linearDeflection"]))
     except Exception:
         lin_def = 0.1
     lin_def = max(0.001, min(10.0, lin_def))
     m_out["linearDeflection"] = lin_def
 
     try:
-        ang_def = float(m_in.get(
-            "angularDeflectionDeg", m_out["angularDeflectionDeg"]
-        ))
+        ang_def = float(m_in.get("angularDeflectionDeg", m_out["angularDeflectionDeg"]))
     except Exception:
         ang_def = 15
     ang_def = max(1, min(90, ang_def))

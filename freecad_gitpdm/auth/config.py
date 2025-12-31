@@ -28,10 +28,10 @@ _CLIENT_ID = "Ov23li9bhJnBzf4o55fw"
 def get_client_id():
     """
     Get the GitHub OAuth client ID.
-    
+
     Returns:
         str | None: Client ID if configured, None if placeholder
-        
+
     Notes:
         Returns None when _CLIENT_ID is still "REPLACE_ME" so UI
         can show "Not configured" message to users.

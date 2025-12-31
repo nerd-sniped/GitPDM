@@ -15,36 +15,36 @@ def mock_freecad():
     freecad_mock = MagicMock()
     freecad_mock.Version.return_value = ["0", "21", "0", "12345"]
     freecad_mock.ParamGet.return_value = MagicMock()
-    
+
     # Mock Console
     console_mock = MagicMock()
     freecad_mock.Console = console_mock
-    
+
     # Inject into sys.modules
-    sys.modules['FreeCAD'] = freecad_mock
-    sys.modules['FreeCADGui'] = MagicMock()
-    
+    sys.modules["FreeCAD"] = freecad_mock
+    sys.modules["FreeCADGui"] = MagicMock()
+
     yield freecad_mock
-    
+
     # Cleanup (optional, but good practice)
-    if 'FreeCAD' in sys.modules:
-        del sys.modules['FreeCAD']
-    if 'FreeCADGui' in sys.modules:
-        del sys.modules['FreeCADGui']
+    if "FreeCAD" in sys.modules:
+        del sys.modules["FreeCAD"]
+    if "FreeCADGui" in sys.modules:
+        del sys.modules["FreeCADGui"]
 
 
 @pytest.fixture
 def mock_qt():
     """Mock Qt modules"""
     pyside_mock = MagicMock()
-    sys.modules['PySide6'] = pyside_mock
-    sys.modules['PySide6.QtCore'] = MagicMock()
-    sys.modules['PySide6.QtWidgets'] = MagicMock()
-    sys.modules['PySide6.QtGui'] = MagicMock()
-    
+    sys.modules["PySide6"] = pyside_mock
+    sys.modules["PySide6.QtCore"] = MagicMock()
+    sys.modules["PySide6.QtWidgets"] = MagicMock()
+    sys.modules["PySide6.QtGui"] = MagicMock()
+
     yield pyside_mock
-    
-    for module in ['PySide6', 'PySide6.QtCore', 'PySide6.QtWidgets', 'PySide6.QtGui']:
+
+    for module in ["PySide6", "PySide6.QtCore", "PySide6.QtWidgets", "PySide6.QtGui"]:
         if module in sys.modules:
             del sys.modules[module]
 

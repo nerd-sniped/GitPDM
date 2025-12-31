@@ -92,7 +92,7 @@ def apply_scaffold(
         preset_path = os.path.join(repo_root, ".freecad-pdm", "preset.json")
         try:
             if not os.path.exists(preset_path):
-                with open(preset_path, 'w', encoding='utf-8') as f:
+                with open(preset_path, "w", encoding="utf-8") as f:
                     json.dump(_DEFAULT_PRESET, f, indent=2)
                 log.info("Created .freecad-pdm/preset.json")
                 created.append(".freecad-pdm/preset.json")
@@ -108,17 +108,17 @@ def apply_scaffold(
         try:
             if os.path.exists(gitattr_path):
                 # Append if file exists and doesn't already have LFS entries
-                with open(gitattr_path, 'r', encoding='utf-8') as f:
+                with open(gitattr_path, "r", encoding="utf-8") as f:
                     content = f.read()
                 if "*.FCStd filter=lfs" not in content:
-                    with open(gitattr_path, 'a', encoding='utf-8') as f:
+                    with open(gitattr_path, "a", encoding="utf-8") as f:
                         f.write("\n" + _LFS_GITATTRIBUTES)
                     log.info("Updated .gitattributes with LFS config")
                     created.append(".gitattributes")
                 else:
                     log.debug(".gitattributes already has LFS entries")
             else:
-                with open(gitattr_path, 'w', encoding='utf-8') as f:
+                with open(gitattr_path, "w", encoding="utf-8") as f:
                     f.write(_LFS_GITATTRIBUTES)
                 log.info("Created .gitattributes with LFS config")
                 created.append(".gitattributes")

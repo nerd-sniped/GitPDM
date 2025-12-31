@@ -12,12 +12,13 @@ from typing import Any, Tuple
 def doc_and_view() -> Tuple[Any, Any]:
     """
     Get active FreeCAD document and view.
-    
+
     Returns:
         Tuple of (document, view). Either may be None if unavailable.
     """
     try:
         import FreeCAD, FreeCADGui
+
         doc = FreeCAD.ActiveDocument
         view = None
         try:

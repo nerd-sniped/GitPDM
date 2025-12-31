@@ -16,6 +16,7 @@ def freecad_version_string() -> str:
     """Get FreeCAD version as a string."""
     try:
         import FreeCAD
+
         v = getattr(FreeCAD, "Version", None)
         if callable(v):
             ver = v()
