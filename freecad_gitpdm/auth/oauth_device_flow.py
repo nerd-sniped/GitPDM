@@ -8,6 +8,8 @@ to authenticate users with GitHub without requiring them to enter passwords.
 Uses urllib for HTTPS requests and threading for non-blocking polling.
 """
 
+from __future__ import annotations
+
 import json
 import time
 import urllib.request

@@ -5,6 +5,8 @@ Sprint 2: Minimal git wrapper using subprocess with fetch support
 Sprint PERF: Suppress terminal windows on Windows
 """
 
+from __future__ import annotations
+
 import subprocess
 import os
 import sys

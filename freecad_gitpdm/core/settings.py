@@ -4,6 +4,8 @@ GitPDM Settings Module
 Sprint 2: Persist settings using FreeCAD parameter store
 """
 
+from __future__ import annotations
+
 from freecad_gitpdm.core import log
 
 # Parameter group path in FreeCAD's parameter tree

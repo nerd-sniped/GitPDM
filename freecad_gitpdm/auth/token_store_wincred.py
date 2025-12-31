@@ -7,6 +7,8 @@ This module implements TokenStore for Windows using ctypes to access
 CredWriteW, CredReadW, CredDeleteW, and CredFree from Windows API.
 """
 
+from __future__ import annotations
+
 import json
 import ctypes
 from ctypes import wintypes

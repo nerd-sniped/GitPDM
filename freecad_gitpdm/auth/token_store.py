@@ -8,6 +8,8 @@ storage (Windows Credential Manager, macOS Keychain, etc.). It does NOT store
 tokens in FreeCAD settings or logs.
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from freecad_gitpdm.auth.oauth_device_flow import TokenResponse
 
