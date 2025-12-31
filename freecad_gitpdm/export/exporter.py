@@ -324,8 +324,90 @@ def _set_view_for_thumbnail(view, preset):
 def _save_thumbnail(view, preset, out_path: Path) -> Optional[str]:
     size = preset.get("thumbnail", {}).get("size", [512, 512])
     w, h = int(size[0]), int(size[1])
-    bg = preset.get("thumbnail", {}).get("background", "#ffffff")
-    # Try native screenshot API first
+    bg = preset.get("thumbnail", {}).get("background", "transparent")
+    
+    # Handle transparent background
+    if bg.lower() in ["transparent", "none", ""]:
+        # Set view background to transparent before capturing
+        orig_bg_color = None
+        try:
+            # Try to get and set background color
+            try:
+                orig_bg_color = view.getBackgroundColor()
+            except Exception:
+                pass
+            
+            # Set transparent/white background (FreeCAD doesn't support true transparency in viewport)
+            # We'll make it transparent in the image processing
+            try:
+                view.setBackgroundColor(1.0, 1.0, 1.0, 0.0)  # RGBA with alpha=0
+            except Exception:
+                # Fallback: set to white, we'll process it
+                try:
+                    view.setBackgroundColor(1.0, 1.0, 1.0)
+                except Exception:
+                    pass
+            
+            pm = view.getPixmap(w, h)
+            
+            # Restore original background
+            if orig_bg_color is not None:
+                try:
+                    if len(orig_bg_color) == 4:
+                        view.setBackgroundColor(*orig_bg_color)
+                    elif len(orig_bg_color) == 3:
+                        view.setBackgroundColor(*orig_bg_color)
+                except Exception:
+                    pass
+            
+            try:
+                from PySide6.QtGui import QImage, QPainter
+                from PySide6.QtCore import Qt
+            except Exception:
+                try:
+                    from PySide2.QtGui import QImage, QPainter
+                    from PySide2.QtCore import Qt
+                except Exception as e:
+                    return f"Thumbnail requires FreeCAD GUI ({e})"
+            
+            try:
+                # Create image with alpha channel
+                img = QImage(w, h, QImage.Format_ARGB32)
+                # Fill with transparent background
+                img.fill(Qt.transparent)
+                
+                try:
+                    from PySide6.QtCore import QRect
+                    from PySide6.QtGui import QColor
+                except Exception:
+                    from PySide2.QtCore import QRect
+                    from PySide2.QtGui import QColor
+                
+                # Convert pixmap to image for processing
+                pm_img = pm.toImage().convertToFormat(QImage.Format_ARGB32)
+                
+                # Make white/near-white background pixels transparent
+                # This processes the image to remove white backgrounds
+                width = pm_img.width()
+                height = pm_img.height()
+                
+                for y in range(height):
+                    for x in range(width):
+                        pixel = pm_img.pixel(x, y)
+                        color = QColor(pixel)
+                        # If pixel is very close to white (all RGB > 250), make it transparent
+                        if color.red() > 250 and color.green() > 250 and color.blue() > 250:
+                            pm_img.setPixel(x, y, 0x00FFFFFF)  # Transparent white
+                
+                # Save the processed image
+                pm_img.save(str(out_path), "PNG")
+                return None
+            except Exception as e:
+                return f"Transparent thumbnail export failed: {e}"
+        except Exception as e:
+            return f"Thumbnail requires FreeCAD GUI ({e})"
+    
+    # Try native screenshot API first (for solid backgrounds)
     try:
         # Some versions: saveImage(path, width, height, "White")
         bg_mode = "White" if bg.lower() == "#ffffff" else "Current"

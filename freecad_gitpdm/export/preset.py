@@ -26,7 +26,7 @@ _DEFAULT_PRESET: Dict[str, Any] = {
         "size": [512, 512],
         "projection": "orthographic",
         "view": "isometric",
-        "background": "#ffffff",
+        "background": "transparent",
         "showEdges": False,
     },
     "stats": {"precision": 2},
@@ -85,10 +85,13 @@ def _sanitize_preset(data: Dict[str, Any]) -> Dict[str, Any]:
         view = "isometric"
     t_out["view"] = view
 
-    bg = str(t_in.get("background", t_out.get("background", "#ffffff"))).strip()
-    if not bg or not bg.startswith("#") or len(bg) not in (4, 7):
-        bg = "#ffffff"
-    t_out["background"] = bg.lower()
+    bg = str(t_in.get("background", t_out.get("background", "transparent"))).strip().lower()
+    # Allow transparent, hex colors, or none
+    if bg in ("transparent", "none", ""):
+        bg = "transparent"
+    elif not bg.startswith("#") or len(bg) not in (4, 7):
+        bg = "transparent"
+    t_out["background"] = bg
 
     show_edges = bool(t_in.get("showEdges", t_out.get("showEdges", False)))
     t_out["showEdges"] = show_edges
