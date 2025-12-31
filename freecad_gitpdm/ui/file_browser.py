@@ -312,7 +312,7 @@ class FileBrowserHandler:
         )
 
     def show_preview(self, rel):
-        """Load and display preview.png for the given repo-relative file."""
+        """Load and display preview PNG for the given repo-relative file."""
         try:
             if not hasattr(self._parent, "repo_preview_label"):
                 return
@@ -325,7 +325,11 @@ class FileBrowserHandler:
                 return
 
             preview_dir = mapper.to_preview_dir_rel(rel)
-            png_rel = preview_dir + "preview.png"
+            # Extract part name from source path for consistent naming
+            from pathlib import Path
+
+            part_name = Path(rel).stem
+            png_rel = preview_dir + f"{part_name}.png"
             abs_png = core_paths.safe_join_repo(
                 self._parent._current_repo_root, png_rel
             )

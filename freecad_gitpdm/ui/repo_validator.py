@@ -294,16 +294,39 @@ class RepoValidationHandler:
             os.chdir(directory)
             log.info(f"Set Python working directory: {directory}")
 
-            # Method 2: Set FreeCAD's parameter for last file dialog directory
+            # Method 2: Set multiple FreeCAD parameters for file dialog directory
+            # FreeCAD uses different parameters depending on context
             try:
                 import FreeCAD
 
+                # Main file dialog path parameter
                 param_grp = FreeCAD.ParamGet(
                     "User parameter:BaseApp/Preferences/General"
                 )
                 if param_grp:
                     param_grp.SetString("FileOpenSavePath", directory)
-                    log.info(f"Set FreeCAD file dialog default: {directory}")
+                    log.info(f"Set FreeCAD FileOpenSavePath: {directory}")
+
+                # Also set document-specific parameters
+                try:
+                    doc_param = FreeCAD.ParamGet(
+                        "User parameter:BaseApp/Preferences/Document"
+                    )
+                    if doc_param:
+                        doc_param.SetString("DefaultPath", directory)
+                        log.debug(f"Set FreeCAD Document DefaultPath: {directory}")
+                except Exception as e:
+                    log.debug(f"Could not set Document DefaultPath: {e}")
+
+                # Set the last path used for FCStd files specifically
+                try:
+                    app_param = FreeCAD.ParamGet("User parameter:BaseApp")
+                    if app_param:
+                        app_param.SetString("LastPath", directory)
+                        log.debug(f"Set FreeCAD LastPath: {directory}")
+                except Exception as e:
+                    log.debug(f"Could not set LastPath: {e}")
+
             except ImportError:
                 # FreeCAD not available (running in test environment)
                 log.debug("FreeCAD not available, skipping parameter setting")

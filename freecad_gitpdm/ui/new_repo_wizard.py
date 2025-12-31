@@ -361,6 +361,10 @@ class _ProgressPage(QtWidgets.QWizardPage):
         log.info(f"folder_abs after normpath: {folder_abs}")
         log.info(f"name: {name}")
 
+        # Disable Finish button during workflow
+        self._parent_wizard.button(QtWidgets.QWizard.FinishButton).setEnabled(False)
+        self._parent_wizard.button(QtWidgets.QWizard.BackButton).setEnabled(False)
+
         try:
             # Check parent directory exists BEFORE trying to create anything
             parent_dir = os.path.dirname(folder_abs)
@@ -639,13 +643,16 @@ class _ProgressPage(QtWidgets.QWizardPage):
             # Allow finishing
             self.setFinalPage(True)
             self._parent_wizard.button(QtWidgets.QWizard.FinishButton).setEnabled(True)
+            self._parent_wizard.button(QtWidgets.QWizard.BackButton).setEnabled(True)
 
         except GitHubApiError as e:
             log.error(f"GitHub API error: {e}")
             self._add_step_error(0, str(e))
+            self._parent_wizard.button(QtWidgets.QWizard.BackButton).setEnabled(True)
         except Exception as e:
             log.error(f"Workflow failed with exception: {type(e).__name__}: {e}")
             self._add_step_error(-1, str(e))
+            self._parent_wizard.button(QtWidgets.QWizard.BackButton).setEnabled(True)
 
     def _add_step(self, message: str):
         """Add a new step to the progress list (in progress state)."""

@@ -65,6 +65,10 @@ class _DocumentObserver:
 
             if filename.startswith(repo_root):
                 log.info(f"Document saved in repo, scheduling refresh")
+
+                # Reset working directory to repo to ensure next Save As defaults correctly
+                self._panel._set_freecad_working_directory(repo_root)
+
                 # Stop/start the timer on its owning thread to avoid
                 # cross-thread timer operations (Qt enforces thread affinity)
                 try:
@@ -354,6 +358,17 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 log.debug("Document observer already registered")
         except Exception as e:
             log.error(f"Failed to register document observer: {e}")
+
+    def showEvent(self, event):
+        """Handle panel show event - refresh working directory."""
+        super().showEvent(event)
+        # Reset working directory whenever panel becomes visible
+        # This ensures FreeCAD's Save As always defaults to current repo
+        if self._current_repo_root:
+            QtCore.QTimer.singleShot(
+                100,
+                lambda: self._set_freecad_working_directory(self._current_repo_root),
+            )
 
     def closeEvent(self, event):
         """Handle dock widget close - cleanup observers."""
@@ -1147,6 +1162,24 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
                     # Offer to open the cloned folder
                     self._show_repo_opened_dialog(cloned_path, "cloned")
+
+                    # Ensure working directory is set immediately after dialog
+                    # Use delayed calls to ensure it happens after all UI updates complete
+                    if self._current_repo_root:
+                        self._set_freecad_working_directory(self._current_repo_root)
+                        # Also set with delays to override any FreeCAD resets
+                        QtCore.QTimer.singleShot(
+                            100,
+                            lambda: self._set_freecad_working_directory(
+                                self._current_repo_root
+                            ),
+                        )
+                        QtCore.QTimer.singleShot(
+                            500,
+                            lambda: self._set_freecad_working_directory(
+                                self._current_repo_root
+                            ),
+                        )
         except Exception as e:
             log.error(f"Open/Clone flow failed: {e}")
             QtWidgets.QMessageBox.warning(
@@ -1187,6 +1220,24 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
                     # Show success dialog with option to open folder
                     self._show_repo_opened_dialog(repo_path, "created", repo_name)
+
+                    # Ensure working directory is set immediately after dialog
+                    # Use delayed call to ensure it happens after all UI updates complete
+                    if self._current_repo_root:
+                        self._set_freecad_working_directory(self._current_repo_root)
+                        # Also set with a delay to override any FreeCAD resets
+                        QtCore.QTimer.singleShot(
+                            100,
+                            lambda: self._set_freecad_working_directory(
+                                self._current_repo_root
+                            ),
+                        )
+                        QtCore.QTimer.singleShot(
+                            500,
+                            lambda: self._set_freecad_working_directory(
+                                self._current_repo_root
+                            ),
+                        )
         except Exception as e:
             log.error(f"New repo wizard failed: {e}")
             QtWidgets.QMessageBox.critical(
@@ -1561,6 +1612,27 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         if msg_box.clickedButton() == open_btn:
             self._open_folder_in_explorer(repo_path)
 
+    def _open_folder_in_explorer(self, folder_path: str):
+        """Open folder in Windows Explorer or equivalent."""
+        import sys
+        import subprocess
+
+        try:
+            if sys.platform == "win32":
+                os.startfile(folder_path)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", folder_path])
+            else:
+                subprocess.Popen(["xdg-open", folder_path])
+            log.info(f"Opened folder in explorer: {folder_path}")
+        except Exception as e:
+            log.error(f"Failed to open folder: {e}")
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Cannot Open Folder",
+                f"Could not open folder in file explorer:\n{e}",
+            )
+
     def _check_for_wrong_folder_editing(self):
         """Check if user has FreeCAD documents open from a different folder than current repo root."""
         if not self._current_repo_root:
@@ -1656,9 +1728,10 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         if not hasattr(self, "_wd_refresh_timer"):
             self._wd_refresh_timer = QtCore.QTimer(self)
             self._wd_refresh_timer.timeout.connect(self._refresh_working_directory)
-            # Refresh every 10 seconds to maintain working directory
-            self._wd_refresh_timer.start(10000)
-            log.debug("Started working directory refresh timer")
+            # Refresh every 2 seconds to aggressively maintain working directory
+            # This ensures FreeCAD's Save As dialog always defaults to current repo
+            self._wd_refresh_timer.start(2000)
+            log.debug("Started working directory refresh timer (2s interval)")
 
     def _set_freecad_working_directory(self, directory: str):
         """
@@ -1676,16 +1749,10 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         """Periodic refresh of working directory to maintain repo folder as default."""
         if self._current_repo_root:
             try:
-                current_wd = os.getcwd()
-                repo_norm = os.path.normcase(os.path.normpath(self._current_repo_root))
-                current_norm = os.path.normcase(os.path.normpath(current_wd))
-
-                # Only update if working directory has drifted from repo
-                if current_norm != repo_norm:
-                    log.debug(
-                        f"Working directory drifted to {current_wd}, resetting to {self._current_repo_root}"
-                    )
-                    self._set_freecad_working_directory(self._current_repo_root)
+                # Always set the working directory, don't check for drift
+                # This ensures FreeCAD's file dialogs always default to current repo
+                # even if FreeCAD internally changes directories
+                self._set_freecad_working_directory(self._current_repo_root)
             except Exception as e:
                 log.debug(f"Working directory refresh error: {e}")
 

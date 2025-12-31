@@ -33,8 +33,11 @@ def to_preview_dir_rel(source_rel: str) -> str:
 def preview_paths_rel(source_rel: str) -> Tuple[str, str]:
     """Return (png_rel, json_rel) under preview dir."""
     base = to_preview_dir_rel(source_rel)
-    png_rel = base + "preview.png"
-    json_rel = base + "preview.json"
+    # Extract part name from source path for consistent naming
+    p = Path(source_rel)
+    part_name = p.stem
+    png_rel = base + f"{part_name}.png"
+    json_rel = base + f"{part_name}.json"
     return (png_rel, json_rel)
 
 
