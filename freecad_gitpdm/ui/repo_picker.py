@@ -55,6 +55,7 @@ class RepoPickerDialog(QtWidgets.QDialog):
         self._visible_repos: List[RepoInfo] = []
         self._cloned_path: Optional[str] = None
         self._selected_repo: Optional[RepoInfo] = None
+        self._external_url: Optional[str] = None  # Track external URL input
         self._is_loading = False
         self._default_clone_dir = default_clone_dir or settings.load_default_clone_dir()
         self._bypass_cache = False  # Track if next refresh should bypass cache
@@ -95,6 +96,25 @@ class RepoPickerDialog(QtWidgets.QDialog):
         )
         self._session_expired_message.hide()
         layout.addWidget(self._session_expired_message)
+
+        # External URL input section
+        url_section = QtWidgets.QGroupBox("Or Clone from External URL")
+        url_layout = QtWidgets.QVBoxLayout()
+        url_section.setLayout(url_layout)
+        
+        url_help = QtWidgets.QLabel(
+            "Enter a GitHub repository URL to clone a project not in your account:"
+        )
+        url_help.setWordWrap(True)
+        url_help.setStyleSheet("color: gray; font-size: 9pt;")
+        url_layout.addWidget(url_help)
+        
+        self.url_input = QtWidgets.QLineEdit()
+        self.url_input.setPlaceholderText("https://github.com/owner/repository")
+        self.url_input.textChanged.connect(self._on_url_changed)
+        url_layout.addWidget(self.url_input)
+        
+        layout.addWidget(url_section)
 
         self._connect_btn = QtWidgets.QPushButton("Connect GitHub")
         self._connect_btn.clicked.connect(self._on_connect_clicked)
@@ -316,20 +336,84 @@ class RepoPickerDialog(QtWidgets.QDialog):
         return self._visible_repos[row]
 
     def _on_selection_changed(self):
-        self.clone_btn.setEnabled(bool(self._selected_repo_from_table()) and not self._is_loading)
+        has_selection = bool(self._selected_repo_from_table()) or bool(self.url_input.text().strip())
+        self.clone_btn.setEnabled(has_selection and not self._is_loading)
+
+    def _on_url_changed(self, text: str):
+        """Handle URL input text changes."""
+        self._external_url = text.strip() if text.strip() else None
+        has_selection = bool(self._selected_repo_from_table()) or bool(self._external_url)
+        self.clone_btn.setEnabled(has_selection and not self._is_loading)
+
+    def _parse_repo_url(self, url: str) -> Optional[tuple]:
+        """
+        Parse a GitHub URL and extract clone URL and repo name.
+        Returns (clone_url, repo_name) or None if invalid.
+        
+        Supports:
+        - https://github.com/owner/repo
+        - https://github.com/owner/repo.git
+        - git@github.com:owner/repo.git
+        """
+        import re
+        
+        url = url.strip()
+        if not url:
+            return None
+        
+        # Pattern for HTTPS URLs
+        https_pattern = r'https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$'
+        match = re.match(https_pattern, url, re.IGNORECASE)
+        if match:
+            owner, repo = match.groups()
+            clone_url = f"https://github.com/{owner}/{repo}.git"
+            return (clone_url, repo)
+        
+        # Pattern for SSH URLs
+        ssh_pattern = r'git@github\.com:([^/]+)/(.+?)(?:\.git)?$'
+        match = re.match(ssh_pattern, url)
+        if match:
+            owner, repo = match.groups()
+            clone_url = f"https://github.com/{owner}/{repo}.git"
+            return (clone_url, repo)
+        
+        return None
 
     def _on_clone_clicked(self):
         if self._is_loading:
             return
-        repo = self._selected_repo_from_table()
-        if not repo:
-            return
+        
+        # Check if external URL is provided
+        if self._external_url:
+            parsed = self._parse_repo_url(self._external_url)
+            if not parsed:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Invalid URL",
+                    "Please enter a valid GitHub repository URL.\n\n"
+                    "Examples:\n"
+                    "• https://github.com/owner/repository\n"
+                    "• git@github.com:owner/repository.git"
+                )
+                return
+            
+            clone_url, repo_name = parsed
+            dest_path = self._ask_destination_for_url(repo_name)
+            if not dest_path:
+                return
+            
+            self._start_clone_from_url(clone_url, repo_name, dest_path)
+        else:
+            # Original table selection logic
+            repo = self._selected_repo_from_table()
+            if not repo:
+                return
 
-        dest_path = self._ask_destination(repo)
-        if not dest_path:
-            return
+            dest_path = self._ask_destination(repo)
+            if not dest_path:
+                return
 
-        self._start_clone(repo, dest_path)
+            self._start_clone(repo, dest_path)
 
     def _ask_destination(self, repo: RepoInfo) -> Optional[str]:
         base_dir = self._default_clone_dir or os.path.expanduser("~")
@@ -378,6 +462,83 @@ class RepoPickerDialog(QtWidgets.QDialog):
             args,
             callback=lambda job: self._on_clone_finished(job, repo, dest_path),
         )
+
+    def _ask_destination_for_url(self, repo_name: str) -> Optional[str]:
+        """Ask for destination directory when cloning from external URL."""
+        base_dir = self._default_clone_dir or os.path.expanduser("~")
+        chosen = QtWidgets.QFileDialog.getExistingDirectory(
+            self,
+            "Choose clone destination",
+            base_dir,
+            QtWidgets.QFileDialog.ShowDirsOnly,
+        )
+        if not chosen:
+            return None
+
+        self._default_clone_dir = chosen
+        settings.save_default_clone_dir(chosen)
+
+        dest_path = os.path.join(chosen, repo_name)
+        if os.path.isdir(dest_path):
+            try:
+                if os.listdir(dest_path):
+                    QtWidgets.QMessageBox.warning(
+                        self,
+                        "Destination Not Empty",
+                        "Selected folder already exists and is not empty.\nChoose a different location.",
+                    )
+                    return None
+            except OSError:
+                pass
+        return dest_path
+
+    def _start_clone_from_url(self, clone_url: str, repo_name: str, dest_path: str):
+        """Clone repository from external URL."""
+        git_cmd = self._git_client._get_git_command()
+        if not git_cmd:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Git Not Found",
+                "Git is not available. Install Git or GitHub Desktop and retry.",
+            )
+            return
+
+        self._set_loading_state(True, "Cloning…")
+        args = [git_cmd, "clone", clone_url, dest_path]
+
+        self._job_runner.run_job(
+            "clone_repo",
+            args,
+            callback=lambda job: self._on_clone_from_url_finished(job, repo_name, dest_path),
+        )
+
+    def _on_clone_from_url_finished(self, job, repo_name: str, dest_path: str):
+        """Handle completion of external URL clone."""
+        result = job.get("result", {}) if isinstance(job, dict) else {}
+        success = result.get("success", False)
+        stderr = result.get("stderr", "")
+
+        if success:
+            self._cloned_path = dest_path
+            self.status_label.setText(f"Cloned {repo_name} → {dest_path}")
+            self.status_label.setStyleSheet("color: green;")
+            self._set_loading_state(False)
+            self.accept()
+            return
+
+        message = "Clone failed."
+        stderr_lower = stderr.lower()
+        if "authentication" in stderr_lower:
+            message = (
+                "Authentication failed. Complete the Git Credential Manager prompt "
+                "or sign in when Windows asks."
+            )
+        elif "not found" in stderr_lower or "repository" in stderr_lower:
+            message = "Repository not found or access denied."
+        QtWidgets.QMessageBox.warning(self, "Clone Failed", f"{message}\n\nDetails:\n{stderr}")
+        self.status_label.setText(message)
+        self.status_label.setStyleSheet("color: red;")
+        self._set_loading_state(False)
 
     def _on_clone_finished(self, job, repo: RepoInfo, dest_path: str):
         result = job.get("result", {}) if isinstance(job, dict) else {}
@@ -441,7 +602,8 @@ class RepoPickerDialog(QtWidgets.QDialog):
     def _set_loading_state(self, loading: bool, message: Optional[str] = None):
         self._is_loading = loading
         self.refresh_btn.setEnabled(not loading)
-        self.clone_btn.setEnabled(not loading and bool(self._selected_repo_from_table()))
+        has_selection = bool(self._selected_repo_from_table()) or bool(self._external_url)
+        self.clone_btn.setEnabled(not loading and has_selection)
         self.search_box.setEnabled(not loading)
         if message:
             self.status_label.setText(message)
