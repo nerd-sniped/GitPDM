@@ -10,8 +10,6 @@ GitPDM is a FreeCAD workbench addon that brings Git version control and GitHub c
 
 ## Documentation Structure
 
-This documentation is organized into four sections. Each section is intended to stand alone with minimal cross-references.
-
 - **[Tutorials](#tutorials)** — learning-oriented lessons for newcomers
 - **[How-To Guides](#how-to-guides)** — goal-oriented recipes for specific tasks
 - **[Technical Reference](#technical-reference)** — accurate, “lookup-style” system details
@@ -20,8 +18,6 @@ This documentation is organized into four sections. Each section is intended to 
 ---
 
 # Tutorials
-
-Learning-oriented lessons that teach GitPDM by example.
 
 ## Tutorial 1: First Local Versioned CAD Project
 
@@ -119,57 +115,9 @@ You now have a local commit history you can always return to.
 
 ---
 
-## Tutorial 3: Publish a Part with Previews
-
-**Goal:** Use the one-click publish flow to generate previews and push them.
-
-**Prerequisites:**
-- A saved FreeCAD document inside a Git repository
-- GitHub connected (if you want to push)
-
-### 1) Prepare the view
-
-1. Open your part in FreeCAD.
-2. Rotate to a nice viewing angle (the thumbnail uses the current view).
-
-### 2) Publish
-
-1. Switch to **Git PDM**.
-2. Enter a commit message.
-3. Click **Publish Branch**.
-
-GitPDM will generate exports (PNG thumbnail, GLB model, optional STL), stage them alongside the source file, commit, and push.
-
----
-
 # How-To Guides
 
 Goal-oriented recipes for specific problems.
-
-## How to Install GitPDM
-
-**Goal:** Install GitPDM into FreeCAD.
-
-1. Find your FreeCAD Mod folder:
-   - Windows: `%APPDATA%\FreeCAD\Mod`
-   - macOS: `~/Library/Application Support/FreeCAD/Mod`
-   - Linux: `~/.FreeCAD/Mod/`
-2. Download a GitPDM release ZIP from https://github.com/nerd-sniped/GitPDM/releases
-3. Extract it.
-4. Copy the `GitPDM` folder into `Mod/`.
-5. Restart FreeCAD.
-6. Select **Git PDM** from the workbench list.
-
----
-
-## How to Fix Git PDM Doesn’t Appear in the Workbench List
-
-**Goal:** Make the workbench show up.
-
-1. Ensure the folder name is exactly `GitPDM` (not `GitPDM-main`).
-2. Ensure `Init.py` and `InitGui.py` are directly inside `GitPDM/`.
-3. Open FreeCAD’s Report View: **View → Panels → Report view**.
-4. Restart FreeCAD fully.
 
 ---
 
@@ -183,29 +131,6 @@ Goal-oriented recipes for specific problems.
 
 ---
 
-## How to Use the Daily Workflow (Edit → Save → Commit → Push)
-
-**Goal:** Safely iterate on CAD work with checkpoints and backup.
-
-1. Open your FreeCAD file from inside the repository.
-2. Make changes.
-3. **Save** in FreeCAD.
-4. Switch to **Git PDM**.
-5. Write a commit message.
-6. Click **Commit**.
-7. Click **Push**.
-
----
-
-## How to Fetch and Pull Updates
-
-**Goal:** Get the latest commits from GitHub.
-
-1. Click **Fetch** (safe any time; doesn't change files).
-2. If you're behind, click **Pull** to download and merge.
-
----
-
 ## How to Fix Push Rejected
 
 **Goal:** Push successfully when the remote moved ahead.
@@ -214,59 +139,6 @@ Goal-oriented recipes for specific problems.
 2. Click **Pull**.
 3. If Pull succeeds, try **Push** again.
 4. If you hit conflicts, you'll need to resolve them manually (until a dedicated UI exists).
-
----
-
-## How to Set Up Git LFS for CAD Files
-
-**Goal:** Track large CAD files efficiently.
-
-1. Install Git LFS from https://git-lfs.github.com/.
-2. In your repository, run:
-   ```
-   git lfs install
-   ```
-3. Create or update `.gitattributes` in the repo root:
-   ```
-   *.FCStd filter=lfs diff=lfs merge=lfs -text
-   *.glb filter=lfs diff=lfs merge=lfs -text
-   *.stl filter=lfs diff=lfs merge=lfs -text
-   *.step filter=lfs diff=lfs merge=lfs -text
-   *.iges filter=lfs diff=lfs merge=lfs -text
-   ```
-4. Commit and push:
-   ```
-   git add .gitattributes
-   git commit -m "Configure Git LFS for CAD files"
-   git push
-   ```
-
----
-
-## How to Organize a Multi-Part Project
-
-**Goal:** Keep parts, assemblies, exports, and docs tidy.
-
-Recommended structure:
-
-```
-MyProject/
- parts/
-    base-plate.FCStd
-    motor-mount.FCStd
- assemblies/
-    main-assembly.FCStd
- exports/
-    base.step
-    base.stl
- docs/
-     notes.md
-```
-
-Recipe:
-1. Put parts in `parts/`, assemblies in `assemblies/`.
-2. Use descriptive filenames.
-3. Commit assemblies and dependent parts together.
 
 ---
 
@@ -298,30 +170,6 @@ Recipe:
    ```
 3. Commit the preset.
 4. Run **Publish Branch** and confirm the outputs changed.
-
----
-
-## How to Switch Branches Safely (Current Workaround)
-
-**Goal:** Avoid corrupting FreeCAD `.FCStd` files.
-
-1. Save all documents.
-2. Close all documents.
-3. Switch branches.
-4. Re-open documents after the switch.
-
----
-
-## How to Use Worktrees for Branch Isolation
-
-**Goal:** Work on multiple branches without repeatedly switching the same working folder.
-
-1. Create a new worktree folder (example): `MyProject-feature-branch`.
-2. Use Git’s worktree command:
-   ```
-   git worktree add ../MyProject-feature-branch feature-branch
-   ```
-3. Open the FreeCAD files from that worktree folder in a separate FreeCAD window.
 
 ---
 
@@ -387,22 +235,6 @@ Recipe:
 
 ---
 
-## How to Speed Up a Slow Repository
-
-**Goal:** Reduce unnecessary scanning work.
-
-1. Add common junk files to `.gitignore`:
-   ```
-   __pycache__/
-   *.pyc
-   .DS_Store
-   Thumbs.db
-   ```
-2. Use Git LFS for large CAD binaries.
-3. Consider splitting very large projects into multiple repositories.
-
----
-
 # Technical Reference
 
 Accurate lookup documentation. Minimal narrative.
@@ -411,7 +243,7 @@ Accurate lookup documentation. Minimal narrative.
 
 - Version control of files inside a Git repository (commit/push/pull/fetch)
 - Optional GitHub integration via OAuth device flow
-- Preview export and publishing pipeline (thumbnail PNG, GLB, JSON metadata, optional STL)
+- Preview export and publishing pipeline (thumbnail PNG, JSON metadata, STL)
 - Safety guards to reduce risk of file corruption during risky operations
 
 ### Known limitation: branch switching
@@ -429,7 +261,6 @@ Branch switching is currently limited because FreeCAD `.FCStd` files are ZIP arc
 | Python | 3.8+ | Bundled with FreeCAD |
 | PySide2 or PySide6 | Any | Bundled with FreeCAD |
 | GitHub account | N/A | Optional, for cloud features |
-| Git LFS | 2.0+ | Recommended for large CAD files |
 
 ---
 
@@ -513,14 +344,6 @@ High-level modules:
 
 ## Roadmap & Future Development (Project Information)
 
-### Completed milestones (high level)
-
-- Git client wrapper and repository management (create/clone/validate)
-- GitHub OAuth authentication (device flow)
-- Commit/push/fetch/pull operations
-- UI refactor into specialized handlers
-- Preview export (PNG/GLB/STL/JSON) and publish workflow
-
 ### Known limitations
 
 - Branch switching requires care (close documents first)
@@ -549,8 +372,7 @@ High-level modules:
 - Complete Git workflow (commit, push, pull, fetch)
 - GitHub OAuth device flow
 - Repository management (create, clone, validate)
-- Branch operations with safety guards (switching requires closed documents)
-- Preview export system (PNG, JSON, GLB, STL)
+- Preview export system (PNG, JSON, STL)
 - One-click publish workflow
 - Cross-platform support (Windows, macOS, Linux)
 
@@ -582,7 +404,7 @@ GitPDM brings Git’s history of states into FreeCAD so that saving a meaningful
 
 A practical mental model:
 
-- Commit = “make a durable checkpoint on my machine.”
+- Commit = “make a local checkpoint on my machine.”
 - Push = “copy my checkpoints to GitHub.”
 
 ---
@@ -618,7 +440,7 @@ A regular commit is primarily for restoring and collaborating on versions.
 Publishing adds shareability artifacts:
 
 - a thumbnail image for quick scanning
-- a browser-viewable 3D model (GLB)
+- a browser-viewable 3D model (STL)
 - metadata summaries (JSON)
 
 These outputs make the repository easier to browse and understand without opening FreeCAD.
@@ -630,11 +452,7 @@ These outputs make the repository easier to browse and understand without openin
 If you’re new to version control, it helps to separate the *local* and *remote* ideas:
 
 - You don’t need deep Git knowledge to get value: a repository plus a few well-named commits already gives you durable checkpoints.
-- GitHub is optional: GitPDM can be used with local-only Git, but pushing to a remote is a practical backup layer.
-
-On safety and backups:
-
-- GitPDM is designed to be safety-first (notably around branch switching).
+- GitHub is optional: GitPDM can be used with local-only Git, but pushing to a remote is a practical cloud backup layer.
 - Still treat backups as layered: local commits + push to a remote + normal filesystem backups.
 
 On performance:
