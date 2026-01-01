@@ -525,6 +525,7 @@ class GitHubAuthHandler:
             is_valid, error_msg = scope_validator.validate_token_scopes(token_response)
             if not is_valid:
                 log.error(f"Token scope validation failed: {error_msg}")
+                log.error(f"Received scopes: '{token_response.scope}'")
 
                 # Close OAuth dialog
                 if self._oauth_dialog:
@@ -535,8 +536,12 @@ class GitHubAuthHandler:
                     self.panel,
                     "Insufficient Permissions",
                     f"{error_msg}\n\n"
-                    f"Click 'Sign In with GitHub' to try again and grant all "
-                    f"requested permissions.",
+                    f"This often happens if you previously authorized GitPDM with \n"
+                    f"different permissions. To fix this:\n\n"
+                    f"1. Go to GitHub Settings → Applications → Authorized OAuth Apps\n"
+                    f"2. Find 'GitPDM' and click 'Revoke'\n"
+                    f"3. Click 'Sign In with GitHub' in GitPDM again\n\n"
+                    f"This will create a fresh authorization with correct permissions.",
                 )
                 self._cleanup_oauth_state()
                 return

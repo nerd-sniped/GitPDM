@@ -355,7 +355,8 @@ def poll_for_token(
         # Success: extract token
         access_token = response_data.get("access_token")
         token_type = response_data.get("token_type", "bearer")
-        scope = response_data.get("scope", "")
+        # BUGFIX: Handle null scope value (GitHub may return {"scope": null})
+        scope = response_data.get("scope") or ""
         refresh_token = response_data.get("refresh_token")
         expires_in_response = response_data.get("expires_in")
         refresh_token_expires_in = response_data.get("refresh_token_expires_in")
@@ -373,8 +374,10 @@ def poll_for_token(
 
         obtained_at = datetime.now(timezone.utc).isoformat()
 
+        # DEBUG: Log received scopes to help diagnose multi-computer issues
         log.info(
-            f"Token obtained successfully [correlation_id={correlation_id}] after {poll_count} poll attempts"
+            f"Token obtained successfully [correlation_id={correlation_id}] after {poll_count} poll attempts. "
+            f"Granted scopes: '{scope}'"
         )
 
         return TokenResponse(

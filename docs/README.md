@@ -351,7 +351,7 @@ High-level modules:
 - Very large repositories can be slow to scan
 
 ### Near-term focus
-
+- GitApp integration to reduce reach of app (I realize it's currently a-lot)
 - Enhanced branch/worktree UX
 - Conflict resolution UI
 - Git history viewer inside FreeCAD

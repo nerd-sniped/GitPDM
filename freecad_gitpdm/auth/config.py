@@ -17,7 +17,19 @@ VERIFICATION_URI_DEFAULT = "https://github.com/login/device"
 
 # OAuth scopes requested
 # - read:user: Get user profile (username, email)
-# - repo: Access private repositories for git operations
+# - repo: Full repository access (required for git push operations)
+#
+# NOTE: The 'repo' scope is broad but necessary because:
+#   1. Git push via HTTPS requires 'repo' scope (GitHub requirement)
+#   2. Repository creation via API requires 'repo' scope
+#   3. Alternative 'public_repo' only works for public repos
+#
+# ARCHITECTURE NOTE: OAuth Apps (current architecture) grant access to ALL
+# repositories. To limit access to specific repositories, GitPDM would need
+# to migrate to GitHub Apps architecture, which supports per-repo installation.
+# See docs/OAUTH_DEVICE_FLOW.md for detailed discussion.
+#
+# Future: Consider adding GitHub App support for per-repository permissions.
 DEFAULT_SCOPES = ["read:user", "repo"]
 
 # Client ID for GitPDM GitHub OAuth App

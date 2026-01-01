@@ -45,6 +45,15 @@ All user-controlled inputs are validated before use:
 - **Write operations gated**: Commit/push only when user explicitly initiates
 - **No admin scopes**: Never requests repo admin or org-level permissions
 - **Short-lived tokens**: Tokens automatically refreshed; prefer shortest TTL
+- **Required `repo` scope**: GitPDM requests the `repo` OAuth scope, which grants
+  broad access to all repositories. This is required because:
+  - Git push operations via HTTPS require `repo` scope (GitHub's requirement)
+  - Creating repositories via API requires `repo` scope
+  - The alternative `public_repo` scope only works with public repositories
+  
+  **Mitigation**: GitPDM never modifies repositories without explicit user action
+  (clicking "Commit & Push", "New Repository", etc.). All write operations are
+  user-initiated and clearly labeled in the UI.
 
 ### Network Security
 

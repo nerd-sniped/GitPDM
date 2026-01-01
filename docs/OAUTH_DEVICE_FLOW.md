@@ -51,13 +51,93 @@ GitPDM requests the following OAuth scopes:
 - **Used for**: Displaying your connected account name
 - **Access**: Read-only access to public profile information
 
-### `repo`
+### `repo` ⚠️
 - **Purpose**: Access private and public repositories
 - **Used for**:
+  - **Creating repositories** via GitHub API
+  - **Pushing commits** (Git uses OAuth token for authentication)
+  - **Accessing private repositories**
   - Fetching repository metadata
-  - Creating releases (future feature)
-  - Managing pull requests (future feature)
-- **Access**: Read/write access to repository contents
+  - Future: Creating releases, managing pull requests
+- **Access**: Read/write access to ALL your repository contents
+
+#### Why `repo` Scope is Required
+
+GitPDM needs the `repo` scope because:
+
+1. **Git Push Authentication**: When GitPDM pushes commits to GitHub via HTTPS,
+   Git uses your OAuth token as a password. GitHub **requires the `repo` scope**
+   for push operations, even to public repositories.
+
+2. **Repository Creation**: Creating new repositories via the GitHub API requires
+   the `repo` scope.
+
+3. **Private Repository Support**: If you want to back up FreeCAD files to private
+   repositories, the `repo` scope is mandatory. The alternative `public_repo` scope
+   only works with public repositories.
+
+#### Security Implications
+
+The `repo` scope grants **broad access** to your repositories:
+
+- ✅ **Read** all public and private repository contents
+- ✅ **Write** to all repositories (create, modify, delete files)
+- ✅ **Create** new repositories
+- ✅ **Manage** repository settings (collaborators, webhooks, etc.)
+
+**What GitPDM Actually Does**:
+- Creates repositories (only when you explicitly use "New Repository")
+- Pushes commits (only when you click "Commit & Push")
+- Lists your repositories (read-only)
+- Fetches metadata (read-only)
+
+GitPDM **never** modifies repositories without your explicit action.
+
+#### Limiting Access to Specific Repositories
+
+**Current Limitation**: OAuth Apps (what GitPDM currently uses) grant access to
+**ALL repositories** the user owns or collaborates on. There's no way to limit
+an OAuth App to specific repositories.
+
+**Solution: GitHub Apps** ✨
+
+GitHub offers an alternative architecture called **GitHub Apps** that DOES support
+repository-specific permissions:
+
+##### How GitHub Apps Work:
+
+1. User "installs" the app and **selects specific repositories** to grant access
+2. App only receives tokens for those selected repositories
+3. User can add/remove repositories at any time from GitHub Settings
+4. Much more granular control: read-only vs write access per repository
+
+##### Why GitPDM Doesn't Use GitHub Apps (Yet):
+
+- **More complex setup**: Requires webhook URLs and app hosting infrastructure
+- **Installation friction**: Users must "install" rather than just "authorize"
+- **Device Flow limitations**: GitHub Apps have limited Device Flow support
+- **Migration complexity**: Would break existing OAuth connections
+
+##### We're Considering a Hybrid Approach:
+
+- **Option 1: Default OAuth Mode** (current) - Quick setup, all repos
+- **Option 2: GitHub App Mode** (future) - More setup, per-repo control
+
+**Want per-repository access?** [Vote on this GitHub issue](https://github.com/nerd-sniped/GitPDM/issues/XX)
+or contribute! The architecture change is substantial but achievable.
+
+#### Current Mitigation Strategies
+
+If you're uncomfortable with the `repo` scope today:
+
+1. **Dedicated Account**: Create a separate GitHub account with only the repos
+   you want GitPDM to access
+2. **Connect Only When Needed**: Use "Disconnect" when not actively pushing/pulling
+3. **Repository Segregation**: Keep sensitive repos in a separate GitHub account
+4. **Monitor Activity**: Check GitHub's "Settings → Security → Recent activity"
+   for unexpected API access
+5. **Review Source Code**: GitPDM is open-source - verify what it actually does
+   at [github.com/nerd-sniped/GitPDM](https://github.com/nerd-sniped/GitPDM)
 
 ## Revoking Access
 
@@ -96,6 +176,37 @@ If "Connect GitHub" fails:
 - Check your internet connection.
 - Ensure you completed the device flow on GitHub's website.
 - Try "Disconnect" and reconnect.
+
+### "Token missing required scopes" error
+
+If you see "Token missing required scopes: read:user, repo" even though
+GitHub shows the authorization was successful:
+
+**Root Cause**: GitHub reuses existing OAuth authorizations. If you
+previously authorized GitPDM (on this or another computer) with incomplete
+permissions, GitHub may return that old authorization instead of creating
+a new one with correct scopes.
+
+**Solution**:
+1. Go to **GitHub Settings → Applications → Authorized OAuth Apps**
+2. Find **"GitPDM"** in the list
+3. Click **"Revoke"** to remove the old authorization
+4. Return to GitPDM and click **"Sign In with GitHub"** again
+5. Authorize with all requested permissions
+
+**Note**: Each computer stores its own token locally, but GitHub maintains
+a single authorization record per app. Revoking and re-authorizing ensures
+all computers get tokens with the correct scopes.
+
+### Using GitPDM on multiple computers
+
+You can use GitPDM on multiple computers with the same GitHub account:
+
+- Each computer stores its own token in the local OS credential manager
+- All tokens share the same GitHub OAuth authorization
+- If you revoke access on GitHub, all computers will need to re-authenticate
+- Tokens don't interfere with each other—multiple computers can be
+  connected simultaneously
 
 ### Token refresh
 
