@@ -4,7 +4,7 @@
 
 GitPDM is a FreeCAD workbench addon that brings Git version control and GitHub collaboration directly into FreeCAD. Think of it as “version history” for CAD projects, designed around FreeCAD documents, previews, and publishing.
 
-**Current Version:** 0.3.0 (Production Ready)
+**Current Version:** 0.3.0 
 
 ---
 
