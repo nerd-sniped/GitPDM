@@ -26,6 +26,7 @@ from urllib import request, error
 from freecad_gitpdm.core import log
 from freecad_gitpdm.github.errors import GitHubApiError, GitHubApiNetworkError
 from freecad_gitpdm.core.result import Result
+from freecad_gitpdm.github.rate_limiter import RateLimiter
 
 
 @dataclass
@@ -59,6 +60,9 @@ class GitHubApiClient:
         self._base_url = f"https://{host}"
         self._token = token or ""
         self._user_agent = user_agent or "GitPDM/1.0"
+        self._rate_limiter = RateLimiter.get_instance()
+        # Extract user identifier from token for rate limiting (use hash for privacy)
+        self._user_id = str(hash(token))[:16] if token else "anonymous"
 
     def request_json(
         self,
@@ -69,7 +73,7 @@ class GitHubApiClient:
         timeout_s: int,
     ) -> Tuple[int, Optional[Dict[str, Any]], Dict[str, str]]:
         """
-        Perform an HTTP request with retry logic.
+        Perform an HTTP request with retry logic and rate limiting.
 
         Returns:
             (status, parsed_json, headers) tuple
@@ -78,6 +82,27 @@ class GitHubApiClient:
             GitHubApiError: For HTTP errors with classified code (after retries exhausted)
             GitHubApiNetworkError: For network-level errors (after retries exhausted)
         """
+        # Check rate limiter before attempting request
+        if not self._rate_limiter.can_proceed(user_id=self._user_id):
+            wait_s = self._rate_limiter.wait_time(user_id=self._user_id)
+            log.debug(f"Rate limit reached, waiting {wait_s:.1f}s")
+            raise GitHubApiError(
+                code="RATE_LIMITED",
+                message=f"Rate limit exceeded. Retry after {wait_s:.0f}s.",
+                details=f"Per-user rate limit enforced to prevent abuse",
+                retry_after_s=int(wait_s) + 1,
+            )
+
+        # Check circuit breaker
+        if self._rate_limiter.is_circuit_open(user_id=self._user_id):
+            log.debug(f"Circuit breaker open for user {self._user_id[:8]}...")
+            raise GitHubApiError(
+                code="SERVICE_UNAVAILABLE",
+                message="GitHub API temporarily unavailable. Please retry later.",
+                details="Circuit breaker tripped due to repeated failures",
+                retry_after_s=30,
+            )
+
         attempt = 0
         last_error: Optional[Exception] = None
 
@@ -90,6 +115,8 @@ class GitHubApiClient:
                 # Check if we should retry based on status
                 if status not in self.NO_RETRY_CODES and status >= 500:
                     # Transient error (5xx), could retry
+                    # Record failure for circuit breaker
+                    self._rate_limiter.record_failure(user_id=self._user_id)
                     if attempt < self.MAX_RETRIES - 1:
                         wait_s = self.RETRY_BACKOFF[attempt]
                         log.debug(
@@ -100,11 +127,23 @@ class GitHubApiClient:
                         attempt += 1
                         continue
 
-                # Success or non-retryable error
+                # Check for secondary rate limit (403/429 abuse detection)
+                if status in (403, 429):
+                    retry_after = resp_headers.get("Retry-After", resp_headers.get("retry-after"))
+                    if retry_after:
+                        # Secondary rate limit hit; record failure and respect retry-after
+                        self._rate_limiter.record_failure(user_id=self._user_id)
+                        log.debug(f"Secondary rate limit hit, retry after {retry_after}s")
+
+                # Success or non-retryable error - record success for circuit breaker
+                if 200 <= status < 300:
+                    self._rate_limiter.record_success(user_id=self._user_id)
+                    
                 return status, body_data, resp_headers
 
             except GitHubApiNetworkError as e:
                 # Network errors are potentially transient; retry
+                self._rate_limiter.record_failure(user_id=self._user_id)
                 last_error = e
                 if attempt < self.MAX_RETRIES - 1:
                     wait_s = self.RETRY_BACKOFF[attempt]

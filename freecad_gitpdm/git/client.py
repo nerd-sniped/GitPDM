@@ -1401,6 +1401,16 @@ class GitClient:
         if not message:
             return CmdResult(False, "", "Empty commit message", "EMPTY_MESSAGE")
 
+        # SECURITY: Sanitize commit message to prevent injection attacks
+        from freecad_gitpdm.core import input_validator
+        sanitized_message = input_validator.sanitize_commit_message(message)
+        
+        if not sanitized_message:
+            return CmdResult(False, "", "Commit message is empty after sanitization", "EMPTY_MESSAGE")
+        
+        if sanitized_message != message:
+            log.debug("Commit message was sanitized (removed unsafe characters)")
+
         if not self.is_git_available():
             return CmdResult(False, "", "Git not available", "NO_GIT")
 
@@ -1408,13 +1418,14 @@ class GitClient:
             return CmdResult(False, "", "Invalid repository", "INVALID_REPO")
 
         git_cmd = self._get_git_command()
+        # Use sanitized message
         cmd_result = self._run_command(
-            [git_cmd, "-C", repo_root, "commit", "-m", message],
+            [git_cmd, "-C", repo_root, "commit", "-m", sanitized_message],
             timeout=120,
         )
 
         if cmd_result.ok:
-            truncated = message[:60].replace("\n", " ")
+            truncated = sanitized_message[:60].replace("\n", " ")
             log.debug(f"Commit created: {truncated}")
         else:
             cmd_result.error_code = self._classify_commit_error(cmd_result.stderr)

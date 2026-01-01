@@ -519,6 +519,28 @@ class GitHubAuthHandler:
         try:
             log.info("Token received successfully")
 
+            # SECURITY: Validate token has required scopes before storing
+            from freecad_gitpdm.auth import scope_validator
+            
+            is_valid, error_msg = scope_validator.validate_token_scopes(token_response)
+            if not is_valid:
+                log.error(f"Token scope validation failed: {error_msg}")
+                
+                # Close OAuth dialog
+                if self._oauth_dialog:
+                    self._oauth_dialog.close()
+                
+                # Show scope validation error to user
+                QtWidgets.QMessageBox.warning(
+                    self.panel,
+                    "Insufficient Permissions",
+                    f"{error_msg}\n\n"
+                    f"Click 'Sign In with GitHub' to try again and grant all "
+                    f"requested permissions.",
+                )
+                self._cleanup_oauth_state()
+                return
+
             # Store token
             store = self.services.token_store()
             host = settings.load_github_host()

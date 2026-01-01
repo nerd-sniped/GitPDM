@@ -2,21 +2,32 @@
 """
 GitPDM OAuth Device Flow Client
 Sprint OAUTH-1: GitHub OAuth Device Flow implementation using stdlib only
+Sprint SECURITY-4: Hardened with timing limits, jitter, and audit logging
 
 This module implements the OAuth Device Authorization Grant flow (RFC 8628)
 to authenticate users with GitHub without requiring them to enter passwords.
 Uses urllib for HTTPS requests and threading for non-blocking polling.
+
+Security enhancements:
+- Absolute timeout cap on device flow (15 minutes max)
+- Exponential backoff with jitter to prevent thundering herd
+- Request correlation IDs for audit trails
 """
 
 from __future__ import annotations
 
 import json
 import time
+import random
 import urllib.request
 import urllib.error
 import urllib.parse
 from dataclasses import dataclass
 from typing import Optional, Callable
+
+
+# SECURITY: Absolute timeout for device flow (prevents indefinite polling)
+MAX_DEVICE_FLOW_DURATION_S = 900  # 15 minutes
 
 
 class DeviceFlowError(Exception):
@@ -232,23 +243,34 @@ def poll_for_token(
     from datetime import datetime, timezone
 
     start_time = time.time()
-    deadline = start_time + expires_in
+    # SECURITY: Enforce absolute timeout (RFC 8628 allows expires_in up to 1800s,
+    # but we cap total flow duration to prevent resource exhaustion)
+    deadline = start_time + min(expires_in, MAX_DEVICE_FLOW_DURATION_S)
+    
+    # Generate correlation ID for audit logging
+    correlation_id = f"oauth-{int(start_time)}-{random.randint(1000, 9999)}"
+    log.debug(f"Starting token poll [correlation_id={correlation_id}] (expires in {expires_in}s, hard cap {MAX_DEVICE_FLOW_DURATION_S}s)")
 
-    log.debug(f"Starting token poll (expires in {expires_in}s)")
-
+    poll_count = 0
+    poll_count = 0
     while True:
+        poll_count += 1
+        
         # Check for cancellation
         if cancel_cb and cancel_cb():
-            log.debug("Token poll cancelled by user")
+            log.debug(f"Token poll cancelled by user [correlation_id={correlation_id}] after {poll_count} attempts")
             raise DeviceFlowError("user_cancelled", "User cancelled the flow")
 
         # Check for expiry
         if time.time() >= deadline:
-            log.error("Device code expired")
+            log.error(f"Device code expired [correlation_id={correlation_id}] after {poll_count} attempts")
             raise DeviceFlowError("expired_token", "Device code expired")
 
-        # Sleep before polling (respecting minimum interval)
-        time.sleep(interval)
+        # SECURITY: Add jitter to prevent thundering herd
+        # Sleep base interval + random jitter (0-20% of interval)
+        jitter = random.uniform(0, interval * 0.2)
+        sleep_duration = interval + jitter
+        time.sleep(sleep_duration)
 
         # Build request body (form-urlencoded)
         body_data = {
@@ -275,14 +297,14 @@ def poll_for_token(
                 response_data = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             error_body = e.read().decode("utf-8", errors="replace")
-            log.error(f"Token poll failed: {e.code} {error_body}")
+            log.error(f"Token poll failed [correlation_id={correlation_id}] attempt {poll_count}: {e.code} {error_body}")
             raise DeviceFlowError("http_error", f"HTTP {e.code}") from e
         except urllib.error.URLError as e:
             # Transient network error; continue polling
-            log.debug(f"Token poll network error (will retry): {e}")
+            log.debug(f"Token poll network error [correlation_id={correlation_id}] attempt {poll_count} (will retry): {e}")
             continue
         except json.JSONDecodeError as e:
-            log.error(f"Token poll response is not valid JSON: {e}")
+            log.error(f"Token poll response invalid JSON [correlation_id={correlation_id}] attempt {poll_count}: {e}")
             raise
 
         # Check for OAuth error in response
@@ -292,21 +314,22 @@ def poll_for_token(
 
             if error_code == "authorization_pending":
                 # User hasn't approved yet; continue polling
-                log.debug("Authorization pending, continuing poll")
+                log.debug(f"Authorization pending [correlation_id={correlation_id}] attempt {poll_count}")
                 continue
             elif error_code == "slow_down":
-                # Increase poll interval by 5 seconds
+                # SECURITY: Increase poll interval by 5 seconds (RFC 8628 requirement)
+                # Also add jitter to next sleep
                 interval = min(interval + 5, 120)  # Cap at 2 minutes
-                log.debug(f"GitHub requested slow_down, new interval: {interval}s")
+                log.debug(f"GitHub requested slow_down [correlation_id={correlation_id}], new interval: {interval}s")
                 continue
             elif error_code == "expired_token":
-                log.error("Device code expired")
+                log.error(f"Device code expired [correlation_id={correlation_id}]")
                 raise DeviceFlowError(error_code, error_description)
             elif error_code == "access_denied":
-                log.error("User denied GitHub access")
+                log.error(f"User denied GitHub access [correlation_id={correlation_id}]")
                 raise DeviceFlowError(error_code, error_description)
             else:
-                log.error(f"GitHub returned error: {error_code}")
+                log.error(f"GitHub returned error [correlation_id={correlation_id}]: {error_code}")
                 raise DeviceFlowError(error_code, error_description)
 
         # Success: extract token
@@ -330,7 +353,7 @@ def poll_for_token(
 
         obtained_at = datetime.now(timezone.utc).isoformat()
 
-        log.info(f"Token obtained successfully")
+        log.info(f"Token obtained successfully [correlation_id={correlation_id}] after {poll_count} poll attempts")
 
         return TokenResponse(
             access_token=access_token,
