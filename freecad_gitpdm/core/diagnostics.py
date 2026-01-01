@@ -101,9 +101,9 @@ def get_diagnostics():
         diagnostics["last_verified_at"] = settings.load_last_verified_at()
         # Token presence (yes/no) without exposing token
         try:
-            from freecad_gitpdm.auth.token_store_wincred import WindowsCredentialStore
+            from freecad_gitpdm.auth.token_store_factory import create_token_store
 
-            store = WindowsCredentialStore()
+            store = create_token_store()
             token_present = (
                 store.load(settings.load_github_host(), settings.load_github_login())
                 is not None

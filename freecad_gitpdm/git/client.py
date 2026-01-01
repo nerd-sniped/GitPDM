@@ -67,34 +67,50 @@ class CmdResult:
 
 def _find_git_executable():
     """
-    Find git executable, checking common Windows locations.
+    Find git executable, checking common platform-specific locations.
 
     Returns:
-        str: Path to git.exe or 'git' if on PATH
+        str: Path to git or 'git' if on PATH
     """
-    # Prefer GitHub Desktop git so we leverage its credential helper
-    # (helps avoid AUTH errors when users are signed in to Desktop).
-    common_paths = [
-        os.path.expandvars(
-            r"%LOCALAPPDATA%\GitHubDesktop\app-*\resources\app"
-            r"\git\cmd\git.exe"
-        ),
-        r"C:\\Program Files\\Git\\cmd\\git.exe",
-        r"C:\\Program Files (x86)\\Git\\cmd\\git.exe",
-        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Git\cmd\git.exe"),
-    ]
+    import sys
 
-    for path in common_paths:
-        # Handle wildcards in path
-        if "*" in path:
-            import glob
+    if sys.platform == "win32":
+        # Windows: Prefer GitHub Desktop git so we leverage its credential helper
+        # (helps avoid AUTH errors when users are signed in to Desktop).
+        common_paths = [
+            os.path.expandvars(
+                r"%LOCALAPPDATA%\GitHubDesktop\app-*\resources\app"
+                r"\git\cmd\git.exe"
+            ),
+            r"C:\\Program Files\\Git\\cmd\\git.exe",
+            r"C:\\Program Files (x86)\\Git\\cmd\\git.exe",
+            os.path.expandvars(r"%LOCALAPPDATA%\Programs\Git\cmd\git.exe"),
+        ]
 
-            matches = glob.glob(path)
-            if matches:
-                path = matches[0]
-        if os.path.isfile(path):
-            log.info(f"Found git at: {path}")
-            return path
+        for path in common_paths:
+            # Handle wildcards in path
+            if "*" in path:
+                import glob
+
+                matches = glob.glob(path)
+                if matches:
+                    path = matches[0]
+            if os.path.isfile(path):
+                log.info(f"Found git at: {path}")
+                return path
+    else:
+        # Linux/macOS: Check common system paths
+        common_paths = [
+            "/usr/bin/git",
+            "/usr/local/bin/git",
+            "/opt/local/bin/git",  # MacPorts
+            "/opt/homebrew/bin/git",  # Homebrew on Apple Silicon
+        ]
+
+        for path in common_paths:
+            if os.path.isfile(path):
+                log.info(f"Found git at: {path}")
+                return path
 
     # Fallback to PATH
     try:

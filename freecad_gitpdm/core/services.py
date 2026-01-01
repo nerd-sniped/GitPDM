@@ -48,9 +48,9 @@ class ServiceContainer:
         if self.token_store_factory is not None:
             return self.token_store_factory()
 
-        from freecad_gitpdm.auth.token_store_wincred import WindowsCredentialStore
+        from freecad_gitpdm.auth.token_store_factory import create_token_store
 
-        return WindowsCredentialStore()
+        return create_token_store()
 
     def git_client(self):
         if self.git_client_factory is not None:

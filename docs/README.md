@@ -198,6 +198,116 @@ Mod/
 ✅ **Solution:**
 - This usually means your FreeCAD installation is incomplete
 - Try reinstalling FreeCAD from the official website
+
+### Linux-Specific Setup
+
+**GitHub Token Storage (GNOME Keyring / KWallet)**
+
+GitPDM stores GitHub authentication tokens securely using your system's keyring:
+
+- **GNOME Desktop**: Uses GNOME Keyring automatically
+- **KDE Plasma**: Uses KWallet via Secret Service API
+- **Other Desktops**: Requires a Secret Service-compatible keyring
+
+**Installing Required Packages:**
+
+```bash
+# Ubuntu/Debian
+sudo apt install python3-secretstorage gnome-keyring
+
+# Fedora/RHEL
+sudo dnf install python3-secretstorage gnome-keyring
+
+# Arch Linux
+sudo pacman -S python-secretstorage gnome-keyring
+```
+
+**If you get "Secret Service not available" errors:**
+
+1. Make sure your keyring daemon is running:
+   ```bash
+   # Check if gnome-keyring is running
+   ps aux | grep gnome-keyring
+   ```
+
+2. If using a non-standard desktop, you may need to start the keyring manually:
+   ```bash
+   # Start gnome-keyring-daemon
+   gnome-keyring-daemon --start --components=secrets
+   ```
+
+3. For headless/server environments:
+   - Token storage may not be available
+   - Consider using SSH keys for Git authentication instead
+   - Or set up a minimal keyring daemon
+
+**Testing Token Storage:**
+
+After installing, test that GitPDM can access your keyring:
+1. Open Git PDM workbench in FreeCAD
+2. Try signing in to GitHub
+3. If successful, your token is stored securely in your system keyring
+
+**Alternative: SSH Authentication**
+
+If keyring setup is difficult, you can use SSH keys for Git operations:
+1. Generate SSH key: `ssh-keygen -t ed25519 -C "your_email@example.com"`
+2. Add to GitHub: Settings → SSH and GPG keys
+3. Clone repos using SSH URLs instead of HTTPS
+
+### macOS-Specific Setup
+
+**GitHub Token Storage (Keychain)**
+
+GitPDM stores GitHub authentication tokens securely in your macOS Keychain using the `keyring` library:
+
+- **Automatic**: Tokens are stored in your default keychain (usually "login")
+- **Secure**: Uses macOS Keychain Services for encryption
+- **Integrated**: Works seamlessly with system security
+
+**Installing Required Packages:**
+
+The `keyring` library is usually included with Python on macOS, but if you encounter issues:
+
+```bash
+# Install keyring if needed
+pip3 install keyring
+
+# Or if using Homebrew Python
+brew install python3
+pip3 install keyring
+```
+
+**Verifying Keychain Access:**
+
+After installing GitPDM:
+1. Open FreeCAD and switch to Git PDM workbench
+2. Try signing in to GitHub
+3. You may be prompted by macOS to allow FreeCAD/Python to access your Keychain
+4. Click "Always Allow" to permit future access without prompts
+
+**If you get "Keychain not available" errors:**
+
+1. Check that Python has Keychain access:
+   - Open **System Settings** → **Privacy & Security** → **Privacy** → **Full Disk Access**
+   - Add Python or FreeCAD to the allowed apps
+
+2. Verify keyring is working:
+   ```bash
+   python3 -c "import keyring; print(keyring.get_keyring())"
+   ```
+   - Should show `KeychainKeyring` or similar (not `FailKeyring`)
+
+3. If using Homebrew Python:
+   - The keyring backend should work automatically
+   - If not, try: `pip3 install --upgrade keyring`
+
+**Alternative: SSH Authentication**
+
+If Keychain access is restricted (e.g., on managed systems):
+1. Generate SSH key: `ssh-keygen -t ed25519 -C "your_email@example.com"`
+2. Add to GitHub: Settings → SSH and GPG keys
+3. Clone repos using SSH URLs instead of HTTPS
 - These Qt libraries should come bundled with FreeCAD
 
 **Still stuck?** Check the [Support & Community](#-support--community) section below!
@@ -1490,6 +1600,9 @@ GitPDM/
 │   │   ├── oauth_device_flow.py     # OAuth Device Flow implementation
 │   │   ├── token_store.py           # Token storage interface
 │   │   ├── token_store_wincred.py   # Windows credential store
+│   │   ├── token_store_linux.py     # Linux Secret Service store
+│   │   ├── token_store_macos.py     # macOS Keychain store
+│   │   ├── token_store_factory.py   # Platform-aware store factory
 │   │   ├── config.py                # OAuth configuration
 │   │   └── keys.py                  # OAuth client credentials
 │   │
