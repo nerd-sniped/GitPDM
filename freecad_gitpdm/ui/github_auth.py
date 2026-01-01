@@ -521,15 +521,15 @@ class GitHubAuthHandler:
 
             # SECURITY: Validate token has required scopes before storing
             from freecad_gitpdm.auth import scope_validator
-            
+
             is_valid, error_msg = scope_validator.validate_token_scopes(token_response)
             if not is_valid:
                 log.error(f"Token scope validation failed: {error_msg}")
-                
+
                 # Close OAuth dialog
                 if self._oauth_dialog:
                     self._oauth_dialog.close()
-                
+
                 # Show scope validation error to user
                 QtWidgets.QMessageBox.warning(
                     self.panel,

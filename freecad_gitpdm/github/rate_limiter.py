@@ -25,6 +25,7 @@ from enum import Enum
 
 class CircuitState(Enum):
     """Circuit breaker states for API clients."""
+
     CLOSED = "closed"  # Normal operation
     OPEN = "open"  # Tripped; rejecting requests
     HALF_OPEN = "half_open"  # Testing if service recovered
@@ -33,6 +34,7 @@ class CircuitState(Enum):
 @dataclass
 class RateLimitBucket:
     """Token bucket for rate limiting a specific scope (user/global)."""
+
     capacity: int  # Maximum tokens
     tokens: float  # Current tokens available
     refill_rate: float  # Tokens per second
@@ -42,10 +44,10 @@ class RateLimitBucket:
     def try_acquire(self, cost: int = 1) -> bool:
         """
         Try to acquire tokens for a request.
-        
+
         Args:
             cost: Number of tokens needed (default 1)
-            
+
         Returns:
             True if tokens acquired, False if insufficient
         """
@@ -77,14 +79,15 @@ class RateLimitBucket:
 class CircuitBreaker:
     """
     Circuit breaker to prevent retry storms.
-    
+
     Opens after N consecutive failures, stays open for cooldown period,
     then enters half-open to test recovery.
     """
+
     failure_threshold: int = 5  # Failures before opening
     cooldown_s: float = 30.0  # Seconds to wait before testing
     success_threshold: int = 2  # Successes in half-open to close
-    
+
     state: CircuitState = CircuitState.CLOSED
     failure_count: int = 0
     success_count: int = 0
@@ -120,7 +123,7 @@ class CircuitBreaker:
     def can_attempt(self) -> tuple[bool, Optional[float]]:
         """
         Check if request should be attempted.
-        
+
         Returns:
             (can_attempt, retry_after_s) tuple
         """
@@ -142,12 +145,12 @@ class CircuitBreaker:
 class RateLimiter:
     """
     Multi-level rate limiter for GitHub API calls.
-    
+
     Implements:
     - Global limit: 100 req/min across all users
     - Per-user limit: 30 req/min per authenticated user
     - Per-user circuit breaker to isolate failures
-    
+
     Usage:
         limiter = RateLimiter.get_instance()
         if limiter.can_proceed(user_id="alice"):
@@ -162,20 +165,20 @@ class RateLimiter:
             # Show user retry message or queue for later
     """
 
-    _instance: Optional['RateLimiter'] = None
+    _instance: Optional["RateLimiter"] = None
     _lock = threading.Lock()
 
     # Rate limit configuration
     GLOBAL_CAPACITY = 100  # requests
     GLOBAL_REFILL_RATE = 100 / 60.0  # 100 per minute = 1.67/s
-    
+
     PER_USER_CAPACITY = 30  # requests
     PER_USER_REFILL_RATE = 30 / 60.0  # 30 per minute = 0.5/s
 
     def __init__(self):
         """
         Initialize rate limiter with buckets and circuit breakers.
-        
+
         Use RateLimiter.get_instance() instead of direct instantiation.
         """
         self._global_bucket = RateLimitBucket(
@@ -183,14 +186,14 @@ class RateLimiter:
             tokens=self.GLOBAL_CAPACITY,
             refill_rate=self.GLOBAL_REFILL_RATE,
         )
-        
+
         # Per-user buckets (lazy creation)
         self._user_buckets: Dict[str, RateLimitBucket] = {}
         self._user_circuits: Dict[str, CircuitBreaker] = {}
         self._user_lock = threading.Lock()
 
     @classmethod
-    def get_instance(cls) -> 'RateLimiter':
+    def get_instance(cls) -> "RateLimiter":
         """Get singleton rate limiter instance."""
         if cls._instance is None:
             with cls._lock:
@@ -219,11 +222,11 @@ class RateLimiter:
     def can_proceed(self, user_id: str = "anonymous", cost: int = 1) -> bool:
         """
         Check if request can proceed immediately.
-        
+
         Args:
             user_id: User/installation identifier
             cost: Request cost in tokens (default 1)
-            
+
         Returns:
             True if request should proceed, False if should wait/retry
         """
@@ -243,8 +246,7 @@ class RateLimiter:
             # Refund global token since user limit hit
             with self._global_bucket.lock:
                 self._global_bucket.tokens = min(
-                    self._global_bucket.capacity,
-                    self._global_bucket.tokens + cost
+                    self._global_bucket.capacity, self._global_bucket.tokens + cost
                 )
             return False
 
@@ -253,7 +255,7 @@ class RateLimiter:
     def wait_time(self, user_id: str = "anonymous", cost: int = 1) -> float:
         """
         Calculate minimum wait time until request can proceed.
-        
+
         Returns:
             Seconds to wait (0 if can proceed now)
         """
@@ -267,7 +269,7 @@ class RateLimiter:
         global_wait = self._global_bucket.wait_time(cost)
         user_bucket = self._get_user_bucket(user_id)
         user_wait = user_bucket.wait_time(cost)
-        
+
         return max(global_wait, user_wait)
 
     def record_success(self, user_id: str = "anonymous"):
@@ -278,7 +280,7 @@ class RateLimiter:
     def record_failure(self, user_id: str = "anonymous"):
         """
         Record failed API call (5xx or secondary rate limit hit).
-        
+
         Increments circuit breaker failure count; may trip circuit.
         """
         circuit = self._get_circuit_breaker(user_id)
@@ -293,24 +295,24 @@ class RateLimiter:
     def get_status(self, user_id: str = "anonymous") -> Dict[str, any]:
         """
         Get current rate limiter status for diagnostics.
-        
+
         Returns dict with global/user tokens, circuit state, etc.
         """
         circuit = self._get_circuit_breaker(user_id)
         user_bucket = self._get_user_bucket(user_id)
-        
+
         with self._global_bucket.lock:
             self._global_bucket._refill()
             global_tokens = self._global_bucket.tokens
-            
+
         with user_bucket.lock:
             user_bucket._refill()
             user_tokens = user_bucket.tokens
-            
+
         with circuit.lock:
             circuit_state = circuit.state.value
             failure_count = circuit.failure_count
-        
+
         return {
             "global_tokens": round(global_tokens, 2),
             "global_capacity": self.GLOBAL_CAPACITY,

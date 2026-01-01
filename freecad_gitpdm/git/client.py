@@ -1403,11 +1403,14 @@ class GitClient:
 
         # SECURITY: Sanitize commit message to prevent injection attacks
         from freecad_gitpdm.core import input_validator
+
         sanitized_message = input_validator.sanitize_commit_message(message)
-        
+
         if not sanitized_message:
-            return CmdResult(False, "", "Commit message is empty after sanitization", "EMPTY_MESSAGE")
-        
+            return CmdResult(
+                False, "", "Commit message is empty after sanitization", "EMPTY_MESSAGE"
+            )
+
         if sanitized_message != message:
             log.debug("Commit message was sanitized (removed unsafe characters)")
 

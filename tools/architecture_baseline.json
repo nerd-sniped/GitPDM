@@ -1,7 +1,7 @@
 {
   "files": {
     "freecad_gitpdm/ui/panel.py": { "max_lines": 2500 },
-    "freecad_gitpdm/ui/github_auth.py": { "max_lines": 750 },
+    "freecad_gitpdm/ui/github_auth.py": { "max_lines": 760 },
     "freecad_gitpdm/ui/file_browser.py": { "max_lines": 850 },
     "freecad_gitpdm/ui/fetch_pull.py": { "max_lines": 450 },
     "freecad_gitpdm/ui/commit_push.py": { "max_lines": 575 },

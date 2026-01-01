@@ -129,16 +129,20 @@ class GitHubApiClient:
 
                 # Check for secondary rate limit (403/429 abuse detection)
                 if status in (403, 429):
-                    retry_after = resp_headers.get("Retry-After", resp_headers.get("retry-after"))
+                    retry_after = resp_headers.get(
+                        "Retry-After", resp_headers.get("retry-after")
+                    )
                     if retry_after:
                         # Secondary rate limit hit; record failure and respect retry-after
                         self._rate_limiter.record_failure(user_id=self._user_id)
-                        log.debug(f"Secondary rate limit hit, retry after {retry_after}s")
+                        log.debug(
+                            f"Secondary rate limit hit, retry after {retry_after}s"
+                        )
 
                 # Success or non-retryable error - record success for circuit breaker
                 if 200 <= status < 300:
                     self._rate_limiter.record_success(user_id=self._user_id)
-                    
+
                 return status, body_data, resp_headers
 
             except GitHubApiNetworkError as e:

@@ -26,10 +26,10 @@ OPTIONAL_SCOPES = set()
 def parse_scopes(scope_string: str) -> Set[str]:
     """
     Parse space-separated scope string into set.
-    
+
     Args:
         scope_string: Space-separated OAuth scopes (e.g., "repo read:user")
-        
+
     Returns:
         Set of individual scope strings
     """
@@ -41,20 +41,20 @@ def parse_scopes(scope_string: str) -> Set[str]:
 def validate_token_scopes(token: TokenResponse) -> Tuple[bool, str]:
     """
     Validate that token has required scopes.
-    
+
     Args:
         token: TokenResponse from OAuth device flow
-        
+
     Returns:
         (is_valid, message) tuple
         - is_valid: True if all required scopes present
         - message: Empty string if valid, error description if invalid
     """
     granted_scopes = parse_scopes(token.scope)
-    
+
     # Check for required scopes
     missing_scopes = REQUIRED_SCOPES - granted_scopes
-    
+
     if missing_scopes:
         missing_list = ", ".join(sorted(missing_scopes))
         return False, (
@@ -62,17 +62,17 @@ def validate_token_scopes(token: TokenResponse) -> Tuple[bool, str]:
             f"GitPDM needs these permissions to backup your FreeCAD files. "
             f"Please re-authenticate and grant all requested permissions."
         )
-    
+
     return True, ""
 
 
 def get_scope_description(scope: str) -> str:
     """
     Get human-readable description of what a scope allows.
-    
+
     Args:
         scope: OAuth scope identifier
-        
+
     Returns:
         User-friendly description
     """
@@ -88,7 +88,7 @@ def get_scope_description(scope: str) -> str:
 def explain_requested_scopes() -> str:
     """
     Generate user-friendly explanation of why scopes are needed.
-    
+
     Returns:
         Multi-line explanation for display in auth UI
     """
@@ -96,46 +96,48 @@ def explain_requested_scopes() -> str:
         "GitPDM requests the following permissions:",
         "",
     ]
-    
+
     for scope in sorted(REQUIRED_SCOPES):
         desc = get_scope_description(scope)
         lines.append(f"• {scope}: {desc}")
-    
-    lines.extend([
-        "",
-        "These permissions are necessary to:",
-        "• Save your FreeCAD files to GitHub repositories",
-        "• Read repository contents for synchronization",
-        "• Identify you as the commit author",
-    ])
-    
+
+    lines.extend(
+        [
+            "",
+            "These permissions are necessary to:",
+            "• Save your FreeCAD files to GitHub repositories",
+            "• Read repository contents for synchronization",
+            "• Identify you as the commit author",
+        ]
+    )
+
     return "\n".join(lines)
 
 
 def audit_scope_changes(old_token: TokenResponse, new_token: TokenResponse) -> str:
     """
     Compare scopes between old and new token for audit logging.
-    
+
     Args:
         old_token: Previous token
         new_token: New/refreshed token
-        
+
     Returns:
         Human-readable description of scope changes (empty if no changes)
     """
     old_scopes = parse_scopes(old_token.scope)
     new_scopes = parse_scopes(new_token.scope)
-    
+
     if old_scopes == new_scopes:
         return ""
-    
+
     added = new_scopes - old_scopes
     removed = old_scopes - new_scopes
-    
+
     messages = []
     if added:
         messages.append(f"Added scopes: {', '.join(sorted(added))}")
     if removed:
         messages.append(f"Removed scopes: {', '.join(sorted(removed))}")
-    
+
     return "; ".join(messages)

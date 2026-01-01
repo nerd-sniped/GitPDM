@@ -27,30 +27,34 @@ from freecad_gitpdm.auth.oauth_device_flow import TokenResponse
 REFRESH_BUFFER_SECONDS = 300  # 5 minutes
 
 
-def is_token_expired(token: TokenResponse, buffer_s: int = REFRESH_BUFFER_SECONDS) -> bool:
+def is_token_expired(
+    token: TokenResponse, buffer_s: int = REFRESH_BUFFER_SECONDS
+) -> bool:
     """
     Check if token is expired or will expire soon.
-    
+
     Args:
         token: TokenResponse to check
         buffer_s: Seconds before expiry to consider "expired" (default 300)
-        
+
     Returns:
         True if token is expired or expiring soon, False if still valid
     """
     if not token.expires_in or not token.obtained_at_utc:
         # No expiry info; assume token is long-lived (GitHub PATs)
         return False
-    
+
     try:
-        obtained_at = datetime.fromisoformat(token.obtained_at_utc.replace("Z", "+00:00"))
+        obtained_at = datetime.fromisoformat(
+            token.obtained_at_utc.replace("Z", "+00:00")
+        )
     except (ValueError, AttributeError):
         # Can't parse timestamp; assume expired to be safe
         return True
-    
+
     expiry_time = obtained_at + timedelta(seconds=token.expires_in)
     now = datetime.now(timezone.utc)
-    
+
     # Check if we're within buffer_s of expiry
     time_until_expiry = (expiry_time - now).total_seconds()
     return time_until_expiry <= buffer_s
@@ -63,12 +67,12 @@ def refresh_token(
 ) -> Tuple[bool, Optional[TokenResponse], str]:
     """
     Refresh an access token using a refresh token.
-    
+
     Args:
         client_id: GitHub OAuth app client ID
         refresh_token: Refresh token from previous TokenResponse
         token_url: GitHub token endpoint (for testing)
-        
+
     Returns:
         (success, new_token, error_message) tuple
         - success: True if refresh succeeded
@@ -77,7 +81,7 @@ def refresh_token(
     """
     if not refresh_token:
         return False, None, "No refresh token available"
-    
+
     try:
         from freecad_gitpdm.core import log
     except ImportError:
@@ -86,10 +90,11 @@ def refresh_token(
             @staticmethod
             def debug(msg):
                 pass
+
             @staticmethod
             def error(msg):
                 pass
-    
+
     # Build request body
     body_data = {
         "client_id": client_id,
@@ -97,7 +102,7 @@ def refresh_token(
         "refresh_token": refresh_token,
     }
     body_encoded = urllib.parse.urlencode(body_data).encode("utf-8")
-    
+
     # Create request
     request = urllib.request.Request(
         token_url,
@@ -108,9 +113,9 @@ def refresh_token(
         },
         method="POST",
     )
-    
+
     log.debug("Attempting token refresh")
-    
+
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
             response_data = json.loads(response.read().decode("utf-8"))
@@ -124,28 +129,28 @@ def refresh_token(
     except json.JSONDecodeError as e:
         log.error(f"Token refresh response invalid JSON: {e}")
         return False, None, "Invalid response from GitHub"
-    
+
     # Check for errors in response
     if "error" in response_data:
         error_code = response_data.get("error")
         error_description = response_data.get("error_description", "")
         log.error(f"Token refresh error: {error_code} - {error_description}")
         return False, None, f"Refresh failed: {error_description or error_code}"
-    
+
     # Extract new token
     access_token = response_data.get("access_token")
     if not access_token:
         log.error("Token refresh response missing access_token")
         return False, None, "Invalid response: missing access_token"
-    
+
     token_type = response_data.get("token_type", "bearer")
     scope = response_data.get("scope", "")
     new_refresh_token = response_data.get("refresh_token")
     expires_in = response_data.get("expires_in")
     refresh_token_expires_in = response_data.get("refresh_token_expires_in")
-    
+
     obtained_at = datetime.now(timezone.utc).isoformat()
-    
+
     new_token = TokenResponse(
         access_token=access_token,
         token_type=token_type,
@@ -155,7 +160,7 @@ def refresh_token(
         refresh_token_expires_in=refresh_token_expires_in,
         obtained_at_utc=obtained_at,
     )
-    
+
     log.debug("Token refreshed successfully")
     return True, new_token, ""
 
@@ -167,12 +172,12 @@ def ensure_fresh_token(
 ) -> Tuple[bool, Optional[TokenResponse], str]:
     """
     Ensure token is fresh (not expired), refreshing if needed.
-    
+
     Args:
         token: Current TokenResponse
         client_id: GitHub OAuth app client ID
         token_url: GitHub token endpoint
-        
+
     Returns:
         (is_fresh, token_to_use, message) tuple
         - is_fresh: True if token is usable (either was fresh or refreshed)
@@ -181,14 +186,18 @@ def ensure_fresh_token(
     """
     if not is_token_expired(token):
         return True, token, ""
-    
+
     # Token is expired or expiring soon
     if not token.refresh_token:
-        return False, token, "Token expired and no refresh token available. Please sign in again."
-    
+        return (
+            False,
+            token,
+            "Token expired and no refresh token available. Please sign in again.",
+        )
+
     # Attempt refresh
     success, new_token, error = refresh_token(client_id, token.refresh_token, token_url)
-    
+
     if success and new_token:
         return True, new_token, "Token refreshed"
     else:
@@ -198,23 +207,25 @@ def ensure_fresh_token(
 def get_token_ttl_seconds(token: TokenResponse) -> Optional[int]:
     """
     Get remaining time-to-live for token in seconds.
-    
+
     Args:
         token: TokenResponse to check
-        
+
     Returns:
         Seconds until expiry, or None if no expiry info available
     """
     if not token.expires_in or not token.obtained_at_utc:
         return None
-    
+
     try:
-        obtained_at = datetime.fromisoformat(token.obtained_at_utc.replace("Z", "+00:00"))
+        obtained_at = datetime.fromisoformat(
+            token.obtained_at_utc.replace("Z", "+00:00")
+        )
     except (ValueError, AttributeError):
         return None
-    
+
     expiry_time = obtained_at + timedelta(seconds=token.expires_in)
     now = datetime.now(timezone.utc)
-    
+
     ttl = (expiry_time - now).total_seconds()
     return max(0, int(ttl))
