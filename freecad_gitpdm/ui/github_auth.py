@@ -129,6 +129,17 @@ class GitHubAuthHandler:
         )
         self.panel.github_refresh_btn.setEnabled(not self._oauth_in_progress)
 
+    def _cleanup_oauth_state(self):
+        """Clean up OAuth state variables after flow completes or fails."""
+        self._oauth_in_progress = False
+        self._oauth_cancel_token = None
+        if self._oauth_dialog:
+            try:
+                self._oauth_dialog.close()
+            except Exception:
+                pass
+        self.update_ui_state()
+
     def connect_clicked(self):
         """Handle Connect GitHub button click."""
         if self._oauth_in_progress:
