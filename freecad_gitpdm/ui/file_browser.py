@@ -481,6 +481,28 @@ class FileBrowserHandler:
         if rel and rel.lower().endswith(".fcstd"):
             menu.addSeparator()
             act_backups = menu.addAction("Configure Backups...")
+            
+            # Add lock/unlock actions if GitCAD is available
+            if hasattr(self._parent, '_gitcad_lock') and self._parent._gitcad_lock._gitcad_available:
+                menu.addSeparator()
+                lock_info = self._parent._gitcad_lock.get_file_lock_status(rel)
+                
+                if lock_info:
+                    # File is locked
+                    if self._parent._gitcad_lock.is_locked_by_me(rel):
+                        act_unlock = menu.addAction("🔓 Unlock")
+                    else:
+                        act_force_lock = menu.addAction(f"🔒 Force Lock (locked by {lock_info.owner})")
+                        act_unlock = None
+                else:
+                    # File is not locked
+                    act_lock = menu.addAction("🔒 Lock")
+                    act_unlock = None
+                    act_force_lock = None
+        else:
+            act_lock = None
+            act_unlock = None
+            act_force_lock = None
 
         chosen = menu.exec_(self._parent.repo_list.mapToGlobal(pos))
         if not chosen:
@@ -499,6 +521,24 @@ class FileBrowserHandler:
             self._reveal_in_file_manager(rel)
         elif chosen == act_backups:
             self._configure_backups(rel)
+        elif 'act_lock' in locals() and chosen == act_lock:
+            self._parent._gitcad_lock.lock_file(rel, force=False)
+        elif 'act_unlock' in locals() and act_unlock and chosen == act_unlock:
+            self._parent._gitcad_lock.unlock_file(rel, force=False)
+        elif 'act_force_lock' in locals() and act_force_lock and chosen == act_force_lock:
+            # Confirm force lock
+            reply = QtWidgets.QMessageBox.question(
+                self._parent,
+                "Force Lock",
+                f"This file is locked by {lock_info.owner}.\n\n"
+                f"Force locking will steal the lock from them.\n"
+                f"This should only be done if they are not actively using the file.\n\n"
+                f"Are you sure?",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                QtWidgets.QMessageBox.No
+            )
+            if reply == QtWidgets.QMessageBox.Yes:
+                self._parent._gitcad_lock.lock_file(rel, force=True)
 
     def _open_file(self, rel):
         """Open the given repo-relative path in FreeCAD."""

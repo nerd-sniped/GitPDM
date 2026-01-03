@@ -227,6 +227,11 @@ class RepoValidationHandler:
         # This ensures Save As dialog defaults to repo folder
         self._set_freecad_working_directory(repo_root)
 
+        # Check GitCAD availability (Phase 2)
+        if hasattr(self._parent, '_gitcad_lock'):
+            self._parent._gitcad_lock.check_gitcad_availability(repo_root)
+            self._parent._gitcad_lock.refresh_lock_status()
+
         # Fetch branch and status
         self.fetch_branch_and_status(repo_root)
         # Refresh repo browser

@@ -59,3 +59,7 @@ credentials.json
 # OS
 Thumbs.db
 desktop.ini
+
+# GitCAD runtime files (installed from GitCAD-main reference)
+FreeCAD_Automation/
+.gitattributes

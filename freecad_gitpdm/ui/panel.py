@@ -143,6 +143,11 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._branch_ops = BranchOperationsHandler(
             self, self._git_client, self._job_runner
         )
+        # GitCAD lock handler (Phase 2)
+        from freecad_gitpdm.ui.gitcad_lock import GitCADLockHandler
+        self._gitcad_lock = GitCADLockHandler(
+            self, self._git_client, self._job_runner
+        )
 
         # State tracking
         self._current_repo_root = None
@@ -410,6 +415,18 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                     if os.path.normpath(active_path) != os.path.normpath(filename):
                         log.debug("Saved doc is not active; skipping auto preview")
                         return
+
+                    # GitCAD export (decompress) if available (Phase 2)
+                    if hasattr(self, '_gitcad_lock') and self._gitcad_lock._gitcad_wrapper:
+                        try:
+                            from freecad_gitpdm.export.gitcad_integration import gitcad_export_if_available
+                            gitcad_export_if_available(
+                                self._current_repo_root,
+                                active_path,
+                                self._gitcad_lock._gitcad_wrapper
+                            )
+                        except Exception as e:
+                            log.debug(f"GitCAD export skipped: {e}")
 
                     result = exporter.export_active_document(self._current_repo_root)
                 except Exception as e_export:
@@ -1084,6 +1101,63 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # Hide the entire Previews area per request
         previews_group.setVisible(False)
         extra_layout.addWidget(previews_group)
+
+        # GitCAD Lock Management (Phase 2)
+        gitcad_group = QtWidgets.QGroupBox("GitCAD File Locking")
+        gitcad_layout = QtWidgets.QVBoxLayout()
+        gitcad_layout.setContentsMargins(6, 4, 6, 4)
+        gitcad_layout.setSpacing(4)
+        gitcad_group.setLayout(gitcad_layout)
+
+        # Status label
+        self.gitcad_status_label = QtWidgets.QLabel("Checking...")
+        self._set_meta_label(self.gitcad_status_label, "gray")
+        gitcad_layout.addWidget(self.gitcad_status_label)
+
+        # Buttons row - for when GitCAD is available
+        gitcad_btn_row = QtWidgets.QHBoxLayout()
+        gitcad_btn_row.setSpacing(4)
+
+        self.show_locks_btn = QtWidgets.QPushButton("Show Locks")
+        self.show_locks_btn.setEnabled(False)
+        self.show_locks_btn.setToolTip("Show all currently locked files")
+        self.show_locks_btn.clicked.connect(self._on_show_locks_clicked)
+        gitcad_btn_row.addWidget(self.show_locks_btn)
+
+        self.refresh_locks_btn = QtWidgets.QPushButton("↻")
+        self.refresh_locks_btn.setEnabled(False)
+        self.refresh_locks_btn.setFixedWidth(32)
+        self.refresh_locks_btn.setToolTip("Refresh lock status")
+        self.refresh_locks_btn.clicked.connect(self._on_refresh_locks_clicked)
+        gitcad_btn_row.addWidget(self.refresh_locks_btn)
+        
+        self.config_gitcad_btn = QtWidgets.QPushButton("⚙")
+        self.config_gitcad_btn.setEnabled(False)
+        self.config_gitcad_btn.setFixedWidth(32)
+        self.config_gitcad_btn.setToolTip("Configure GitCAD settings")
+        self.config_gitcad_btn.clicked.connect(self._on_config_gitcad_clicked)
+        gitcad_btn_row.addWidget(self.config_gitcad_btn)
+
+        gitcad_btn_row.addStretch()
+        gitcad_layout.addLayout(gitcad_btn_row)
+        
+        # Initialize button - for when GitCAD is not available
+        init_btn_row = QtWidgets.QHBoxLayout()
+        init_btn_row.setSpacing(4)
+        
+        self.init_gitcad_btn = QtWidgets.QPushButton("Initialize GitCAD...")
+        self.init_gitcad_btn.setToolTip("Install GitCAD file locking in this repository")
+        self.init_gitcad_btn.clicked.connect(self._on_init_gitcad_clicked)
+        init_btn_row.addWidget(self.init_gitcad_btn)
+        
+        init_btn_row.addStretch()
+        self._gitcad_init_row = init_btn_row
+        gitcad_layout.addLayout(init_btn_row)
+
+        # Hide by default until GitCAD is detected
+        gitcad_group.setVisible(False)
+        self._gitcad_group = gitcad_group
+        extra_layout.addWidget(gitcad_group)
 
         # Busy indicator (indeterminate)
         self.busy_bar = QtWidgets.QProgressBar()
@@ -2422,3 +2496,96 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         except Exception as e:
             log.debug(f"Failed to create GitHub client: {e}")
             return None
+
+    # ========== GitCAD Lock Management (Phase 2) ==========
+
+    def _on_show_locks_clicked(self):
+        """Handle Show Locks button click."""
+        if hasattr(self, '_gitcad_lock'):
+            self._gitcad_lock.show_locks_dialog()
+
+    def _on_refresh_locks_clicked(self):
+        """Handle Refresh Locks button click."""
+        if hasattr(self, '_gitcad_lock'):
+            self._gitcad_lock.refresh_lock_status()
+            self._show_status_message("Refreshing lock status...")
+    
+    def _on_config_gitcad_clicked(self):
+        """Handle Configure GitCAD button click."""
+        if not self._current_repo_root:
+            return
+        
+        from freecad_gitpdm.ui.gitcad_config_dialog import show_config_dialog
+        show_config_dialog(self._current_repo_root, self)
+    
+    def _on_init_gitcad_clicked(self):
+        """Handle Initialize GitCAD button click."""
+        if not self._current_repo_root:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "No Repository",
+                "Please open a repository first."
+            )
+            return
+        
+        from freecad_gitpdm.ui.gitcad_init_wizard import show_init_wizard
+        
+        success = show_init_wizard(self._current_repo_root, self)
+        
+        if success:
+            # Re-check GitCAD availability
+            if hasattr(self, '_gitcad_lock'):
+                self._gitcad_lock.check_gitcad_availability(self._current_repo_root)
+                self._show_status_message("GitCAD initialized successfully!")
+
+    def _update_gitcad_status(self):
+        """Update GitCAD status display based on availability."""
+        if not hasattr(self, '_gitcad_lock') or not hasattr(self, '_gitcad_group'):
+            return
+
+        if self._gitcad_lock._gitcad_available:
+            # GitCAD is available - show lock management buttons
+            lock_count = len(self._gitcad_lock._current_locks)
+            my_locks = sum(
+                1 for lock in self._gitcad_lock._current_locks.values()
+                if lock.owner == self._gitcad_lock._current_username
+            )
+            
+            if lock_count > 0:
+                self.gitcad_status_label.setText(
+                    f"✓ GitCAD active • {lock_count} file(s) locked ({my_locks} by you)"
+                )
+                self._set_meta_label(self.gitcad_status_label, "green")
+            else:
+                self.gitcad_status_label.setText("✓ GitCAD active • No files locked")
+                self._set_meta_label(self.gitcad_status_label, "green")
+            
+            # Show lock management buttons, hide init button
+            self.show_locks_btn.setEnabled(True)
+            self.refresh_locks_btn.setEnabled(True)
+            self.config_gitcad_btn.setEnabled(True)
+            self.show_locks_btn.setVisible(True)
+            self.refresh_locks_btn.setVisible(True)
+            self.config_gitcad_btn.setVisible(True)
+            self.init_gitcad_btn.setVisible(False)
+            
+            self._gitcad_group.setVisible(True)
+        else:
+            # GitCAD not available - show initialization option
+            if self._current_repo_root:
+                self.gitcad_status_label.setText("GitCAD not initialized")
+                self._set_meta_label(self.gitcad_status_label, "gray")
+                
+                # Hide lock management buttons, show init button
+                self.show_locks_btn.setEnabled(False)
+                self.refresh_locks_btn.setEnabled(False)
+                self.config_gitcad_btn.setEnabled(False)
+                self.show_locks_btn.setVisible(False)
+                self.refresh_locks_btn.setVisible(False)
+                self.config_gitcad_btn.setVisible(False)
+                self.init_gitcad_btn.setVisible(True)
+                # Show the section but with disabled state
+                self._gitcad_group.setVisible(True)
+            else:
+                # No repo selected - hide section
+                self._gitcad_group.setVisible(False)

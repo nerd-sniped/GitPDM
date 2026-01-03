@@ -537,6 +537,19 @@ class _ProgressPage(QtWidgets.QWizardPage):
                 log.info(f"Scaffolding skipped")
                 self._update_step_success(3, "Scaffolding skipped")
 
+            # === STEP 3.5: Initialize GitCAD ===
+            self._add_step("Initializing GitCAD file locking…")
+            log.info(f"Step 3.5: Initializing GitCAD")
+            try:
+                self._initialize_gitcad(folder_abs)
+                log.info(f"GitCAD initialized successfully")
+                self._update_step_success(
+                    3, "GitCAD initialized (FreeCAD_Automation/, .gitattributes)"
+                )
+            except Exception as e:
+                log.warning(f"GitCAD initialization failed: {e}")
+                self._update_step_success(3, "GitCAD initialization skipped")
+
             # === STEP 4: Set default branch ===
             self._add_step("Setting default branch…")
             log.info(f"Step 4: Setting default branch")
@@ -653,6 +666,74 @@ class _ProgressPage(QtWidgets.QWizardPage):
             log.error(f"Workflow failed with exception: {type(e).__name__}: {e}")
             self._add_step_error(-1, str(e))
             self._parent_wizard.button(QtWidgets.QWizard.BackButton).setEnabled(True)
+
+    def _initialize_gitcad(self, repo_root: str):
+        """
+        Initialize GitCAD in the new repository.
+        
+        Copies FreeCAD_Automation from reference location (GitCAD-main).
+        
+        Args:
+            repo_root: Path to repository root
+            
+        Raises:
+            Exception: If GitCAD initialization fails
+        """
+        import shutil
+        from pathlib import Path
+        
+        repo_path = Path(repo_root)
+        
+        # Find GitCAD reference - check common locations
+        potential_refs = [
+            repo_path / "GitCAD-main",
+            repo_path.parent / "GitCAD-main",
+            Path(__file__).parent.parent.parent / "GitCAD-main",
+        ]
+        
+        gitcad_ref = None
+        for ref in potential_refs:
+            automation_dir = ref / "FreeCAD_Automation"
+            if automation_dir.exists() and automation_dir.is_dir():
+                gitcad_ref = ref
+                break
+        
+        if not gitcad_ref:
+            log.warning("GitCAD reference not found, skipping initialization")
+            raise FileNotFoundError("GitCAD reference (GitCAD-main) not found")
+        
+        log.info(f"Found GitCAD reference at: {gitcad_ref}")
+        
+        # Copy FreeCAD_Automation
+        source_automation = gitcad_ref / "FreeCAD_Automation"
+        dest_automation = repo_path / "FreeCAD_Automation"
+        
+        if dest_automation.exists():
+            log.info("FreeCAD_Automation already exists, skipping")
+        else:
+            shutil.copytree(str(source_automation), str(dest_automation))
+            log.info(f"Copied FreeCAD_Automation to {dest_automation}")
+        
+        # Copy .gitattributes
+        source_gitattributes = gitcad_ref / ".gitattributes"
+        dest_gitattributes = repo_path / ".gitattributes"
+        
+        if dest_gitattributes.exists():
+            log.info(".gitattributes already exists, skipping")
+        else:
+            if source_gitattributes.exists():
+                shutil.copy2(str(source_gitattributes), str(dest_gitattributes))
+                log.info(f"Copied .gitattributes")
+        
+        # Create config.json
+        from freecad_gitpdm.gitcad import create_default_config
+        result = create_default_config(str(repo_path), "")
+        if not result.ok:
+            error_msg = result.error.message if result.error else "Unknown error"
+            log.warning(f"Failed to create config.json: {error_msg}")
+            raise RuntimeError(f"Failed to create config.json: {error_msg}")
+        
+        log.info("GitCAD initialization complete")
 
     def _add_step(self, message: str):
         """Add a new step to the progress list (in progress state)."""

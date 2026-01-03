@@ -1793,6 +1793,19 @@ class GitClient:
 
         return ""
 
+    def get_config_value(self, repo_root, key):
+        """
+        Get a git config value (convenience wrapper).
+
+        Args:
+            repo_root: Repository root path (string)
+            key: Config key (e.g., "user.name")
+
+        Returns:
+            str: Config value, or empty string if not found
+        """
+        return self.get_config(repo_root, key, local=False)
+
     def set_config(self, repo_root, key, value, local=False):
         """
         Set a git config value.
