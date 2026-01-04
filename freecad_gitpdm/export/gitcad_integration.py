@@ -1,23 +1,103 @@
 # -*- coding: utf-8 -*-
 """
 GitCAD Export Integration
-Handles automatic GitCAD file export/decompression after save operations.
+Handles automatic FCStd file export/import operations.
+
+Sprint 3: Simplified to use only native Python core modules.
+Legacy bash wrapper support removed.
 """
 
 from pathlib import Path
-from typing import Optional
 
 from freecad_gitpdm.core import log
-from freecad_gitpdm.gitcad import GitCADWrapper
 
 
-def gitcad_export_if_available(
-    repo_root: str,
-    file_path: str,
-    gitcad_wrapper: Optional[GitCADWrapper] = None
-) -> bool:
+def export_fcstd_file(repo_root: str, file_path: str) -> bool:
     """
-    Export (decompress) a .FCStd file using GitCAD if available.
+    Export (decompress) a .FCStd file to directory structure.
+    
+    Args:
+        repo_root: Path to repository root
+        file_path: Path to the .FCStd file to export
+        
+    Returns:
+        bool: True if export was successful, False if failed
+    """
+    try:
+        from freecad_gitpdm.core.fcstd_tool import export_fcstd
+        from freecad_gitpdm.core.config_manager import load_config
+        
+        # Load config from repo
+        config = load_config(Path(repo_root))
+        
+        # Export the file
+        log.info(f"Exporting {file_path}...")
+        result = export_fcstd(Path(file_path), config=config)
+        
+        if result.ok:
+            log.info(f"Export successful: {result.value.output_dir}")
+            return True
+        else:
+            error_msg = result.error
+            log.warning(f"Export failed: {error_msg}")
+            return False
+            
+    except Exception as e:
+        log.error(f"Error during export: {e}")
+        return False
+
+
+def import_fcstd_file(repo_root: str, file_path: str) -> bool:
+    """
+    Import (recompress) a .FCStd file from directory structure.
+    
+    Args:
+        repo_root: Path to repository root
+        file_path: Path to the .FCStd file to import
+        
+    Returns:
+        bool: True if import was successful or not needed, False if failed
+    """
+    try:
+        from freecad_gitpdm.core.fcstd_tool import import_fcstd
+        from freecad_gitpdm.core.config_manager import load_config, get_uncompressed_dir
+        
+        # Load config from repo
+        config = load_config(Path(repo_root))
+        
+        # Calculate the uncompressed directory path
+        fcstd_path = Path(file_path)
+        uncompressed_dir = get_uncompressed_dir(
+            fcstd_path.parent,
+            fcstd_path.name,
+            config
+        )
+        
+        # Check if uncompressed directory exists
+        if not uncompressed_dir.exists():
+            log.debug(f"Uncompressed directory does not exist: {uncompressed_dir}")
+            return True  # Not an error, just not yet exported
+        
+        # Import the file
+        log.info(f"Importing {file_path}...")
+        result = import_fcstd(uncompressed_dir, fcstd_path, config=config)
+        
+        if result.ok:
+            log.info(f"Import successful: {result.value.fcstd_path}")
+            return True
+        else:
+            error_msg = result.error
+            log.warning(f"Import failed: {error_msg}")
+            return False
+            
+    except Exception as e:
+        log.error(f"Error during import: {e}")
+        return False
+
+
+def gitcad_export_if_available(repo_root: str, file_path: str) -> bool:
+    """
+    Export (decompress) a .FCStd file if it's a FCStd file.
     
     This should be called after saving a FreeCAD file to decompress it
     into a directory structure for better version control.
@@ -25,7 +105,6 @@ def gitcad_export_if_available(
     Args:
         repo_root: Path to repository root
         file_path: Path to the .FCStd file that was saved
-        gitcad_wrapper: Optional GitCADWrapper instance (will create if needed)
         
     Returns:
         bool: True if export was successful or not needed, False if failed
@@ -35,44 +114,16 @@ def gitcad_export_if_available(
         if not file_path.lower().endswith('.fcstd'):
             return True  # Not a FCStd file, nothing to do
         
-        # Create wrapper if not provided
-        if gitcad_wrapper is None:
-            from freecad_gitpdm.gitcad import is_gitcad_initialized
-            
-            if not is_gitcad_initialized(repo_root):
-                log.debug("GitCAD not initialized, skipping export")
-                return True  # Not an error, just not available
-            
-            try:
-                gitcad_wrapper = GitCADWrapper(repo_root)
-            except Exception as e:
-                log.debug(f"Could not create GitCAD wrapper: {e}")
-                return True  # Not an error, just not available
-        
-        # Export the file
-        log.info(f"Exporting {file_path} with GitCAD...")
-        result = gitcad_wrapper.export_fcstd(file_path)
-        
-        if result.ok:
-            log.info(f"GitCAD export successful: {result.value}")
-            return True
-        else:
-            error_msg = result.error.message if result.error else "Unknown error"
-            log.warning(f"GitCAD export failed: {error_msg}")
-            return False
+        return export_fcstd_file(repo_root, file_path)
             
     except Exception as e:
-        log.error(f"Error during GitCAD export: {e}")
+        log.error(f"Error during export: {e}")
         return False
 
 
-def gitcad_import_if_available(
-    repo_root: str,
-    file_path: str,
-    gitcad_wrapper: Optional[GitCADWrapper] = None
-) -> bool:
+def gitcad_import_if_available(repo_root: str, file_path: str) -> bool:
     """
-    Import (recompress) a .FCStd file using GitCAD if available.
+    Import (recompress) a .FCStd file if it's a FCStd file.
     
     This should be called before opening a FreeCAD file to recompress it
     from its directory structure.
@@ -80,7 +131,6 @@ def gitcad_import_if_available(
     Args:
         repo_root: Path to repository root
         file_path: Path to the .FCStd file to import
-        gitcad_wrapper: Optional GitCADWrapper instance (will create if needed)
         
     Returns:
         bool: True if import was successful or not needed, False if failed
@@ -90,32 +140,8 @@ def gitcad_import_if_available(
         if not file_path.lower().endswith('.fcstd'):
             return True  # Not a FCStd file, nothing to do
         
-        # Create wrapper if not provided
-        if gitcad_wrapper is None:
-            from freecad_gitpdm.gitcad import is_gitcad_initialized
-            
-            if not is_gitcad_initialized(repo_root):
-                log.debug("GitCAD not initialized, skipping import")
-                return True  # Not an error, just not available
-            
-            try:
-                gitcad_wrapper = GitCADWrapper(repo_root)
-            except Exception as e:
-                log.debug(f"Could not create GitCAD wrapper: {e}")
-                return True  # Not an error, just not available
-        
-        # Import the file
-        log.info(f"Importing {file_path} with GitCAD...")
-        result = gitcad_wrapper.import_fcstd(file_path)
-        
-        if result.ok:
-            log.info(f"GitCAD import successful: {result.value}")
-            return True
-        else:
-            error_msg = result.error.message if result.error else "Unknown error"
-            log.warning(f"GitCAD import failed: {error_msg}")
-            return False
+        return import_fcstd_file(repo_root, file_path)
             
     except Exception as e:
-        log.error(f"Error during GitCAD import: {e}")
+        log.error(f"Error during import: {e}")
         return False

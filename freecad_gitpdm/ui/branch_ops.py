@@ -443,13 +443,16 @@ class BranchOperationsHandler:
         self._parent.delete_branch_btn.setEnabled(can_delete)
 
     def refresh_after_branch_operation(self):
-        """Refresh UI after branch operations (switch, create, etc.)."""
+        """
+        Refresh UI after branch operations (switch, create, etc.).
+        Sprint 5 Phase 1.2: Updated to use StatusWidget for branch display.
+        """
         if not self._parent._current_repo_root:
             return
 
-        # Update branch name display
+        # Update branch name display via StatusWidget
         branch = self._git_client.current_branch(self._parent._current_repo_root)
-        self._parent.branch_label.setText(branch)
+        self._parent._status_widget.update_branch_info(branch)
 
         # Refresh branch list
         self.refresh_branch_list()

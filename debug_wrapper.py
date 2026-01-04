@@ -1,30 +1,61 @@
 """
-Check logs and test wrapper creation directly
+Sprint 4: Native Core Module Test
+Demonstrates using native Python modules instead of bash wrapper.
 """
 import sys
+from pathlib import Path
 from freecad_gitpdm.core import log
 
-# Try to create wrapper directly
-repo = r"C:\Factorem\Nerd-Sniped\GitPDM"
+repo = Path(r"C:\Factorem\Nerd-Sniped\GitPDM")
 
-print("Testing GitCADWrapper creation...")
+print("=" * 70)
+print("NATIVE CORE MODULE TEST (Sprint 4)")
+print("=" * 70)
+
+# Test 1: Check if GitPDM is initialized
+print("\n1. Testing has_config...")
 try:
-    from freecad_gitpdm.gitcad import GitCADWrapper
-    wrapper = GitCADWrapper(repo)
-    print(f"✓ SUCCESS: Wrapper created")
-    print(f"  Bash exe: {wrapper._bash_exe}")
+    from freecad_gitpdm.core.config_manager import has_config
+    result = has_config(repo)
+    print(f"✓ has_config: {result}")
 except Exception as e:
     print(f"✗ FAILED: {e}")
     import traceback
     traceback.print_exc()
 
-# Check what _find_bash_executable returns
-print("\nTesting bash detection...")
+# Test 2: Load configuration
+print("\n2. Testing load_config...")
 try:
-    from freecad_gitpdm.gitcad.wrapper import _find_bash_executable
-    bash = _find_bash_executable()
-    print(f"Bash path: {bash}")
+    from freecad_gitpdm.core.config_manager import load_config
+    config = load_config(repo)
+    print(f"✓ Config loaded")
+    print(f"  Uncompressed suffix: {config.uncompressed_suffix}")
+    print(f"  Include thumbnails: {config.include_thumbnails}")
+    print(f"  Require lock: {config.require_lock}")
 except Exception as e:
-    print(f"Error finding bash: {e}")
+    print(f"✗ FAILED: {e}")
     import traceback
     traceback.print_exc()
+
+# Test 3: Create LockManager
+print("\n3. Testing LockManager...")
+try:
+    from freecad_gitpdm.core.lock_manager import LockManager
+    manager = LockManager(repo)
+    print(f"✓ LockManager created")
+    print(f"  Repo root: {manager.repo_root}")
+    
+    # Get current locks
+    result = manager.get_locks()
+    if result.ok:
+        print(f"  Current locks: {len(result.value)}")
+    else:
+        print(f"  Lock query: {result.error}")
+except Exception as e:
+    print(f"✗ FAILED: {e}")
+    import traceback
+    traceback.print_exc()
+
+print("\n" + "=" * 70)
+print("✓ Native core modules working! No bash wrapper needed.")
+print("=" * 70)

@@ -149,21 +149,22 @@ class FetchPullHandler:
         self._start_pull_sequence()
 
     def display_last_fetch(self):
-        """Display the last fetch timestamp"""
+        """
+        Display the last fetch timestamp.
+        Sprint 5 Phase 1.2: Delegated to StatusWidget.
+        """
         last_fetch = settings.load_last_fetch_at()
         if last_fetch:
             # Parse ISO timestamp and format for display
             try:
                 dt = datetime.fromisoformat(last_fetch)
                 display_time = dt.strftime("%Y-%m-%d %H:%M:%S")
-                self._parent.last_fetch_label.setText(display_time)
-                self._parent._set_meta_label(self._parent.last_fetch_label, "#4db6ac")
             except (ValueError, AttributeError):
-                self._parent.last_fetch_label.setText(last_fetch)
-                self._parent._set_meta_label(self._parent.last_fetch_label, "#4db6ac")
+                display_time = last_fetch
         else:
-            self._parent.last_fetch_label.setText("(never)")
-            self._parent._set_meta_label(self._parent.last_fetch_label, "gray")
+            display_time = "(never)"
+        
+        self._parent._status_widget.update_last_fetch_time(display_time)
 
     def handle_fetch_result(self, job):
         """

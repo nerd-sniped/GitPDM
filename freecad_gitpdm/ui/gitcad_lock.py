@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """
 GitCAD Lock Handler Module
-Manages file locking UI and operations for GitCAD integration.
+Manages file locking UI and operations for GitPDM/GitCAD integration.
+
+Sprint 4: Updated to use native Python core modules instead of bash wrapper.
 """
 
 # Qt compatibility layer
@@ -17,14 +19,13 @@ except ImportError:
 
 import os
 from typing import Optional, List, Dict
+from pathlib import Path
 
 from freecad_gitpdm.core import log
+from freecad_gitpdm.core.lock_manager import LockManager, LockInfo
 from freecad_gitpdm.gitcad import (
-    GitCADWrapper,
     is_gitcad_initialized,
     check_gitcad_status,
-    get_locks,
-    LockInfo,
 )
 
 
@@ -54,23 +55,25 @@ class GitCADLockHandler:
         
         # State
         self._gitcad_available = False
-        self._gitcad_wrapper = None
+        self._lock_manager = None  # Sprint 4: Now uses native LockManager
         self._current_locks = {}  # Dict[str, LockInfo]
         self._current_username = None
 
     def check_gitcad_availability(self, repo_root: str) -> bool:
         """
-        Check if GitCAD is initialized in the repository.
+        Check if GitPDM/GitCAD is initialized in the repository.
+        
+        Sprint 4: Now uses native LockManager instead of GitCADWrapper.
         
         Args:
             repo_root: Path to repository root
             
         Returns:
-            bool: True if GitCAD is available
+            bool: True if GitPDM/GitCAD is available
         """
         if not repo_root:
             self._gitcad_available = False
-            self._gitcad_wrapper = None
+            self._lock_manager = None
             if hasattr(self._parent, '_update_gitcad_status'):
                 self._parent._update_gitcad_status()
             return False
@@ -78,9 +81,10 @@ class GitCADLockHandler:
         try:
             is_init = is_gitcad_initialized(repo_root)
             if is_init:
-                self._gitcad_wrapper = GitCADWrapper(repo_root)
+                # Initialize native LockManager (Sprint 4)
+                self._lock_manager = LockManager(Path(repo_root))
                 self._gitcad_available = True
-                log.info("GitCAD detected and initialized")
+                log.info("GitPDM/GitCAD detected and initialized (native core)")
                 
                 # Get current git user
                 self._current_username = self._git_client.get_config_value(
@@ -94,8 +98,8 @@ class GitCADLockHandler:
                 return True
             else:
                 self._gitcad_available = False
-                self._gitcad_wrapper = None
-                log.debug("GitCAD not initialized in this repository")
+                self._lock_manager = None
+                log.debug("GitPDM/GitCAD not initialized in this repository")
                 
                 # Update UI
                 if hasattr(self._parent, '_update_gitcad_status'):
@@ -103,9 +107,9 @@ class GitCADLockHandler:
                 
                 return False
         except Exception as e:
-            log.error(f"Error checking GitCAD availability: {e}")
+            log.error(f"Error checking GitPDM/GitCAD availability: {e}")
             self._gitcad_available = False
-            self._gitcad_wrapper = None
+            self._lock_manager = None
             
             # Update UI
             if hasattr(self._parent, '_update_gitcad_status'):
@@ -115,12 +119,12 @@ class GitCADLockHandler:
 
     def refresh_lock_status(self):
         """Refresh the current lock status from git LFS."""
-        if not self._gitcad_available or not self._gitcad_wrapper:
+        if not self._gitcad_available or not self._lock_manager:
             self._current_locks = {}
             return
         
         def _get_locks():
-            result = self._gitcad_wrapper.get_locks()
+            result = self._lock_manager.get_locks()
             if result.ok:
                 return result.value
             else:
@@ -136,8 +140,8 @@ class GitCADLockHandler:
 
     def _on_locks_refreshed(self, locks: List[LockInfo]):
         """Callback when lock status is refreshed."""
-        # Build dict for quick lookup
-        self._current_locks = {lock.path: lock for lock in locks}
+        # Build dict for quick lookup (use fcstd_path from LockInfo)
+        self._current_locks = {lock.fcstd_path: lock for lock in locks}
         log.debug(f"Lock status refreshed: {len(locks)} locked files")
         
         # Update UI
@@ -244,19 +248,19 @@ class GitCADLockHandler:
 
     def lock_file(self, file_path: str, force: bool = False):
         """
-        Lock a file using GitCAD.
+        Lock a file using native LockManager.
         
         Args:
             file_path: Repo-relative path to .FCStd file
             force: If True, force lock (steal from other user)
         """
-        if not self._gitcad_available or not self._gitcad_wrapper:
-            self._show_error("GitCAD not available", 
-                           "GitCAD is not initialized in this repository.")
+        if not self._gitcad_available or not self._lock_manager:
+            self._show_error("GitPDM not available", 
+                           "GitPDM/GitCAD is not initialized in this repository.")
             return
         
         def _do_lock():
-            result = self._gitcad_wrapper.lock_file(file_path, force=force)
+            result = self._lock_manager.lock_file(file_path, force=force)
             error_msg = result.error.message if result.error else "Unknown error"
             return {"success": result.ok, "message": result.value if result.ok else error_msg}
         
@@ -285,19 +289,19 @@ class GitCADLockHandler:
 
     def unlock_file(self, file_path: str, force: bool = False):
         """
-        Unlock a file using GitCAD.
+        Unlock a file using native LockManager.
         
         Args:
             file_path: Repo-relative path to .FCStd file
             force: If True, force unlock (break lock from other user)
         """
-        if not self._gitcad_available or not self._gitcad_wrapper:
-            self._show_error("GitCAD not available", 
-                           "GitCAD is not initialized in this repository.")
+        if not self._gitcad_available or not self._lock_manager:
+            self._show_error("GitPDM not available", 
+                           "GitPDM/GitCAD is not initialized in this repository.")
             return
         
         def _do_unlock():
-            result = self._gitcad_wrapper.unlock_file(file_path, force=force)
+            result = self._lock_manager.unlock_file(file_path, force=force)
             error_msg = result.error.message if result.error else "Unknown error"
             return {"success": result.ok, "message": result.value if result.ok else error_msg}
         

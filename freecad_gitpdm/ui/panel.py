@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 GitPDM Panel UI Module
-Sprint 2: Main dockable panel with git operations + fetch support
+Sprint 5 Phase 1: Refactored with modular components
 """
 
 # Qt compatibility layer - try PySide6 first, then PySide2
@@ -29,83 +29,12 @@ from freecad_gitpdm.ui.fetch_pull import FetchPullHandler
 from freecad_gitpdm.ui.commit_push import CommitPushHandler
 from freecad_gitpdm.ui.repo_validator import RepoValidationHandler
 from freecad_gitpdm.ui.branch_ops import BranchOperationsHandler
+from freecad_gitpdm.ui.components import DocumentObserver, StatusWidget, RepositoryWidget, ChangesWidget
 from freecad_gitpdm.export import exporter, mapper
 from freecad_gitpdm.core import paths as core_paths
 from freecad_gitpdm.core import publish
 
 
-class _DocumentObserver:
-    """Observer to detect document saves and trigger status refresh."""
-
-    def __init__(self, panel):
-        self._panel = panel
-        # Bind timer to the panel (Qt QObject) so it lives on the UI thread
-        self._refresh_timer = QtCore.QTimer(panel)
-        self._refresh_timer.setSingleShot(True)
-        self._refresh_timer.setInterval(500)
-        self._refresh_timer.timeout.connect(self._do_refresh)
-        log.debug("DocumentObserver created")
-
-    def slotFinishSaveDocument(self, doc, filename):
-        """Called after a document is saved."""
-        log.info(f"Document saved: {filename}")
-
-        if not self._panel._current_repo_root:
-            log.debug("No repo configured, skipping refresh")
-            return
-
-        try:
-            import os
-            import glob
-
-            filename = os.path.normpath(filename)
-            repo_root = os.path.normpath(self._panel._current_repo_root)
-
-            log.debug(f"Checking if {filename} is in {repo_root}")
-
-            if filename.startswith(repo_root):
-                log.info(f"Document saved in repo, scheduling refresh")
-
-                # Reset working directory to repo to ensure next Save As defaults correctly
-                self._panel._set_freecad_working_directory(repo_root)
-
-                # Stop/start the timer on its owning thread to avoid
-                # cross-thread timer operations (Qt enforces thread affinity)
-                try:
-                    QtCore.QMetaObject.invokeMethod(
-                        self._refresh_timer,
-                        "stop",
-                        QtCore.Qt.QueuedConnection,
-                    )
-                    QtCore.QMetaObject.invokeMethod(
-                        self._refresh_timer,
-                        "start",
-                        QtCore.Qt.QueuedConnection,
-                    )
-                except Exception as e:
-                    # Fallback: best-effort direct calls
-                    log.debug(f"Queued timer restart failed, using direct: {e}")
-                    try:
-                        self._refresh_timer.stop()
-                        self._refresh_timer.start()
-                    except Exception as e2:
-                        log.error(f"Failed to restart refresh timer: {e2}")
-                # Also schedule automatic preview generation for saved FCStd
-                self._panel._schedule_auto_preview_generation(filename)
-            else:
-                log.debug(f"Document outside repo, no refresh")
-        except Exception as e:
-            log.error(f"Error in save handler: {e}")
-
-    def _do_refresh(self):
-        """Execute deferred refresh after save."""
-        try:
-            if self._panel._current_repo_root:
-                log.info("Auto-refreshing status after save")
-                self._panel._refresh_status_views(self._panel._current_repo_root)
-                log.debug("Refresh complete")
-        except Exception as e:
-            log.error(f"Refresh after save failed: {e}")
 
 
 class GitPDMDockWidget(QtWidgets.QDockWidget):
@@ -198,12 +127,33 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         # Build UI sections
         self._build_view_toggle(main_layout)
-        self._build_git_check_section(main_layout)
-        self._build_repo_selector(main_layout)
+        
+        # StatusWidget (Sprint 5 Phase 1.2)
+        self._status_widget = StatusWidget(self, self._git_client, self._job_runner)
+        self._status_widget.status_updated.connect(self._on_status_widget_updated)
+        self._status_widget.refresh_requested.connect(self._on_status_refresh_requested)
+        self._status_widget.git_status_changed.connect(self._on_git_status_changed)
+        main_layout.addWidget(self._status_widget)
+        
+        # RepositoryWidget (Sprint 5 Phase 1.3)
+        self._repository_widget = RepositoryWidget(self, self._git_client, self._job_runner)
+        self._repository_widget.repository_changed.connect(self._on_repository_changed)
+        self._repository_widget.browse_requested.connect(self._on_browse_clicked)
+        self._repository_widget.clone_requested.connect(self._on_open_clone_repo_clicked)
+        self._repository_widget.new_repo_requested.connect(self._on_new_repo_clicked)
+        self._repository_widget.create_repo_requested.connect(self._on_create_repo_clicked)
+        self._repository_widget.connect_remote_requested.connect(self._on_connect_remote_clicked)
+        self._repository_widget.refresh_requested.connect(self._on_refresh_clicked)
+        main_layout.addWidget(self._repository_widget)
+        
         self._build_github_account_section(main_layout)
-        self._build_status_section(main_layout)
         self._build_branch_section(main_layout)
-        self._build_changes_section(main_layout)
+        
+        # ChangesWidget (Sprint 5 Phase 1.4)
+        self._changes_widget = ChangesWidget(self, self._git_client, self._job_runner)
+        self._changes_widget.stage_all_changed.connect(lambda _: self._update_button_states())
+        main_layout.addWidget(self._changes_widget)
+        
         self._build_buttons_section(main_layout)
         self._build_repo_browser_section(main_layout)
 
@@ -326,8 +276,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     def _deferred_initialization(self):
         """Run heavy initialization after panel is shown (Sprint PERF-2: fully async)."""
         try:
-            # Sprint PERF-2: Check git availability in background (immediate)
-            QtCore.QTimer.singleShot(10, self._check_git_available_async)
+            # Sprint 5 Phase 1.2: Delegate git check to StatusWidget
+            QtCore.QTimer.singleShot(10, self._status_widget.check_git_available)
 
             # Sprint PERF-2: Load saved repo path and validate in background (immediate)
             QtCore.QTimer.singleShot(20, self._load_saved_repo_path_async)
@@ -356,7 +306,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             import FreeCAD
 
             if self._doc_observer is None:
-                self._doc_observer = _DocumentObserver(self)
+                self._doc_observer = DocumentObserver(self)
                 FreeCAD.addDocumentObserver(self._doc_observer)
                 log.info("Document observer registered for auto-refresh")
             else:
@@ -387,6 +337,75 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 log.warning(f"Failed to unregister observer: {e}")
 
         super().closeEvent(event)
+    
+    # =========================================================================
+    # Property Accessors (Sprint 5 Phase 1: Delegate to widgets)
+    # =========================================================================
+    
+    @property
+    def repo_path_field(self):
+        """Access repository path field from RepositoryWidget."""
+        return self._repository_widget.repo_path_field
+    
+    @property
+    def changes_list(self):
+        """Access changes list from ChangesWidget."""
+        return self._changes_widget.changes_list
+    
+    @property
+    def stage_all_checkbox(self):
+        """Access stage all checkbox from ChangesWidget."""
+        return self._changes_widget.stage_all_checkbox
+    
+    @property
+    def validate_label(self):
+        """Access validation label from RepositoryWidget."""
+        return self._repository_widget.validate_label
+    
+    @property
+    def repo_root_label(self):
+        """Access repository root label from RepositoryWidget."""
+        return self._repository_widget.repo_root_label
+    
+    @property
+    def root_toggle_btn(self):
+        """Access root toggle button from RepositoryWidget."""
+        return self._repository_widget.root_toggle_btn
+    
+    @property
+    def repo_root_row(self):
+        """Access repo root row from RepositoryWidget."""
+        return self._repository_widget.repo_root_row
+    
+    @property
+    def browser_window_btn(self):
+        """Access browser window button from RepositoryWidget."""
+        return self._repository_widget.browser_window_btn
+    
+    @property
+    def branch_label(self):
+        """Access branch label from StatusWidget."""
+        return self._status_widget.branch_label
+    
+    @property
+    def working_tree_label(self):
+        """Access working tree label from StatusWidget."""
+        return self._status_widget.working_tree_label
+    
+    @property
+    def upstream_label(self):
+        """Access upstream label from StatusWidget."""
+        return self._status_widget.upstream_label
+    
+    @property
+    def ahead_behind_label(self):
+        """Access ahead/behind label from StatusWidget."""
+        return self._status_widget.ahead_behind_label
+    
+    @property
+    def last_fetch_label(self):
+        """Access last fetch label from StatusWidget."""
+        return self._status_widget.last_fetch_label
 
     def _schedule_auto_preview_generation(self, filename):
         """Best-effort automatic preview export after a save/close."""
@@ -451,201 +470,50 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         except Exception as e:
             log.warning(f"Failed to schedule auto preview: {e}")
 
-    def _build_git_check_section(self, layout):
+    def _on_status_widget_updated(self, status_info):
         """
-        Build the git availability check section
-
+        Callback when StatusWidget updates status.
+        
         Args:
-            layout: Parent layout to add widgets to
+            status_info: Dict with upstream, ahead, behind counts
         """
-        group = QtWidgets.QGroupBox("System")
-        group_layout = QtWidgets.QFormLayout()
-        group_layout.setContentsMargins(6, 4, 6, 4)
-        group_layout.setVerticalSpacing(4)
-        group.setLayout(group_layout)
-
-        # Git availability (compact)
-        self.git_label = QtWidgets.QLabel("● Checking…")
-        self.git_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        self.git_label.setStyleSheet("color: orange;")
-        group_layout.addRow("Git", self.git_label)
-
-        layout.addWidget(group)
-        # Hide the System section per request
-        group.setVisible(False)
-        self._group_git_check = group
-
-    def _check_git_available(self):
-        """Check if git is available on system (synchronous - for backward compatibility)."""
-        is_available = self._git_client.is_git_available()
-        if is_available:
-            version = self._git_client.git_version()
-            self.git_label.setText(f"● OK ({version})")
-            self.git_label.setStyleSheet("color: green;")
-        else:
-            self.git_label.setText("● Not found")
-            self.git_label.setStyleSheet("color: red;")
-            log.warning("Git not available on PATH")
-
-    def _check_git_available_async(self):
-        """Check if git is available on system (Sprint PERF-2: async version)."""
-
-        def _check_git():
-            is_available = self._git_client.is_git_available()
-            version = self._git_client.git_version() if is_available else None
-            return {"is_available": is_available, "version": version}
-
-        self._job_runner.run_callable(
-            "check_git",
-            _check_git,
-            on_success=self._on_git_check_complete,
-            on_error=lambda e: log.error(f"Git check error: {e}"),
-        )
-
-    def _on_git_check_complete(self, result):
-        """Callback when async git check completes (Sprint PERF-2)."""
-        is_available = result.get("is_available")
-        version = result.get("version")
-
-        if is_available:
-            self.git_label.setText(f"● OK ({version})")
-            self.git_label.setStyleSheet("color: green;")
-        else:
-            self.git_label.setText("● Not found")
-            self.git_label.setStyleSheet("color: red;")
-            log.warning("Git not available on PATH")
-
-    def _build_repo_selector(self, layout):
+        # Update internal state for button logic
+        self._upstream_ref = status_info.get("upstream")
+        self._ahead_count = status_info.get("ahead", 0)
+        self._behind_count = status_info.get("behind", 0)
+        
+        # Trigger button state update
+        self._defer_button_update()
+    
+    def _on_status_refresh_requested(self):
         """
-        Build the repository selector section
-
+        Callback when StatusWidget requests refresh.
+        Sprint 5 Phase 1.2: Triggered by StatusWidget refresh button.
+        """
+        if self._current_repo_root:
+            self._refresh_status_views(self._current_repo_root)
+    
+    def _on_git_status_changed(self, is_available):
+        """
+        Callback when git availability changes.
+        
         Args:
-            layout: Parent layout to add widgets to
+            is_available: True if git is available
         """
-        group = QtWidgets.QGroupBox("Repository")
-        group_layout = QtWidgets.QVBoxLayout()
-        group_layout.setContentsMargins(6, 3, 6, 3)
-        group_layout.setSpacing(2)
-        group.setLayout(group_layout)
-
-        # Repo path row
-        path_layout = QtWidgets.QHBoxLayout()
-        path_layout.setSpacing(4)
-        self.repo_path_field = QtWidgets.QLineEdit()
-        self.repo_path_field.setPlaceholderText("Select your project folder...")
-        self.repo_path_field.setToolTip(
-            "The folder where your FreeCAD project files are stored\n"
-            "(Git term: 'repository' or 'repo' - the project folder tracked by Git)"
-        )
-        self.repo_path_field.editingFinished.connect(
-            self._on_repo_path_editing_finished
-        )
-        path_layout.addWidget(self.repo_path_field)
-
-        browse_btn = QtWidgets.QPushButton("Browse...")
-        browse_btn.setToolTip(
-            "Select an existing project folder on your computer\n"
-            "(Git term: open a local 'repository')"
-        )
-        browse_btn.clicked.connect(self._on_browse_clicked)
-        path_layout.addWidget(browse_btn)
-
-        clone_btn = QtWidgets.QPushButton("Join Team Project…")
-        clone_btn.setToolTip(
-            "Download a project from GitHub to work on with your team\n"
-            "(Git term: 'clone' - makes a local copy of a remote repository)"
-        )
-        clone_btn.clicked.connect(self._on_open_clone_repo_clicked)
-        path_layout.addWidget(clone_btn)
-
-        new_repo_btn = QtWidgets.QPushButton("Start New Project…")
-        new_repo_btn.setToolTip(
-            "Create a brand new project and store it on GitHub\n"
-            "(Git term: 'init' + create remote 'repository')"
-        )
-        new_repo_btn.clicked.connect(self._on_new_repo_clicked)
-        path_layout.addWidget(new_repo_btn)
-
-        group_layout.addLayout(path_layout)
-
-        # Repo root label (resolved path, read-only)
-        # Root details (collapsed by default)
-        self.root_toggle_btn = QtWidgets.QToolButton()
-        self.root_toggle_btn.setText("Show root")
-        self.root_toggle_btn.setArrowType(QtCore.Qt.RightArrow)
-        self.root_toggle_btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
-        self.root_toggle_btn.setCheckable(True)
-        self.root_toggle_btn.setEnabled(False)
-        self.root_toggle_btn.toggled.connect(self._on_root_toggle)
-        # Hide the Show root dropdown entirely
-        self.root_toggle_btn.setVisible(False)
-        group_layout.addWidget(self.root_toggle_btn)
-
-        self.repo_root_row = QtWidgets.QWidget()
-        repo_root_layout = QtWidgets.QHBoxLayout()
-        repo_root_layout.setContentsMargins(0, 0, 0, 0)
-        repo_root_layout.setSpacing(4)
-        self.repo_root_row.setLayout(repo_root_layout)
-
-        repo_root_layout.addWidget(QtWidgets.QLabel("Root:"))
-        self.repo_root_label = QtWidgets.QLabel("—")
-        self.repo_root_label.setStyleSheet("color: gray; font-size: 10px;")
-        self.repo_root_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        self.repo_root_label.setWordWrap(True)
-        repo_root_layout.addWidget(self.repo_root_label)
-        self.repo_root_row.setVisible(False)
-        group_layout.addWidget(self.repo_root_row)
-
-        # Validation status row
-        validation_layout = QtWidgets.QHBoxLayout()
-        validation_layout.setSpacing(4)
-        # Hide the Validate row
-        self.validate_caption = QtWidgets.QLabel("Validate:")
-        validation_layout.addWidget(self.validate_caption)
-        self.validate_label = QtWidgets.QLabel("Not checked")
-        self.validate_label.setStyleSheet("color: gray; font-style: italic;")
-        validation_layout.addWidget(self.validate_label)
-        validation_layout.addStretch()
-
-        self.create_repo_btn = QtWidgets.QPushButton("Create Repo")
-        self.create_repo_btn.setMinimumWidth(130)
-        self.create_repo_btn.setSizePolicy(
-            QtWidgets.QSizePolicy.Expanding,
-            QtWidgets.QSizePolicy.Preferred,
-        )
-        self.create_repo_btn.clicked.connect(self._on_create_repo_clicked)
-        self.create_repo_btn.setVisible(False)
-        validation_layout.addWidget(self.create_repo_btn)
-
-        self.connect_remote_btn = QtWidgets.QPushButton("Connect Remote")
-        self.connect_remote_btn.setMinimumWidth(130)
-        self.connect_remote_btn.setSizePolicy(
-            QtWidgets.QSizePolicy.Expanding,
-            QtWidgets.QSizePolicy.Preferred,
-        )
-        self.connect_remote_btn.clicked.connect(self._on_connect_remote_clicked)
-        self.connect_remote_btn.setVisible(False)
-        validation_layout.addWidget(self.connect_remote_btn)
-
-        refresh_btn = QtWidgets.QPushButton("Refresh Status")
-        refresh_btn.setMinimumWidth(130)
-        refresh_btn.setSizePolicy(
-            QtWidgets.QSizePolicy.Expanding,
-            QtWidgets.QSizePolicy.Preferred,
-        )
-        refresh_btn.clicked.connect(self._on_refresh_clicked)
-        # Hide refresh button
-        refresh_btn.setVisible(False)
-        validation_layout.addWidget(refresh_btn)
-
-        # Hide Validate caption and value
-        self.validate_caption.setVisible(False)
-        self.validate_label.setVisible(False)
-        group_layout.addLayout(validation_layout)
-
-        layout.addWidget(group)
-        self._group_repo_selector = group
-
+        if not is_available:
+            log.warning("Git not available on PATH")
+    
+    def _on_repository_changed(self, path):
+        """
+        Callback when repository path changes.
+        Sprint 5 Phase 1.3: Handle RepositoryWidget path changes.
+        
+        Args:
+            path: New repository path
+        """
+        # Trigger validation
+        self._validate_repo_path_async()
+    
     def _build_github_account_section(self, layout):
         """
         Build the GitHub Account section (Sprint OAUTH-1)
@@ -714,100 +582,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         layout.addWidget(group)
         self._group_github_account = group
-
-    def _build_status_section(self, layout):
-        """
-        Build the status information section
-
-        Args:
-            layout: Parent layout to add widgets to
-        """
-        group = QtWidgets.QGroupBox("Status")
-        group_layout = QtWidgets.QVBoxLayout()
-        group_layout.setContentsMargins(6, 4, 6, 4)
-        group_layout.setSpacing(4)
-        group.setLayout(group_layout)
-
-        # Operation status header (shows Pulling… / Fetching… / Synced)
-        header_layout = QtWidgets.QHBoxLayout()
-        header_layout.setSpacing(4)
-        header_layout.addWidget(QtWidgets.QLabel("Operation:"))
-        self.operation_status_label = QtWidgets.QLabel("Ready")
-        self.operation_status_label.setStyleSheet("color: gray; font-size: 9px;")
-        self.operation_status_label.setAlignment(QtCore.Qt.AlignRight)
-        header_layout.addWidget(self.operation_status_label, 1)
-        group_layout.addLayout(header_layout)
-
-        # Grid-style fields in 3 columns
-        grid_layout = QtWidgets.QGridLayout()
-        grid_layout.setContentsMargins(0, 0, 0, 0)
-        grid_layout.setHorizontalSpacing(8)
-        grid_layout.setVerticalSpacing(2)
-
-        def add_field(row, col, title, value_label):
-            caption = QtWidgets.QLabel(title)
-            self._set_meta_label(caption, "gray")
-            grid_layout.addWidget(caption, row * 2, col)
-            grid_layout.addWidget(value_label, row * 2 + 1, col)
-
-        # Value labels
-        self.working_tree_label = QtWidgets.QLabel("—")
-        self.working_tree_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        self.working_tree_label.setToolTip(
-            "Files you've modified but haven't saved as a version yet\n"
-            "(Git term: 'working tree status' or 'dirty/clean state')"
-        )
-        self._set_strong_label(self.working_tree_label, "black")
-
-        self.ahead_behind_label = QtWidgets.QLabel("—")
-        self.ahead_behind_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        self.ahead_behind_label.setToolTip(
-            "How many changes you need to share or get from your team\n"
-            "(Git term: 'ahead/behind' - commits to push/pull)"
-        )
-        self._set_strong_label(self.ahead_behind_label, "black")
-
-        self.branch_label = QtWidgets.QLabel("—")
-        self.branch_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        self.branch_label.setToolTip(
-            "The work version you're currently using\n"
-            "(Git term: 'current branch' - active line of development)"
-        )
-        self._set_meta_label(self.branch_label, "gray")
-
-        self.upstream_label = QtWidgets.QLabel("—")
-        self.upstream_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        self.upstream_label.setToolTip(
-            "The GitHub version your work is synced with\n"
-            "(Git term: 'upstream' or 'tracking branch' - remote reference)"
-        )
-        self._set_meta_label(self.upstream_label, "gray")
-
-        self.last_fetch_label = QtWidgets.QLabel("—")
-        self.last_fetch_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        self.last_fetch_label.setToolTip(
-            "When you last checked for updates from your team\n"
-            "(Git term: 'last fetch time')"
-        )
-        self._set_meta_label(self.last_fetch_label, "gray")
-
-        add_field(0, 0, "Your Changes", self.working_tree_label)
-        add_field(0, 1, "Sync Status", self.ahead_behind_label)
-        add_field(0, 2, "Work Version", self.branch_label)
-        add_field(1, 0, "GitHub Version", self.upstream_label)
-        add_field(1, 1, "Last checked", self.last_fetch_label)
-
-        group_layout.addLayout(grid_layout)
-
-        # Error/message area (Sprint 2)
-        self.status_message_label = QtWidgets.QLabel("")
-        self.status_message_label.setWordWrap(True)
-        self.status_message_label.setStyleSheet("color: red; font-size: 10px;")
-        self.status_message_label.hide()
-        group_layout.addWidget(self.status_message_label)
-
-        layout.addWidget(group)
-        self._group_status = group
 
     def _build_branch_section(self, layout):
         """
@@ -889,53 +663,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # Hide the entire Branch section per request
         group.setVisible(False)
         self._group_branch = group
-
-    def _build_changes_section(self, layout):
-        """
-        Build the changes list section
-
-        Args:
-            layout: Parent layout to add widgets to
-        """
-        group = QtWidgets.QGroupBox("Changes")
-        group_layout = QtWidgets.QVBoxLayout()
-        group_layout.setContentsMargins(6, 4, 6, 4)
-        group_layout.setSpacing(4)
-        group.setLayout(group_layout)
-
-        info_label = QtWidgets.QLabel(
-            "These files have been modified since your last save checkpoint."
-        )
-        info_label.setWordWrap(True)
-        info_label.setStyleSheet("color: gray; font-style: italic;")
-        info_label.setToolTip(
-            "Files that you've changed and haven't saved as a version yet\n"
-            "(Git term: 'working tree' or 'unstaged changes' - modified but not committed)"
-        )
-        group_layout.addWidget(info_label)
-
-        self.changes_list = QtWidgets.QListWidget()
-        # Reduce the size of the changes list
-        self.changes_list.setMaximumHeight(50)
-        self.changes_list.setEnabled(False)
-        group_layout.addWidget(self.changes_list)
-
-        stage_layout = QtWidgets.QHBoxLayout()
-        stage_layout.setSpacing(4)
-        self.stage_all_checkbox = QtWidgets.QCheckBox("Include all changed files")
-        self.stage_all_checkbox.setChecked(True)
-        self.stage_all_checkbox.setEnabled(False)
-        self.stage_all_checkbox.setToolTip(
-            "When saving, include all files you've modified (recommended)\n"
-            "(Git term: 'stage' or 'add' - marks files to include in the next commit)"
-        )
-        self.stage_all_checkbox.stateChanged.connect(self._update_button_states)
-        stage_layout.addWidget(self.stage_all_checkbox)
-        stage_layout.addStretch()
-        group_layout.addLayout(stage_layout)
-
-        layout.addWidget(group)
-        self._group_changes = group
 
     def _build_buttons_section(self, layout):
         """
@@ -1347,128 +1074,22 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
     def _update_upstream_info(self, repo_root):
         """
-        Update upstream ref and ahead/behind counts (async via job_runner).
-        Uses tracking upstream (@{u}) if available, otherwise falls back to default.
+        Update upstream ref and ahead/behind counts (delegated to StatusWidget).
+        Sprint 5 Phase 1.2: Simplified - StatusWidget handles UI updates.
 
         Args:
             repo_root: str - repository root path
         """
-        # Sprint PERF-1: Move to background to avoid blocking UI
         if not repo_root:
             return
-
-        # Prevent concurrent upstream updates
-        if self._is_updating_upstream:
-            log.debug("Upstream update already in progress, skipping")
-            return
-
-        self._is_updating_upstream = True
-
+        
         # Check remote status (fast, local operation)
         self._cached_has_remote = self._git_client.has_remote(
             repo_root, self._remote_name
         )
-
-        if not self._cached_has_remote:
-            self._is_updating_upstream = False
-            self._ahead_count = 0
-            self._behind_count = 0
-            self.upstream_label.setText("(no remote)")
-            self._set_meta_label(self.upstream_label, "gray")
-            self.ahead_behind_label.setText("(unknown)")
-            self._set_strong_label(self.ahead_behind_label, "gray")
-            self._upstream_ref = None
-            self._update_button_states()
-            return
-
-        # Show calculating state
-        self.ahead_behind_label.setText("Calculating…")
-        self._set_strong_label(self.ahead_behind_label, "gray")
-
-        # Run ahead/behind calculation in background
-        def _fetch_upstream():
-            ab_result = self._git_client.get_ahead_behind_with_upstream(repo_root)
-            return ab_result
-
-        self._job_runner.run_callable(
-            "update_upstream",
-            _fetch_upstream,
-            on_success=self._on_upstream_update_complete,
-            on_error=self._on_upstream_update_error,
-        )
-
-    def _on_upstream_update_complete(self, ab_result):
-        """Callback when async upstream update completes (Sprint PERF-1)."""
-        try:
-            self._is_updating_upstream = False
-
-            upstream_ref = ab_result.get("upstream")
-
-            # Log upstream status
-            msg = f"Upstream: {upstream_ref if upstream_ref else '(not set)'}"
-            log.info(msg)
-
-            if not upstream_ref:
-                # No upstream configured for this branch
-                self._ahead_count = 0
-                self._behind_count = 0
-                self.upstream_label.setText("(not set)")
-                self._set_meta_label(self.upstream_label, "orange")
-                self.ahead_behind_label.setText("(unknown)")
-                self._set_strong_label(self.ahead_behind_label, "gray")
-                self._upstream_ref = None
-                self._update_button_states()
-                return
-
-            # Display upstream
-            self.upstream_label.setText(upstream_ref)
-            self._set_meta_label(self.upstream_label, "#4db6ac")
-            self._upstream_ref = upstream_ref
-
-            # Display ahead/behind
-            if ab_result["ok"]:
-                ahead = ab_result["ahead"]
-                behind = ab_result["behind"]
-
-                self._ahead_count = ahead
-                self._behind_count = behind
-
-                if ahead == 0 and behind == 0:
-                    ab_text = "Up to date"
-                elif ahead > 0 and behind > 0:
-                    ab_text = f"{ahead} to share | {behind} to get"
-                elif ahead > 0:
-                    ab_text = f"{ahead} to share \u2191"
-                else:
-                    ab_text = f"{behind} to get \u2193"
-
-                if ahead == 0 and behind == 0:
-                    self._set_strong_label(self.ahead_behind_label, "green")
-                elif behind > 0:
-                    self._set_strong_label(self.ahead_behind_label, "orange")
-                else:
-                    self._set_strong_label(self.ahead_behind_label, "#4db6ac")
-
-                self.ahead_behind_label.setText(ab_text)
-            else:
-                self.ahead_behind_label.setText("(error)")
-                self._set_strong_label(self.ahead_behind_label, "red")
-                if ab_result["error"]:
-                    log.debug(f"Ahead/behind error: {ab_result['error']}")
-
-            self._update_button_states()
-            log.debug("Upstream update complete")
-        except Exception as e:
-            log.error(f"Error processing upstream update result: {e}")
-            self._is_updating_upstream = False
-
-    def _on_upstream_update_error(self, error):
-        """Callback when async upstream update fails (Sprint PERF-1)."""
-        self._is_updating_upstream = False
-        log.warning(f"Upstream update error: {error}")
-        self.ahead_behind_label.setText("(error)")
-        self._set_strong_label(self.ahead_behind_label, "red")
-        self._update_button_states()
+        
+        # Delegate to StatusWidget
+        self._status_widget.update_upstream_info(repo_root)
 
     # ========== Fetch/Pull Operations (Sprint 4: Delegated to FetchPullHandler) ==========
     # Fetch and pull operations fully delegated to self._fetch_pull handler
@@ -1599,27 +1220,21 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
     def _show_status_message(self, message, is_error=True):
         """
-        Show a status message in the status section
+        Show a status message in the status section.
+        Sprint 5 Phase 1.2: Delegated to StatusWidget.
 
         Args:
             message: str - message to display
             is_error: bool - whether this is an error message
         """
-        if message:
-            self.status_message_label.setText(message)
-            if is_error:
-                self.status_message_label.setStyleSheet("color: red; font-size: 10px;")
-            else:
-                self.status_message_label.setStyleSheet(
-                    "color: #4db6ac; font-size: 10px;"
-                )
-            self.status_message_label.show()
-        else:
-            self.status_message_label.hide()
+        self._status_widget.show_status_message(message, is_error)
 
     def _clear_status_message(self):
-        """Clear the status message"""
-        self.status_message_label.hide()
+        """
+        Clear the status message.
+        Sprint 5 Phase 1.2: Delegated to StatusWidget.
+        """
+        self._status_widget.clear_status_message()
 
     # --- Repository browser window/dock ---
 
@@ -1916,28 +1531,19 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
     def _display_working_tree_status(self, status):
         """
-        Display working tree status in UI
+        Display working tree status in UI.
+        Sprint 5 Phase 1.2: Delegated to StatusWidget.
 
         Args:
             status: dict - status summary from GitClient
         """
-        if status["is_clean"]:
-            self.working_tree_label.setText("No changes")
-            self._set_strong_label(self.working_tree_label, "green")
-        else:
-            parts = []
-            if status["modified"] > 0:
-                parts.append(f"{status['modified']} modified")
-            if status["added"] > 0:
-                parts.append(f"{status['added']} new")
-            if status["deleted"] > 0:
-                parts.append(f"{status['deleted']} deleted")
-            if status["untracked"] > 0:
-                parts.append(f"{status['untracked']} unsaved")
-
-            status_str = " | ".join(parts)
-            self.working_tree_label.setText(status_str)
-            self._set_strong_label(self.working_tree_label, "orange")
+        file_count = (
+            status.get("modified", 0)
+            + status.get("added", 0)
+            + status.get("deleted", 0)
+            + status.get("untracked", 0)
+        )
+        self._status_widget.update_working_tree_status(file_count)
 
     def _refresh_status_views(self, repo_root):
         """Refresh working tree status and changes list (async via job_runner)."""
@@ -1999,58 +1605,11 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._update_button_states()
 
     def _populate_changes_list(self):
-        """Update changes list widget with current file statuses using friendly labels."""
-        self.changes_list.clear()
-
-        if not self._file_statuses:
-            return
-
-        for entry in self._file_statuses:
-            # Convert Git status codes to user-friendly text with icons
-            status_text = self._friendly_status_text(entry.x, entry.y)
-            text = f"{status_text} {entry.path}"
-            self.changes_list.addItem(text)
-
-    def _friendly_status_text(self, x, y):
         """
-        Convert Git status codes to friendly text with visual indicators.
-
-        Args:
-            x: index status character
-            y: working tree status character
-
-        Returns:
-            str: Friendly status text with icon/emoji
+        Update changes list widget with current file statuses.
+        Sprint 5 Phase 1.4: Delegated to ChangesWidget.
         """
-        # Handle common two-character combinations first
-        code = f"{x}{y}"
-
-        # Modified in working tree
-        if code in [" M", "MM", "AM"]:
-            return "📝 Modified"
-
-        # New file (untracked or added)
-        if code in ["??", "A ", "AM"]:
-            return "➕ New"
-
-        # Deleted
-        if code in [" D", "D ", "AD"]:
-            return "➖ Deleted"
-
-        # Renamed
-        if code in ["R ", "RM"]:
-            return "📋 Renamed"
-
-        # Copied
-        if code in ["C ", "CM"]:
-            return "📋 Copied"
-
-        # Updated but unmerged (conflict)
-        if code in ["UU", "AA", "DD"]:
-            return "⚠️ Conflict"
-
-        # Default: show the code if we don't recognize it
-        return f"[{code}]"
+        self._changes_widget.update_changes(self._file_statuses)
 
     def _on_workflow_changed(self):
         """Handle workflow selection change."""

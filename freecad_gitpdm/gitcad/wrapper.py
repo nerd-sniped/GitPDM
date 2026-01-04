@@ -1,8 +1,21 @@
 # -*- coding: utf-8 -*-
 """
-GitCAD Script Wrapper
-Provides Python interface to GitCAD's bash scripts and tools.
-Handles platform differences for bash execution.
+GitCAD Script Wrapper (DEPRECATED)
+
+⚠️ DEPRECATION WARNING ⚠️
+This module is deprecated as of Sprint 3 (January 2026).
+The bash wrapper layer has been replaced with native Python implementations.
+
+Please migrate to the native core modules:
+- Use freecad_gitpdm.core.fcstd_tool for export/import operations
+- Use freecad_gitpdm.core.lock_manager for lock operations
+- Use freecad_gitpdm.core.config_manager for configuration
+
+This wrapper will be removed in a future release.
+
+Original Purpose:
+  Provided Python interface to GitCAD's bash scripts and tools.
+  Handled platform differences for bash execution.
 """
 
 from __future__ import annotations
@@ -11,6 +24,7 @@ import subprocess
 import sys
 import os
 import glob
+import warnings
 from pathlib import Path
 from typing import Optional, List, Tuple
 from dataclasses import dataclass
@@ -143,35 +157,64 @@ def _get_gitcad_paths(repo_root: str) -> Optional[GitCADPaths]:
 
 def is_gitcad_initialized(repo_root: str) -> bool:
     """
-    Check if GitCAD is initialized in the repository.
+    Check if GitPDM/GitCAD is initialized in the repository.
+    
+    ⚠️ SIMPLIFIED IN SPRINT 4: Now only checks for config.json.
+    Previously checked for bash scripts, which is no longer necessary.
+    
+    Recommended alternative:
+        from freecad_gitpdm.core.config_manager import has_config
+        has_config(repo_root)
     
     Args:
         repo_root: Path to repository root
         
     Returns:
-        bool: True if GitCAD automation directory exists
+        bool: True if config.json exists in FreeCAD_Automation directory
     """
-    paths = _get_gitcad_paths(repo_root)
-    if paths is None:
-        return False
-
-    # Check for key components
-    return (
-        paths.automation_dir.exists()
-        and paths.fcstd_tool.exists()
-        and paths.init_script.exists()
-    )
+    # Simplified: just check for config.json
+    from freecad_gitpdm.core.config_manager import has_config
+    return has_config(repo_root)
 
 
 class GitCADWrapper:
     """
     Wrapper for executing GitCAD bash scripts from Python.
     Handles platform differences and provides high-level interface.
+    
+    ⚠️ DEPRECATED ⚠️
+    This class is deprecated as of Sprint 3 (January 2026).
+    The bash wrapper layer has been replaced with native Python implementations.
+    
+    Migration Guide:
+    ---------------
+    
+    OLD CODE:
+        from freecad_gitpdm.gitcad import GitCADWrapper
+        wrapper = GitCADWrapper(repo_root)
+        wrapper.export_fcstd(file_path)
+    
+    NEW CODE:
+        from freecad_gitpdm.core.fcstd_tool import export_fcstd
+        from freecad_gitpdm.core.config_manager import load_config
+        
+        config = load_config(repo_root)
+        export_fcstd(repo_root, file_path, config)
+    
+    For lock operations:
+        from freecad_gitpdm.core.lock_manager import (
+            lock_file, unlock_file, get_locks
+        )
+    
+    This wrapper will be removed in a future release.
     """
 
     def __init__(self, repo_root: str):
         """
         Initialize wrapper for a repository.
+        
+        ⚠️ DEPRECATED: Use native core modules instead.
+        See class docstring for migration guide.
         
         Args:
             repo_root: Path to repository root
@@ -179,6 +222,12 @@ class GitCADWrapper:
         Raises:
             ValueError: If GitCAD not found in repository
         """
+        warnings.warn(
+            "GitCADWrapper is deprecated. Use native core modules instead. "
+            "See freecad_gitpdm.core.fcstd_tool, lock_manager, and config_manager.",
+            DeprecationWarning,
+            stacklevel=2
+        )
         self.repo_root = Path(repo_root).resolve()
         self.paths = _get_gitcad_paths(str(self.repo_root))
 
