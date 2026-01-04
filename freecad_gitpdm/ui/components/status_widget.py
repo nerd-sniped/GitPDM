@@ -235,7 +235,7 @@ class StatusWidget(BaseWidget):
             
             ab_result = {"ok": False, "ahead": 0, "behind": 0, "error": None}
             if upstream_ref:
-                ab_result = self._git_client.get_ahead_behind(repo_root, upstream_ref)
+                ab_result = self._git_client.get_ahead_behind_with_upstream(repo_root)
             
             return {"upstream_ref": upstream_ref, "ab_result": ab_result}
         

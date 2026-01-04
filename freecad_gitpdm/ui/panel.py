@@ -378,9 +378,14 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         return self._repository_widget.repo_root_row
     
     @property
-    def browser_window_btn(self):
-        """Access browser window button from RepositoryWidget."""
-        return self._repository_widget.browser_window_btn
+    def create_repo_btn(self):
+        """Access create repo button from RepositoryWidget."""
+        return self._repository_widget.create_repo_btn
+    
+    @property
+    def connect_remote_btn(self):
+        """Access connect remote button from RepositoryWidget."""
+        return self._repository_widget.connect_remote_btn
     
     @property
     def branch_label(self):
@@ -483,7 +488,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._behind_count = status_info.get("behind", 0)
         
         # Trigger button state update
-        self._defer_button_update()
+        self._update_button_states()
     
     def _on_status_refresh_requested(self):
         """
