@@ -566,7 +566,7 @@ class GitHubAuthHandler:
             from freecad.gitpdm.github.identity import fetch_viewer_identity
             
             host = settings.load_github_host()
-            temp_client = GitHubApiClient(host, token_response.access_token)
+            temp_client = GitHubApiClient(host, token_response.access_token, "GitPDM/1.0")
             identity_result = fetch_viewer_identity(temp_client)
             
             if not identity_result.ok or not identity_result.login:
