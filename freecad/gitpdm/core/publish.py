@@ -40,8 +40,9 @@ class PublishCoordinator:
     Keeps UI responsive by yielding between steps.
     """
 
-    def __init__(self, git_client: client.GitClient):
+    def __init__(self, git_client: client.GitClient, lock_handler=None):
         self.git = git_client
+        self.lock_handler = lock_handler
         self.current_step = PublishStep.PRECHECK
         self.abort_requested = False
 
@@ -160,6 +161,25 @@ class PublishCoordinator:
         Stage source + artifacts.
         """
         self.current_step = PublishStep.STAGE
+        
+        # SECURITY: Check for lock violations before staging
+        if self.lock_handler and hasattr(self.lock_handler, '_available') and self.lock_handler._available:
+            lock_handler = self.lock_handler
+            if lock_handler._current_locks:
+                # Get source FCStd file to check
+                from pathlib import Path
+                src_path = Path(source_path)
+                if src_path.suffix.lower() == '.fcstd':
+                    src_rel_path = core_paths.to_repo_rel(source_path, repo_root)
+                    if src_rel_path:
+                        lock_info = lock_handler._current_locks.get(src_rel_path)
+                        if lock_info and lock_info.owner != lock_handler._current_username:
+                            return PublishResult(
+                                ok=False,
+                                step=PublishStep.STAGE,
+                                message=f"Cannot publish: {src_rel_path} is locked by {lock_info.owner}.\n\nYou must either:\n  • Wait for the lock to be released\n  • Save your changes to a new file\n  • Coordinate with {lock_info.owner}\n\nThis prevents merge conflicts and protects collaborative work.",
+                                details={"locked_by": lock_info.owner, "file": src_rel_path}
+                            )
 
         paths_to_stage = []
 

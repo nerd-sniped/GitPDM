@@ -1845,7 +1845,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         progress.show()
         QtWidgets.QApplication.processEvents()
 
-        coordinator = publish.PublishCoordinator(self._git_client)
+        # Pass lock_handler for lock validation
+        lock_handler = self._lock_handler if hasattr(self, '_lock_handler') else None
+        coordinator = publish.PublishCoordinator(self._git_client, lock_handler=lock_handler)
 
         # Step 1: Precheck
         progress.setLabelText("Running preflight checks…")
@@ -2074,7 +2076,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     def _on_refresh_locks_clicked(self):
         """Handle Refresh Locks button click."""
         if hasattr(self, '_lock_handler'):
-            self._lock_handler.refresh_lock_status()
+            # Refresh username first (in case GitHub account changed)
+            self._lock_handler.refresh_username()
+            # Then refresh locks (username refresh already calls this, but be explicit)
             self._show_status_message("Refreshing lock status...")
     
     def _on_config_gitcad_clicked(self):

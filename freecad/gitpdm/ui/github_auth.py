@@ -216,6 +216,13 @@ class GitHubAuthHandler:
 
             # Update UI
             self.update_ui_state()
+            
+            # Refresh lock handler username (now using git config instead of GitHub)
+            if hasattr(self.panel, "_lock_handler") and self.panel._lock_handler:
+                try:
+                    self.panel._lock_handler.refresh_username()
+                except Exception as refresh_err:
+                    log.warning(f"Failed to refresh lock handler username: {refresh_err}")
 
             # Show success message
             QtWidgets.QMessageBox.information(
@@ -622,6 +629,20 @@ class GitHubAuthHandler:
                 QtCore.QTimer.singleShot(50, self.verify_identity_async)
             except Exception:
                 pass
+            
+            # Refresh lock handler username (now using new GitHub account)
+            # Delay to allow identity verification to complete first
+            if hasattr(self.panel, "_lock_handler") and self.panel._lock_handler:
+                try:
+                    def _delayed_lock_refresh():
+                        try:
+                            self.panel._lock_handler.refresh_username()
+                            log.info("Lock handler refreshed after GitHub connection")
+                        except Exception as e:
+                            log.warning(f"Failed to refresh lock handler: {e}")
+                    QtCore.QTimer.singleShot(500, _delayed_lock_refresh)
+                except Exception as refresh_err:
+                    log.warning(f"Failed to schedule lock handler refresh: {refresh_err}")
 
     def _on_token_poll_error(self, error):
         """Called if token polling fails."""
@@ -741,6 +762,13 @@ class GitHubAuthHandler:
             self.panel._set_strong_label(self.panel.github_status_label, "green")
             self.panel.github_refresh_btn.setEnabled(True)
             self.update_ui_state()
+            
+            # Refresh lock handler username after identity verification
+            if hasattr(self.panel, "_lock_handler") and self.panel._lock_handler:
+                try:
+                    self.panel._lock_handler.refresh_username()
+                except Exception as refresh_err:
+                    log.warning(f"Failed to refresh lock handler username: {refresh_err}")
         except Exception as e:
             log.error_safe("Identity result handling failed", e)
             self.panel.github_refresh_btn.setEnabled(True)

@@ -47,6 +47,59 @@ class CommitPushHandler:
         self._is_committing = False
         self._is_pushing = False
         self._pending_commit_message = ""
+    
+    def _check_lock_violations(self):
+        """
+        Check if any staged files are locked by another user.
+        
+        Returns:
+            tuple: (has_violations: bool, error_message: str, locked_files: list)
+        """
+        if not hasattr(self._parent, '_lock_handler') or not self._parent._lock_handler:
+            return (False, "", [])
+        
+        lock_handler = self._parent._lock_handler
+        if not lock_handler._available or not lock_handler._current_locks:
+            return (False, "", [])
+        
+        # Get list of staged FCStd files
+        try:
+            result = self._git_client._run_command(
+                [self._git_client._get_git_command(), "-C", self._parent._current_repo_root, 
+                 "diff", "--cached", "--name-only", "--diff-filter=ACM"],
+                timeout=10
+            )
+            
+            if not result.ok:
+                return (False, "", [])
+            
+            staged_files = [f for f in result.stdout.strip().split('\n') if f and f.lower().endswith('.fcstd')]
+            
+            # Check each staged FCStd file for locks by others
+            violations = []
+            for file_path in staged_files:
+                lock_info = lock_handler._current_locks.get(file_path)
+                if lock_info and lock_info.owner != lock_handler._current_username:
+                    violations.append((file_path, lock_info.owner))
+            
+            if violations:
+                file_list = '\n'.join([f"  • {path} (locked by {owner})" for path, owner in violations])
+                error_msg = (
+                    f"Cannot commit: The following files are locked by other users:\n\n"
+                    f"{file_list}\n\n"
+                    f"You must either:\n"
+                    f"  • Wait for the locks to be released\n"
+                    f"  • Save your changes to a new file\n"
+                    f"  • Coordinate with the lock owner\n\n"
+                    f"This prevents merge conflicts and protects collaborative work."
+                )
+                return (True, error_msg, violations)
+            
+            return (False, "", [])
+            
+        except Exception as e:
+            log.error(f"Lock validation failed: {e}")
+            return (False, "", [])
 
     # ========== Public API ==========
 
@@ -79,6 +132,17 @@ class CommitPushHandler:
             message = self._parent.compact_commit_message.text().strip()
         if not message:
             self._parent._show_status_message("Commit message required", is_error=True)
+            return
+        
+        # SECURITY: Check for lock violations before committing
+        has_violations, error_msg, locked_files = self._check_lock_violations()
+        if has_violations:
+            log.warning(f"Commit blocked: {len(locked_files)} files locked by others")
+            QtWidgets.QMessageBox.critical(
+                self._parent,
+                "🔒 Files Locked by Others",
+                error_msg
+            )
             return
 
         if self._parent._behind_count > 0:
@@ -166,6 +230,17 @@ class CommitPushHandler:
         message = self._parent.commit_message.toPlainText().strip()
         if not message:
             self._parent._show_status_message("Commit message required", is_error=True)
+            return
+        
+        # SECURITY: Check for lock violations before committing
+        has_violations, error_msg, locked_files = self._check_lock_violations()
+        if has_violations:
+            log.warning(f"Commit+Push blocked: {len(locked_files)} files locked by others")
+            QtWidgets.QMessageBox.critical(
+                self._parent,
+                "🔒 Files Locked by Others",
+                error_msg
+            )
             return
 
         self._parent._clear_status_message()

@@ -82,11 +82,18 @@ class LockHandler:
                 self._available = True
                 log.info("GitPDM/GitPDM detected and initialized (native core)")
                 
-                # Get current git user (must read from repository config, not global)
-                self._current_username = self._git_client.get_config(
-                    repo_root, "user.name", local=False
-                )
-                log.info(f"Current git user.name: '{self._current_username}'")
+                # Get current username from GitHub authentication (preferred) or fall back to Git config
+                from freecad.gitpdm.core import settings
+                self._current_username = settings.load_github_login()
+                
+                if not self._current_username:
+                    # Fallback to git config if not authenticated with GitHub
+                    self._current_username = self._git_client.get_config(
+                        repo_root, "user.name", local=False
+                    )
+                    log.info(f"Using git user.name (not authenticated with GitHub): '{self._current_username}'")
+                else:
+                    log.info(f"Using GitHub username for lock ownership: '{self._current_username}'")
                 
                 # Refresh lock status immediately (async, non-blocking)
                 self.refresh_lock_status()
@@ -117,6 +124,31 @@ class LockHandler:
             
             return False
 
+    def refresh_username(self):
+        """Refresh the current username from GitHub auth or Git config."""
+        if not self._available:
+            return
+        
+        from freecad.gitpdm.core import settings
+        old_username = self._current_username
+        self._current_username = settings.load_github_login()
+        
+        if not self._current_username:
+            # Fallback to git config if not authenticated with GitHub
+            repo_root = str(self._lock_manager.repo_root) if self._lock_manager else None
+            if repo_root:
+                self._current_username = self._git_client.get_config(
+                    repo_root, "user.name", local=False
+                )
+                log.info(f"Using git user.name (not authenticated with GitHub): '{self._current_username}'")
+        else:
+            log.info(f"Using GitHub username for lock ownership: '{self._current_username}'")
+        
+        if old_username != self._current_username:
+            log.info(f"Username changed: '{old_username}' -> '{self._current_username}'")
+            # Refresh lock status to get latest locks with new username context
+            self.refresh_lock_status()
+    
     def refresh_lock_status(self):
         """Refresh the current lock status from git LFS."""
         if not self._available or not self._lock_manager:
