@@ -135,6 +135,50 @@ class GitHubAuthHandler:
             except Exception:
                 pass
         self.update_ui_state()
+    
+    def _update_git_credentials(self, username: str, token: str, host: str):
+        """
+        Update Windows git credential manager with the GitHub token.
+        
+        This allows git LFS operations to use the correct user's token.
+        
+        Args:
+            username: GitHub username
+            token: OAuth access token
+            host: GitHub host (e.g., "github.com")
+        """
+        import subprocess
+        import sys
+        
+        try:
+            # Store credentials using git credential-manager
+            # This ensures git lfs commands use the correct token
+            url = f"https://{host}"
+            
+            # Use git credential approve to store the credential
+            credential_input = f"protocol=https\nhost={host}\nusername={username}\npassword={token}\n\n"
+            
+            kwargs = {
+                "input": credential_input,
+                "capture_output": True,
+                "text": True,
+                "timeout": 5
+            }
+            if sys.platform == "win32":
+                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+            
+            result = subprocess.run(
+                ["git", "credential", "approve"],
+                **kwargs
+            )
+            
+            if result.returncode == 0:
+                log.info(f"Updated git credentials for {username}@{host}")
+            else:
+                log.warning(f"Failed to update git credentials: {result.stderr}")
+                
+        except Exception as e:
+            log.warning(f"Could not update git credentials: {e}")
 
     def connect_clicked(self):
         """Handle Connect GitHub button click."""
@@ -601,6 +645,15 @@ class GitHubAuthHandler:
             try:
                 store.save(host, account, token_response)
                 log.info(f"Token stored in credential manager for user: {authenticated_username}")
+                
+                # BUGFIX: Also store token in git credential helper for git LFS operations
+                # This ensures git lfs lock/unlock use the correct user's token
+                try:
+                    self._update_git_credentials(authenticated_username, token_response.access_token, host)
+                except Exception as git_cred_err:
+                    log.warning(f"Could not update git credentials: {git_cred_err}")
+                    # Non-fatal - GitPDM will still work, but git LFS might use wrong credentials
+                    
             except OSError as storage_err:
                 # Credential storage failed - this is a critical security issue
                 log.error_safe("Failed to store token securely", storage_err)
