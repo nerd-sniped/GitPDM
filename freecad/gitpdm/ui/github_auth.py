@@ -560,14 +560,47 @@ class GitHubAuthHandler:
                 self._cleanup_oauth_state()
                 return
 
-            # Store token
-            store = self.services.token_store()
+            # BUGFIX: Fetch user identity BEFORE storing token to get correct username
+            # This ensures the token is stored with the right credential key
+            from freecad.gitpdm.github.api_client import GitHubApiClient
+            from freecad.gitpdm.github.identity import fetch_viewer_identity
+            
             host = settings.load_github_host()
-            account = settings.load_github_login()
+            temp_client = GitHubApiClient(host, token_response.access_token)
+            identity_result = fetch_viewer_identity(temp_client)
+            
+            if not identity_result.ok or not identity_result.login:
+                log.error(f"Failed to fetch user identity: {identity_result.message}")
+                
+                # Close OAuth dialog
+                if self._oauth_dialog:
+                    self._oauth_dialog.close()
+                
+                QtWidgets.QMessageBox.warning(
+                    self.panel,
+                    "Couldn't Verify Your Identity",
+                    f"We connected to GitHub, but couldn't verify your username.\n\n"
+                    f"Error: {identity_result.message}\n\n"
+                    f"Please try connecting again.",
+                )
+                self._cleanup_oauth_state()
+                return
+            
+            # Now we have the authenticated user's username!
+            authenticated_username = identity_result.login
+            log.info(f"Authenticated as GitHub user: {authenticated_username}")
+            
+            # Save username to settings BEFORE storing token
+            settings.save_github_login(authenticated_username)
+            settings.save_github_user_id(identity_result.user_id)
+            
+            # Store token with the correct username as the credential key
+            store = self.services.token_store()
+            account = authenticated_username
 
             try:
                 store.save(host, account, token_response)
-                log.info("Token stored in credential manager")
+                log.info(f"Token stored in credential manager for user: {authenticated_username}")
             except OSError as storage_err:
                 # Credential storage failed - this is a critical security issue
                 log.error_safe("Failed to store token securely", storage_err)
@@ -595,10 +628,15 @@ class GitHubAuthHandler:
                 self.update_ui_state()
                 return
 
-            # Update settings
+            # Update settings (username already saved above)
             settings.save_github_connected(True)
+            from datetime import datetime, timezone
+            settings.save_last_verified_at(datetime.now(timezone.utc).isoformat())
+            settings.save_last_api_error(None, None)
 
-            # Update UI
+            # Update UI with authenticated username
+            self.panel.github_status_label.setText(f"GitHub: Signed in as {authenticated_username}")
+            self.panel._set_strong_label(self.panel.github_status_label, "green")
             self.update_ui_state()
 
             # Close dialog
@@ -609,14 +647,23 @@ class GitHubAuthHandler:
             QtWidgets.QMessageBox.information(
                 self.panel,
                 "\u2713 Connected to GitHub!",
-                "Great! You're now connected to GitHub.\n\n"
+                f"Great! You're now connected to GitHub as {authenticated_username}.\n\n"
                 "You can now:\n"
                 "  \u2022 Create new projects\n"
                 "  \u2022 Share your work with your team\n"
                 "  \u2022 Download team projects",
             )
 
-            log.info("GitHub OAuth flow completed successfully")
+            log.info(f"GitHub OAuth flow completed successfully for user: {authenticated_username}")
+            
+            # Refresh lock handler username immediately (we have the username now)
+            if hasattr(self.panel, "_lock_handler") and self.panel._lock_handler:
+                try:
+                    self.panel._lock_handler.refresh_username()
+                    log.info("Lock handler refreshed with new GitHub username")
+                except Exception as refresh_err:
+                    log.warning(f"Failed to refresh lock handler username: {refresh_err}")
+                    
         except Exception as e:
             log.error_safe("Error storing token", e)
             self._on_oauth_error(e)
@@ -624,25 +671,6 @@ class GitHubAuthHandler:
             self._oauth_in_progress = False
             self._oauth_cancel_token = None
             self.update_ui_state()
-            # Trigger identity verification immediately after connect
-            try:
-                QtCore.QTimer.singleShot(50, self.verify_identity_async)
-            except Exception:
-                pass
-            
-            # Refresh lock handler username (now using new GitHub account)
-            # Delay to allow identity verification to complete first
-            if hasattr(self.panel, "_lock_handler") and self.panel._lock_handler:
-                try:
-                    def _delayed_lock_refresh():
-                        try:
-                            self.panel._lock_handler.refresh_username()
-                            log.info("Lock handler refreshed after GitHub connection")
-                        except Exception as e:
-                            log.warning(f"Failed to refresh lock handler: {e}")
-                    QtCore.QTimer.singleShot(500, _delayed_lock_refresh)
-                except Exception as refresh_err:
-                    log.warning(f"Failed to schedule lock handler refresh: {refresh_err}")
 
     def _on_token_poll_error(self, error):
         """Called if token polling fails."""
