@@ -2,7 +2,7 @@
 <package format="1" xmlns="https://wiki.freecad.org/Package_Metadata">
   
   <freecadmin>1.2.0</freecadmin>
-  <version>1.0.0</version>
+  <version>0.8.0</version>
   <date>2026-01-04</date>
   
   <description>Git-based Product Data Management for FreeCAD. Native Python implementation with Git version control, file locking, automated FCStd export/import, and GitHub integration. Consolidates GitCAD and GitPDM into a unified, polished workbench for FreeCAD 1.2.0+.</description>

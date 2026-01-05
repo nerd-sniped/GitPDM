@@ -666,7 +666,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         group_layout.addLayout(worktree_help_layout)
 
         layout.addWidget(group)
-        # Hide the entire Branch section per request
+        # Branch section DISABLED: Needs export/import cycle to prevent file corruption
+        # TODO Sprint 8: Implement fcstd export before branch switch, import after
         group.setVisible(False)
         self._group_branch = group
 

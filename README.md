@@ -1,14 +1,14 @@
 # GitPDM - Git-based Product Data Management for FreeCAD
 
-**Version 1.0.0 - FreeCAD 1.2.0+ Required**
+**Version 0.8.0 - FreeCAD 1.2.0+ Required**
 
 GitPDM is a FreeCAD workbench addon that brings Git version control, file locking, and automated FCStd file management directly into FreeCAD. Built with native Python for cross-platform reliability.
 
-## 🎉 What's New in v1.0.0
+## 🎉 What's New in v0.8.0
 
 **Major Release - Consolidated & Polished!**
 
-GitPDM v1.0.0 represents a complete consolidation of GitCAD and GitPDM, featuring:
+GitPDM v0.8.0 represents a complete consolidation of GitCAD and GitPDM, featuring:
 
 - ✅ **Native Python Core** - No bash dependencies, pure Python everywhere
 - ✅ **FreeCAD 1.2.0+ Ready** - Modern Qt6/PySide6, proper namespace isolation
@@ -26,7 +26,7 @@ GitPDM v1.0.0 represents a complete consolidation of GitCAD and GitPDM, featurin
 - **Git** installed and available on PATH
 - **Git LFS** (optional, for file locking features)
 
-> **Upgrading from v0.1.x?** See [FREECAD_1_2_MIGRATION_PLAN.md](FREECAD_1_2_MIGRATION_PLAN.md) for detailed upgrade instructions.
+> **Note:** For older FreeCAD versions (0.20, 0.21, 1.0), use GitPDM v0.1.x from the `legacy-pre-1.2` branch.
 
 ## Features
 
@@ -78,18 +78,14 @@ GitPDM v1.0.0 represents a complete consolidation of GitCAD and GitPDM, featurin
 
 ## History
 
-GitPDM incorporates and builds upon innovations from the GitCAD project by Michael Marais, which pioneered FreeCAD `.FCStd` file version control. GitPDM v1.0 represents a complete consolidation, combining GitCAD's proven core algorithms (now in native Python) with a modern FreeCAD 1.2 workbench interface. See [docs/GITCAD_HISTORY.md](docs/GITCAD_HISTORY.md) for the full story and attribution.
+GitPDM incorporates and builds upon innovations from the GitCAD project by Michael Marais, which pioneered FreeCAD `.FCStd` file version control. GitPDM v0.8.0 represents a complete consolidation, combining GitCAD's proven core algorithms (now in native Python) with a modern FreeCAD 1.2 workbench interface.
 
 ## Documentation
 
 Comprehensive documentation is available in the [docs](docs/) folder:
 
 - **[Complete Documentation](docs/README.md)** - Full user guide, tutorials, and reference
-- **[GitCAD History](docs/GITCAD_HISTORY.md)** - Project origins and consolidation story
-- **[Migration Guide](MIGRATION_GUIDE.md)** - Upgrading from v0.1.x to v0.2.0
-- **[Testing Guide](TESTING_GUIDE.md)** - For contributors and testers
-- **[Implementation Guide](IMPLEMENTATION_QUICKSTART.md)** - For developers
-- **[Migration Plan](FREECAD_1_2_MIGRATION_PLAN.md)** - Details on v0.2.0 changes
+- **[Testing Guide](docs/TESTING_GUIDE.md)** - For contributors and testers
 
 ## Module Structure
 
@@ -115,10 +111,6 @@ GitPDM/
 ├── package.xml               # FreeCAD addon metadata
 └── pyproject.toml            # Python package config
 ```
-
-## Breaking Changes from v0.1.x
-
-If you're upgrading from v0.1.x, note these changes:
 
 ### For Users
 - Requires FreeCAD 1.2.0+ (older versions not supported)
@@ -150,7 +142,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Version History
 
-- **v1.0.0** (2026-01-04): **Major consolidation release**
+- **v0.8.0** (2026-01-04): **Major consolidation release**
   - Native Python core (no bash dependencies)
   - Simplified configuration (`.gitpdm/config.json`)
   - Removed 2,400+ lines of legacy code

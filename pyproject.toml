@@ -1,6 +1,6 @@
 [project]
 name = "freecad-gitpdm"
-version = "0.2.0"
+version = "0.8.0"
 description = "Git-based Product Data Management for FreeCAD"
 requires-python = ">=3.10"
 dependencies = [

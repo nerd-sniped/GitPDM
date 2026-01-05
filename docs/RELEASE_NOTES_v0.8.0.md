@@ -1,4 +1,4 @@
-# Release Notes - GitPDM v1.0.0
+# Release Notes - GitPDM v0.8.0
 
 **Release Date:** January 4, 2026  
 **Codename:** Consolidation  
@@ -8,7 +8,7 @@
 
 ## Overview
 
-GitPDM v1.0.0 is a **major consolidation release** that unifies the GitCAD and GitPDM projects into a single, polished, production-ready FreeCAD workbench. This release represents the culmination of 7 development sprints focused on modernization, simplification, and consolidation.
+GitPDM v0.8.0 is a **major consolidation release** that unifies the GitCAD and GitPDM projects into a single, polished, production-ready FreeCAD workbench. This release represents the culmination of 7 development sprints focused on modernization, simplification, and consolidation.
 
 ### Headline Features
 
@@ -45,7 +45,7 @@ GitPDM v1.0.0 is a **major consolidation release** that unifies the GitCAD and G
 
 - Removed nested `GitCAD-main/` directory
 - Consolidated documentation with proper attribution
-- Created `docs/GITCAD_HISTORY.md` for project history
+
 - Removed obsolete installation scripts
 
 ### Sprint 4: Configuration Migration
@@ -83,10 +83,10 @@ GitPDM v1.0.0 is a **major consolidation release** that unifies the GitCAD and G
 - **UI Text**: All "GitCAD" → "GitPDM" branding
 
 ### Sprint 7: Polish & Release
-**Final touches for v1.0.0**
+**Final touches for v0.8.0**
 
 - Updated README with current features
-- Version bumped to 1.0.0 throughout
+- Version bumped to 0.8.0 throughout
 - Comprehensive release notes (this document)
 - Documentation review and updates
 - Final quality checks
@@ -125,7 +125,7 @@ GitPDM v1.0.0 is a **major consolidation release** that unifies the GitCAD and G
 ## Breaking Changes
 
 ### Requirements
-- **FreeCAD 1.2.0+** required (older versions not supported in v1.0.0)
+- **FreeCAD 1.2.0+** required (older versions not supported in v0.8.0)
 - **Python 3.10+** required (included with FreeCAD 1.2.0)
 - **Git** must be on PATH
 
@@ -148,16 +148,14 @@ GitPDM v1.0.0 is a **major consolidation release** that unifies the GitCAD and G
 If you have repositories using the original GitCAD:
 
 1. **Auto-Migration**: Config is automatically migrated on first use
-2. **Legacy Support**: See `docs/LEGACY_GITCAD_REPOS.md` for details
-3. **Backward Compatible**: Old configs continue working
-4. **Gradual Migration**: New saves use new format
+2. **Backward Compatible**: Old configs continue working
+3. **Gradual Migration**: New saves use new format
 
 ### From GitPDM v0.1.x
 If you're upgrading from GitPDM v0.1.x:
 
 1. **Reinstall via Addon Manager** (recommended)
-2. **Update imports** if you have custom scripts
-3. **See FREECAD_1_2_MIGRATION_PLAN.md** for details
+2. **Update imports** if you have custom scripts (see CHANGELOG.md for details)
 
 ---
 
@@ -244,7 +242,7 @@ These are enhancements for future releases and do not affect core functionality.
 ## Upgrade Path
 
 ### Automatic Migration
-1. Install GitPDM v1.0.0 via Addon Manager
+1. Install GitPDM v0.8.0 via Addon Manager
 2. Open existing repository in GitPDM
 3. Config is automatically migrated (if legacy format detected)
 4. Backup created at `FreeCAD_Automation/config.json.backup`
@@ -289,19 +287,16 @@ print(result.message)
 - `docs/SPRINT_5_COMPLETE.md` - Wrapper removal
 - `docs/SPRINT_6_COMPLETE.md` - Standardization
 - `docs/SPRINT_7_COMPLETE.md` - Polish & release
-- `docs/LEGACY_GITCAD_REPOS.md` - Legacy migration guide
 
 ### Updated Documentation
-- `README.md` - Completely rewritten for v1.0.0
+- `README.md` - Completely rewritten for v0.8.0
 - `CHANGELOG.md` - All 7 sprints documented
-- `CONSOLIDATION_PLAN.md` - Original consolidation plan
-- `FREECAD_1_2_MIGRATION_PLAN.md` - FreeCAD 1.2.0 migration
 
 ---
 
 ## Attribution
 
-GitPDM v1.0.0 incorporates innovations from the **GitCAD** project by **Michael Marais**:
+GitPDM v0.8.0 incorporates innovations from the **GitCAD** project by **Michael Marais**:
 
 - FCStd file decompression strategy
 - Git LFS locking approach
@@ -313,7 +308,7 @@ GitPDM represents a complete consolidation:
 - **GitPDM's modern UI** → Enhanced and polished
 - **Best of both** → Unified, maintainable project
 
-Full attribution in `docs/GITCAD_HISTORY.md`.
+GitCAD project by Michael Marais (MIT License, 2025) provided the foundational algorithms.
 
 ---
 
@@ -327,7 +322,7 @@ Full attribution in `docs/GITCAD_HISTORY.md`.
 ### Reporting Bugs
 Please include:
 - FreeCAD version
-- GitPDM version (1.0.0)
+- GitPDM version (0.8.0)
 - Operating system
 - Error messages or logs
 - Steps to reproduce
@@ -359,7 +354,7 @@ Please include:
 **Special Thanks:**
 - FreeCAD community for testing and feedback
 - GitCAD users who pioneered FCStd version control
-- All contributors who helped shape v1.0.0
+- All contributors who helped shape v0.8.0
 
 ---
 
@@ -371,7 +366,7 @@ MIT License - See [LICENSE](../LICENSE) for details.
 
 ## Conclusion
 
-GitPDM v1.0.0 represents a major milestone in FreeCAD version control. By consolidating GitCAD and GitPDM, we've created a production-ready solution that's:
+GitPDM v0.8.0 represents a major milestone in FreeCAD version control. By consolidating GitCAD and GitPDM, we've created a production-ready solution that's:
 
 ✅ **Reliable** - Native Python, cross-platform  
 ✅ **Maintainable** - 20% less code, consistent naming  
@@ -379,11 +374,11 @@ GitPDM v1.0.0 represents a major milestone in FreeCAD version control. By consol
 ✅ **Professional** - Polished UI, comprehensive docs  
 ✅ **Production-Ready** - Tested, stable, supported
 
-**Thank you** to everyone who contributed to making v1.0.0 possible!
+**Thank you** to everyone who contributed to making v0.8.0 possible!
 
 ---
 
-**Download:** [GitHub Releases](https://github.com/nerd-sniped/GitPDM/releases/tag/v1.0.0)  
+**Download:** [GitHub Releases](https://github.com/nerd-sniped/GitPDM/releases/tag/v0.8.0)  
 **Install:** FreeCAD Addon Manager → Search "GitPDM"  
 **Learn More:** [Documentation](../docs/README.md)
 
