@@ -1,11 +1,10 @@
-# -*- coding: utf-8 -*-
 """
 Tests for git.client module - Git client operations
 """
 
 import pytest
 from unittest.mock import Mock, patch, MagicMock
-from freecad_gitpdm.git.client import (
+from freecad.gitpdm.git.client import (
     GitClient,
     FileStatus,
     CmdResult,

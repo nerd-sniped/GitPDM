@@ -1,10 +1,9 @@
-# -*- coding: utf-8 -*-
 """
 Tests for core.result module - Result and AppError types
 """
 
 import pytest
-from freecad_gitpdm.core.result import Result, AppError
+from freecad.gitpdm.core.result import Result, AppError
 
 
 class TestAppError:

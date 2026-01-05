@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Tests for Git Hooks (Sprint 2)
 """
@@ -9,8 +8,8 @@ import zipfile
 import subprocess
 from pathlib import Path
 
-from freecad_gitpdm.git import hooks
-from freecad_gitpdm.git.hooks import HookContext
+from freecad.gitpdm.git import hooks
+from freecad.gitpdm.git.hooks import HookContext
 
 
 class TestHookContext:

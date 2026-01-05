@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Tests for lock_manager module
 Sprint 1: Lock management testing
@@ -10,8 +9,8 @@ import tempfile
 import subprocess
 from unittest.mock import Mock, patch, MagicMock
 
-from freecad_gitpdm.core.lock_manager import LockManager, LockInfo
-from freecad_gitpdm.core.config_manager import FCStdConfig
+from freecad.gitpdm.core.lock_manager import LockManager, LockInfo
+from freecad.gitpdm.core.config_manager import FCStdConfig
 
 
 @pytest.fixture
@@ -24,8 +23,8 @@ def temp_repo():
         subprocess.run(["git", "init"], cwd=repo, capture_output=True)
         
         # Create config
-        (repo / "FreeCAD_Automation").mkdir()
-        config_file = repo / "FreeCAD_Automation" / "config.json"
+        (repo / ".gitpdm").mkdir()
+        config_file = repo / ".gitpdm" / "config.json"
         
         import json
         config = FCStdConfig()
@@ -66,7 +65,7 @@ class TestLockManager:
     @patch('freecad_gitpdm.core.lock_manager.LockManager._run_git_command')
     def test_lock_file_already_locked(self, mock_git, temp_repo):
         """Test locking a file that's already locked."""
-        from freecad_gitpdm.core.result import Result
+        from freecad.gitpdm.core.result import Result
         
         mock_git.return_value = Result.failure(
             "GIT_ERROR",
@@ -108,7 +107,7 @@ class TestLockManager:
     @patch('freecad_gitpdm.core.lock_manager.LockManager._run_git_command')
     def test_unlock_file_not_locked(self, mock_git, temp_repo):
         """Test unlocking a file that's not locked."""
-        from freecad_gitpdm.core.result import Result
+        from freecad.gitpdm.core.result import Result
         
         mock_git.return_value = Result.failure(
             "GIT_ERROR",

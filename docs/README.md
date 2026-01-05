@@ -1,19 +1,26 @@
-Ôªø# GitPDM - Git-based Product Data Management for FreeCAD
+# GitPDM - Git-based Product Data Management for FreeCAD
 
 **Version Control Made Simple for Your CAD Projects**
 
-GitPDM is a FreeCAD workbench addon that brings Git version control and GitHub collaboration directly into FreeCAD. Think of it as ‚Äúversion history‚Äù for CAD projects, designed around FreeCAD documents, previews, and publishing.
+GitPDM is a FreeCAD workbench addon that brings Git version control and GitHub collaboration directly into FreeCAD. Think of it as ìversion historyî for CAD projects, designed around FreeCAD documents, previews, and publishing.
 
-**Current Version:** 0.3.0 
+**Current Version:** 0.2.0
+
+**Requirements:**
+- **FreeCAD 1.2.0 or newer** (required for Qt6/PySide6 support)
+- Python 3.10+
+- Git installed and available on PATH
+
+> **Note:** For older FreeCAD versions (0.20, 0.21, 1.0), use GitPDM v0.1.x from the `legacy-pre-1.2` branch. 
 
 ---
 
 ## Documentation Structure
 
-- **[Tutorials](#tutorials)** ‚Äî learning-oriented lessons for newcomers
-- **[How-To Guides](#how-to-guides)** ‚Äî goal-oriented recipes for specific tasks
-- **[Technical Reference](#technical-reference)** ‚Äî accurate, ‚Äúlookup-style‚Äù system details
-- **[Explanations](#explanations)** ‚Äî background concepts and context to build understanding
+- **[Tutorials](#tutorials)** ó learning-oriented lessons for newcomers
+- **[How-To Guides](#how-to-guides)** ó goal-oriented recipes for specific tasks
+- **[Technical Reference](#technical-reference)** ó accurate, ìlookup-styleî system details
+- **[Explanations](#explanations)** ó background concepts and context to build understanding
 
 ---
 
@@ -24,14 +31,14 @@ GitPDM is a FreeCAD workbench addon that brings Git version control and GitHub c
 **Goal:** Install GitPDM, create a repository, and make two commits.
 
 **Prerequisites:**
-- FreeCAD (0.20, 0.21, or 1.0)
+- FreeCAD 1.2.0 or newer
 - Git installed and available on PATH (`git --version` works)
 
 ### 1) Install GitPDM (manual)
 
 1. Find your FreeCAD Mod folder:
    - **Windows**: Press `Windows + R`, enter `%APPDATA%\FreeCAD\Mod`
-   - **macOS**: Finder ‚Üí `Cmd + Shift + G` ‚Üí `~/Library/Application Support/FreeCAD/Mod`
+   - **macOS**: Finder ? `Cmd + Shift + G` ? `~/Library/Application Support/FreeCAD/Mod`
    - **Linux**: `~/.FreeCAD/Mod/`
    - Create the folder if it doesn't exist.
 
@@ -39,9 +46,9 @@ GitPDM is a FreeCAD workbench addon that brings Git version control and GitHub c
    - https://github.com/nerd-sniped/GitPDM/releases
 
 3. Copy the extracted `GitPDM` folder into the Mod folder so you have:
-   - `Mod/GitPDM/Init.py`
-   - `Mod/GitPDM/InitGui.py`
-   - `Mod/GitPDM/freecad_gitpdm/`
+   - `Mod/GitPDM/freecad/gitpdm/__init__.py`
+   - `Mod/GitPDM/freecad/gitpdm/init_gui.py`
+   - `Mod/GitPDM/freecad/gitpdm/` (module contents)
 
 4. Restart FreeCAD.
 
@@ -57,11 +64,11 @@ GitPDM is a FreeCAD workbench addon that brings Git version control and GitHub c
 ### 3) Create and save a simple part
 
 1. Switch to **Part Design** workbench.
-2. Create a new document: **File ‚Üí New**.
+2. Create a new document: **File ? New**.
 3. Create a simple box:
-   - Create Body ‚Üí Create Sketch (XY)
-   - Draw a rectangle ‚Üí Close
-   - Pad ‚Üí length 10mm
+   - Create Body ? Create Sketch (XY)
+   - Draw a rectangle ? Close
+   - Pad ? length 10mm
 4. Save inside the repository folder as `simple-box.FCStd`.
 
 ### 4) Commit v1
@@ -104,7 +111,7 @@ You now have a local commit history you can always return to.
 2. A dialog appears with a short code.
 3. Click the dialog button to open GitHub (or visit https://github.com/login/device).
 4. Log in, enter the code, and click **Authorize**.
-5. Return to FreeCAD and confirm it shows ‚ÄúConnected‚Äù.
+5. Return to FreeCAD and confirm it shows ìConnectedî.
 
 ### 2) Push
 
@@ -173,7 +180,7 @@ Goal-oriented recipes for specific problems.
 
 ---
 
-## How to Fix ‚ÄúGit Is Not Recognized as a Command‚Äù
+## How to Fix ìGit Is Not Recognized as a Commandî
 
 **Goal:** Make Git available to GitPDM.
 
@@ -193,7 +200,7 @@ Goal-oriented recipes for specific problems.
 1. Confirm GitHub is reachable in a browser: https://github.com/
 2. Confirm your system clock is correct (OAuth is time-sensitive).
 3. Retry **Connect GitHub** and complete the device flow.
-4. If you see ‚ÄúSession expired‚Äù / ‚ÄúToken invalid‚Äù, disconnect and connect again.
+4. If you see ìSession expiredî / ìToken invalidî, disconnect and connect again.
 5. Check FreeCAD Report View for detailed `[GitPDM]` errors.
 
 ---
@@ -219,7 +226,7 @@ Goal-oriented recipes for specific problems.
 **Goal:** Allow token storage in Keychain.
 
 1. Retry **Connect GitHub** and approve the Keychain prompt.
-2. If the prompt is blocked by system policy, consider granting FreeCAD/Python appropriate permissions in **System Settings ‚Üí Privacy & Security**.
+2. If the prompt is blocked by system policy, consider granting FreeCAD/Python appropriate permissions in **System Settings ? Privacy & Security**.
 
 ---
 
@@ -266,7 +273,7 @@ Branch switching is currently limited because FreeCAD `.FCStd` files are ZIP arc
 
 ## Platform Token Storage
 
-GitHub tokens are stored using the host platform‚Äôs secure credential store.
+GitHub tokens are stored using the host platformís secure credential store.
 
 - **Windows**: Windows Credential Manager
 - **macOS**: Keychain
@@ -310,22 +317,22 @@ previews/
 
 ## Logging
 
-GitPDM logs to FreeCAD‚Äôs Report View.
+GitPDM logs to FreeCADís Report View.
 
-- Enable: **View ‚Üí Panels ‚Üí Report view**
+- Enable: **View ? Panels ? Report view**
 - Look for messages prefixed with `[GitPDM]`
 
 ---
 
 ## Settings Persistence
 
-Settings are stored in FreeCAD‚Äôs parameter store:
+Settings are stored in FreeCADís parameter store:
 
 ```
 User parameter:BaseApp/Preferences/Mod/GitPDM
 ```
 
-Access via: **Tools ‚Üí Edit parameters...**
+Access via: **Tools ? Edit parameters...**
 
 ---
 
@@ -333,12 +340,12 @@ Access via: **Tools ‚Üí Edit parameters...**
 
 High-level modules:
 
-- `auth/` ‚Äî GitHub OAuth device flow and token storage
-- `git/` ‚Äî Git subprocess wrapper
-- `github/` ‚Äî GitHub API client
-- `export/` ‚Äî preview generation pipeline
-- `core/` ‚Äî shared utilities (logging, jobs, paths, settings)
-- `ui/` ‚Äî panel and handlers
+- `auth/` ó GitHub OAuth device flow and token storage
+- `git/` ó Git subprocess wrapper
+- `github/` ó GitHub API client
+- `export/` ó preview generation pipeline
+- `core/` ó shared utilities (logging, jobs, paths, settings)
+- `ui/` ó panel and handlers
 
 ---
 
@@ -372,9 +379,9 @@ Discursive background material to build understanding.
 
 ## What Problem GitPDM Solves (for CAD work)
 
-CAD projects evolve through many small edits: dimension tweaks, feature additions, assembly adjustments, refactors. Without structured checkpoints, it's easy to lose work (corruption, accidental overwrite, ‚Äúsave-as‚Äù chaos) or forget what changed and why.
+CAD projects evolve through many small edits: dimension tweaks, feature additions, assembly adjustments, refactors. Without structured checkpoints, it's easy to lose work (corruption, accidental overwrite, ìsave-asî chaos) or forget what changed and why.
 
-GitPDM brings Git‚Äôs history of states into FreeCAD so that saving a meaningful checkpoint becomes routine.
+GitPDM brings Gitís history of states into FreeCAD so that saving a meaningful checkpoint becomes routine.
 
 ---
 
@@ -386,8 +393,8 @@ GitPDM brings Git‚Äôs history of states into FreeCAD so that saving a meaningful
 
 A practical mental model:
 
-- Commit = ‚Äúmake a local checkpoint on my machine.‚Äù
-- Push = ‚Äúcopy my checkpoints to GitHub.‚Äù
+- Commit = ìmake a local checkpoint on my machine.î
+- Push = ìcopy my checkpoints to GitHub.î
 
 ---
 
@@ -403,11 +410,11 @@ Commit messages matter because CAD changes can be hard to remember later. The sn
 
 FreeCAD `.FCStd` files are ZIP archives. If the on-disk file changes underneath an open document (as can happen during a branch switch), you can get inconsistent state and corruption risk.
 
-That‚Äôs why GitPDM takes a safety-first approach and requires closing documents for certain operations, and why worktrees are useful for multi-branch workflows.
+Thatís why GitPDM takes a safety-first approach and requires closing documents for certain operations, and why worktrees are useful for multi-branch workflows.
 
 ---
 
-## Git LFS (Why It‚Äôs Recommended for CAD)
+## Git LFS (Why Itís Recommended for CAD)
 
 Git is optimized for many small text changes. CAD files are larger binaries.
 
@@ -415,7 +422,7 @@ Git is optimized for many small text changes. CAD files are larger binaries.
 
 ---
 
-## What ‚ÄúPublishing‚Äù Adds Beyond Regular Commits
+## What ìPublishingî Adds Beyond Regular Commits
 
 A regular commit is primarily for restoring and collaborating on versions.
 
@@ -431,9 +438,9 @@ These outputs make the repository easier to browse and understand without openin
 
 ## Common Questions (Context)
 
-If you‚Äôre new to version control, it helps to separate the *local* and *remote* ideas:
+If youíre new to version control, it helps to separate the *local* and *remote* ideas:
 
-- You don‚Äôt need deep Git knowledge to get value: a repository plus a few well-named commits already gives you durable checkpoints.
+- You donít need deep Git knowledge to get value: a repository plus a few well-named commits already gives you durable checkpoints.
 - GitHub is optional: GitPDM can be used with local-only Git, but pushing to a remote is a practical cloud backup layer.
 - Still treat backups as layered: local commits + push to a remote + normal filesystem backups.
 

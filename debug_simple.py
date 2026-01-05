@@ -24,8 +24,8 @@ if dw and dw.widget():
         print(f"\nManually checking with native core: {repo}")
         
         # Import the check functions
-        from freecad_gitpdm.core.config_manager import has_config
-        from freecad_gitpdm.core.lock_manager import LockManager
+        from freecad.gitpdm.core.config_manager import has_config
+        from freecad.gitpdm.core.lock_manager import LockManager
         
         print(f"has_config: {has_config(repo)}")
         

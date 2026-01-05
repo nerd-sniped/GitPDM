@@ -1,6 +1,6 @@
 [project]
 name = "freecad-gitpdm"
-version = "0.1.0"
+version = "0.2.0"
 description = "Git-based Product Data Management for FreeCAD"
 requires-python = ">=3.10"
 dependencies = [
@@ -24,15 +24,14 @@ python_functions = ["test_*"]
 addopts = [
   "-v",
   "--strict-markers",
-  "--cov=freecad_gitpdm",
+  "--cov=freecad.gitpdm",
   "--cov-report=term-missing",
   "--cov-report=html",
 ]
 
 [tool.ruff]
-# Conservative baseline: catch syntax and undefined-name style issues
-# without forcing mass cleanups/refactors in Sprint 1.
-target-version = "py38"
+# Target FreeCAD 1.2.0+ which requires Python 3.10+
+target-version = "py310"
 line-length = 88
 
 [tool.ruff.lint]

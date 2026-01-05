@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Tests for auth.oauth_device_flow module - OAuth Device Flow implementation
 """
@@ -6,7 +5,7 @@ Tests for auth.oauth_device_flow module - OAuth Device Flow implementation
 import pytest
 import json
 from unittest.mock import Mock, patch, MagicMock
-from freecad_gitpdm.auth.oauth_device_flow import (
+from freecad.gitpdm.auth.oauth_device_flow import (
     DeviceFlowError,
     DeviceCodeResponse,
     TokenResponse,

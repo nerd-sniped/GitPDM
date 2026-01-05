@@ -14,8 +14,8 @@ if dw and dw.widget():
     print(f"Current repo root: {panel._current_repo_root}")
     print(f"GitCAD available: {panel._gitcad_lock._gitcad_available}")
     
-    # Try checking GitCAD-main explicitly
-    gitcad_path = r"C:\Factorem\Nerd-Sniped\GitPDM\GitCAD-main"
+    # Check main GitPDM path
+    gitcad_path = r"C:\Factorem\Nerd-Sniped\GitPDM"
     print(f"\nTrying to check GitCAD at: {gitcad_path}")
     result = panel._gitcad_lock.check_gitcad_availability(gitcad_path)
     print(f"Result: {result}")

@@ -1,11 +1,10 @@
-# -*- coding: utf-8 -*-
 """
 Tests for core.log module - Logging with token redaction
 """
 
 import pytest
 from unittest.mock import patch, MagicMock
-from freecad_gitpdm.core import log
+from freecad.gitpdm.core import log
 
 
 class TestTokenRedaction:

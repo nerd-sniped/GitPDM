@@ -1,10 +1,9 @@
-# -*- coding: utf-8 -*-
 """
 Tests for github.errors module - GitHub API error classification
 """
 
 import pytest
-from freecad_gitpdm.github.errors import GitHubApiError, GitHubApiNetworkError
+from freecad.gitpdm.github.errors import GitHubApiError, GitHubApiNetworkError
 
 
 class TestGitHubApiError:

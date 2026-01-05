@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Pytest configuration and fixtures for GitPDM tests
 """

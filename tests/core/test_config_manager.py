@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Tests for config_manager module
 Sprint 1: Configuration management testing
@@ -9,7 +8,7 @@ from pathlib import Path
 import tempfile
 import json
 
-from freecad_gitpdm.core.config_manager import (
+from freecad.gitpdm.core.config_manager import (
     FCStdConfig,
     load_config,
     save_config,
@@ -24,7 +23,7 @@ def temp_repo():
     with tempfile.TemporaryDirectory() as tmpdir:
         repo = Path(tmpdir)
         (repo / ".git").mkdir()
-        (repo / "FreeCAD_Automation").mkdir()
+        (repo / ".gitpdm").mkdir()
         yield repo
 
 
@@ -128,12 +127,12 @@ class TestLoadConfig:
     
     def test_load_existing_config(self, temp_repo):
         """Test loading an existing config file."""
-        config_file = temp_repo / "FreeCAD_Automation" / "config.json"
+        config_file = temp_repo / ".gitpdm" / "config.json"
         
         # Create a config file
         test_config = FCStdConfig(uncompressed_suffix="_test")
         with open(config_file, 'w') as f:
-            json.dump(test_config.to_gitcad_format(), f)
+            json.dump(test_config.to_dict(), f)
         
         # Load it
         loaded = load_config(temp_repo)
@@ -172,27 +171,27 @@ class TestSaveConfig:
         assert result.ok
         
         # Verify file was created
-        config_file = temp_repo / "FreeCAD_Automation" / "config.json"
+        config_file = temp_repo / ".gitpdm" / "config.json"
         assert config_file.exists()
         
-        # Verify contents
+        # Verify contents (new format - simple dict)
         with open(config_file) as f:
             data = json.load(f)
         
-        assert data["uncompressed-directory-structure"]["uncompressed-directory-suffix"] == "_saved"
+        assert data["uncompressed_suffix"] == "_saved"
     
     def test_save_creates_directory(self):
         """Test that save creates directory if needed."""
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
             (repo / ".git").mkdir()
-            # Don't create FreeCAD_Automation
+            # Don't create .gitpdm directory
             
             config = FCStdConfig()
             result = save_config(repo, config)
             
             assert result.ok
-            assert (repo / "FreeCAD_Automation" / "config.json").exists()
+            assert (repo / ".gitpdm" / "config.json").exists()
 
 
 class TestGetUncompressedDir:

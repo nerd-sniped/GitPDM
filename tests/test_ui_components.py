@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Tests for UI Components (Sprint 5 Phase 1)
 Tests for StatusWidget, RepositoryWidget, and ChangesWidget
@@ -6,20 +5,16 @@ Tests for StatusWidget, RepositoryWidget, and ChangesWidget
 
 import pytest
 from unittest.mock import Mock, MagicMock, patch
-from freecad_gitpdm.ui.components import (
+from freecad.gitpdm.ui.components import (
     StatusWidget,
     RepositoryWidget,
     ChangesWidget,
     BaseWidget,
 )
 
-# Qt compatibility
-try:
-    from PySide6 import QtCore, QtWidgets
-    from PySide6.QtTest import QTest
-except ImportError:
-    from PySide2 import QtCore, QtWidgets
-    from PySide2.QtTest import QTest
+# Qt imports (FreeCAD 1.2.0+ uses PySide6 only)
+from PySide6 import QtCore, QtWidgets
+from PySide6.QtTest import QTest
 
 
 @pytest.fixture

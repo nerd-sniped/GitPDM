@@ -27,8 +27,8 @@ if hasattr(dw, '_gitcad_lock'):
     repo = Path(r"C:\Factorem\Nerd-Sniped\GitPDM")
     print(f"\nManually checking with native core: {repo}")
     
-    from freecad_gitpdm.core.config_manager import has_config
-    from freecad_gitpdm.core.lock_manager import LockManager
+    from freecad.gitpdm.core.config_manager import has_config
+    from freecad.gitpdm.core.lock_manager import LockManager
     
     print(f"has_config: {has_config(repo)}")
     

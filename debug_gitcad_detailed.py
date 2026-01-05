@@ -23,7 +23,7 @@ print(f"   Config exists: {config_file.exists()}")
 # 2. Test has_config (simplified initialization check)
 print(f"\n2. TESTING has_config:")
 try:
-    from freecad_gitpdm.core.config_manager import has_config
+    from freecad.gitpdm.core.config_manager import has_config
     result = has_config(repo_root)
     print(f"   Result: {result}")
 except Exception as e:
@@ -34,8 +34,8 @@ except Exception as e:
 # 3. Test native core modules
 print(f"\n3. TESTING NATIVE CORE MODULES:")
 try:
-    from freecad_gitpdm.core.config_manager import load_config
-    from freecad_gitpdm.core.lock_manager import LockManager
+    from freecad.gitpdm.core.config_manager import load_config
+    from freecad.gitpdm.core.lock_manager import LockManager
     
     config = load_config(repo_root)
     print(f"   ✓ Config loaded successfully")

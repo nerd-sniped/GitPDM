@@ -60,6 +60,6 @@ credentials.json
 Thumbs.db
 desktop.ini
 
-# GitCAD runtime files (installed from GitCAD-main reference)
+# GitCAD runtime files (legacy - will be removed in Sprint 4)
 FreeCAD_Automation/
 .gitattributes

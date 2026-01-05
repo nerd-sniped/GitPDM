@@ -1,0 +1,8 @@
+[general]
+name=GitPDM
+description=Git-based Product Data Management for FreeCAD with native Python core
+version=1.0.0
+author=Nerd-Sniped
+url=https://github.com/nerd-sniped/GitPDM
+icon=icon.svg
+classname=freecad.gitpdm.init_gui

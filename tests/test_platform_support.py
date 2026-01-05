@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for platform-aware token store factory."""
 
 import sys
@@ -12,7 +11,7 @@ class TestTokenStoreFactory:
     def test_factory_returns_windows_store_on_windows(self):
         """Factory should return WindowsCredentialStore on Windows."""
         with patch("sys.platform", "win32"):
-            from freecad_gitpdm.auth.token_store_factory import create_token_store
+            from freecad.gitpdm.auth.token_store_factory import create_token_store
 
             store = create_token_store()
             assert store.__class__.__name__ == "WindowsCredentialStore"
@@ -20,7 +19,7 @@ class TestTokenStoreFactory:
     def test_factory_returns_linux_store_on_linux(self):
         """Factory should return LinuxSecretServiceStore on Linux."""
         with patch("sys.platform", "linux"):
-            from freecad_gitpdm.auth.token_store_factory import create_token_store
+            from freecad.gitpdm.auth.token_store_factory import create_token_store
 
             store = create_token_store()
             assert store.__class__.__name__ == "LinuxSecretServiceStore"
@@ -28,7 +27,7 @@ class TestTokenStoreFactory:
     def test_factory_returns_linux_store_on_linux2(self):
         """Factory should return LinuxSecretServiceStore on linux2 (old Python)."""
         with patch("sys.platform", "linux2"):
-            from freecad_gitpdm.auth.token_store_factory import create_token_store
+            from freecad.gitpdm.auth.token_store_factory import create_token_store
 
             store = create_token_store()
             assert store.__class__.__name__ == "LinuxSecretServiceStore"
@@ -36,7 +35,7 @@ class TestTokenStoreFactory:
     def test_factory_warns_on_macos(self):
         """Factory should return MacOSKeychainStore on macOS."""
         with patch("sys.platform", "darwin"):
-            from freecad_gitpdm.auth.token_store_factory import create_token_store
+            from freecad.gitpdm.auth.token_store_factory import create_token_store
 
             store = create_token_store()
             assert store.__class__.__name__ == "MacOSKeychainStore"
@@ -44,7 +43,7 @@ class TestTokenStoreFactory:
     def test_factory_raises_on_unknown_platform(self):
         """Factory should raise OSError on unsupported platform."""
         with patch("sys.platform", "unknown"):
-            from freecad_gitpdm.auth.token_store_factory import create_token_store
+            from freecad.gitpdm.auth.token_store_factory import create_token_store
 
             with pytest.raises(OSError, match="No secure token storage available"):
                 create_token_store()
@@ -68,7 +67,7 @@ class TestLinuxSecretServiceStore:
 
         try:
             with patch.dict("sys.modules", {"secretstorage": None}):
-                from freecad_gitpdm.auth.token_store_linux import (
+                from freecad.gitpdm.auth.token_store_linux import (
                     LinuxSecretServiceStore,
                 )
 
@@ -81,8 +80,8 @@ class TestLinuxSecretServiceStore:
 
     def test_linux_store_unavailable_raises_on_save(self, mock_secretstorage):
         """Linux store should raise OSError when unavailable."""
-        from freecad_gitpdm.auth.token_store_linux import LinuxSecretServiceStore
-        from freecad_gitpdm.auth.oauth_device_flow import TokenResponse
+        from freecad.gitpdm.auth.token_store_linux import LinuxSecretServiceStore
+        from freecad.gitpdm.auth.oauth_device_flow import TokenResponse
 
         store = LinuxSecretServiceStore()
         store._available = False
@@ -99,7 +98,7 @@ class TestLinuxSecretServiceStore:
 
     def test_linux_store_unavailable_returns_none_on_load(self, mock_secretstorage):
         """Linux store should return None when unavailable."""
-        from freecad_gitpdm.auth.token_store_linux import LinuxSecretServiceStore
+        from freecad.gitpdm.auth.token_store_linux import LinuxSecretServiceStore
 
         store = LinuxSecretServiceStore()
         store._available = False
@@ -118,7 +117,7 @@ class TestGitClientLinuxPaths:
                 # First path check succeeds
                 mock_isfile.return_value = True
 
-                from freecad_gitpdm.git.client import _find_git_executable
+                from freecad.gitpdm.git.client import _find_git_executable
 
                 result = _find_git_executable()
                 assert result == "/usr/bin/git"
@@ -130,7 +129,7 @@ class TestGitClientLinuxPaths:
                 with patch("subprocess.run") as mock_run:
                     mock_run.return_value = Mock(returncode=0)
 
-                    from freecad_gitpdm.git.client import _find_git_executable
+                    from freecad.gitpdm.git.client import _find_git_executable
 
                     result = _find_git_executable()
                     assert result == "git"
@@ -143,7 +142,7 @@ class TestGitClientLinuxPaths:
                 with patch(
                     "subprocess.run", side_effect=FileNotFoundError("git not found")
                 ):
-                    from freecad_gitpdm.git.client import _find_git_executable
+                    from freecad.gitpdm.git.client import _find_git_executable
 
                     result = _find_git_executable()
                     assert result is None
@@ -166,7 +165,7 @@ class TestMacOSKeychainStore:
     def test_macos_store_initialization_success(self, mock_keyring):
         """macOS store should initialize successfully with keyring available."""
         with patch.dict("sys.modules", {"keyring": mock_keyring}):
-            from freecad_gitpdm.auth.token_store_macos import MacOSKeychainStore
+            from freecad.gitpdm.auth.token_store_macos import MacOSKeychainStore
 
             store = MacOSKeychainStore()
             assert store._available
@@ -179,7 +178,7 @@ class TestMacOSKeychainStore:
         mock_kr.get_keyring.return_value = mock_backend
 
         with patch.dict("sys.modules", {"keyring": mock_kr}):
-            from freecad_gitpdm.auth.token_store_macos import MacOSKeychainStore
+            from freecad.gitpdm.auth.token_store_macos import MacOSKeychainStore
 
             store = MacOSKeychainStore()
             assert not store._available
@@ -187,8 +186,8 @@ class TestMacOSKeychainStore:
     def test_macos_store_unavailable_raises_on_save(self, mock_keyring):
         """macOS store should raise OSError when unavailable."""
         with patch.dict("sys.modules", {"keyring": mock_keyring}):
-            from freecad_gitpdm.auth.token_store_macos import MacOSKeychainStore
-            from freecad_gitpdm.auth.oauth_device_flow import TokenResponse
+            from freecad.gitpdm.auth.token_store_macos import MacOSKeychainStore
+            from freecad.gitpdm.auth.oauth_device_flow import TokenResponse
 
             store = MacOSKeychainStore()
             store._available = False
@@ -206,7 +205,7 @@ class TestMacOSKeychainStore:
     def test_macos_store_unavailable_returns_none_on_load(self, mock_keyring):
         """macOS store should return None when unavailable."""
         with patch.dict("sys.modules", {"keyring": mock_keyring}):
-            from freecad_gitpdm.auth.token_store_macos import MacOSKeychainStore
+            from freecad.gitpdm.auth.token_store_macos import MacOSKeychainStore
 
             store = MacOSKeychainStore()
             store._available = False
@@ -228,8 +227,8 @@ class TestMacOSKeychainStore:
         mock_keyring.get_password.side_effect = mock_get_password
 
         with patch.dict("sys.modules", {"keyring": mock_keyring}):
-            from freecad_gitpdm.auth.token_store_macos import MacOSKeychainStore
-            from freecad_gitpdm.auth.oauth_device_flow import TokenResponse
+            from freecad.gitpdm.auth.token_store_macos import MacOSKeychainStore
+            from freecad.gitpdm.auth.oauth_device_flow import TokenResponse
 
             store = MacOSKeychainStore()
 
@@ -266,7 +265,7 @@ class TestMacOSKeychainStore:
         mock_keyring.delete_password.side_effect = mock_delete_password
 
         with patch.dict("sys.modules", {"keyring": mock_keyring}):
-            from freecad_gitpdm.auth.token_store_macos import MacOSKeychainStore
+            from freecad.gitpdm.auth.token_store_macos import MacOSKeychainStore
 
             store = MacOSKeychainStore()
             store.delete("github.com", "testuser")
@@ -282,7 +281,7 @@ class TestMacOSKeychainStore:
 
         try:
             with patch.dict("sys.modules", {"keyring": None}):
-                from freecad_gitpdm.auth.token_store_macos import MacOSKeychainStore
+                from freecad.gitpdm.auth.token_store_macos import MacOSKeychainStore
 
                 store = MacOSKeychainStore()
                 assert not store._available
@@ -301,7 +300,7 @@ class TestGitClientMacOSPaths:
                 # First path fails, second succeeds
                 mock_isfile.side_effect = [False, True]
 
-                from freecad_gitpdm.git.client import _find_git_executable
+                from freecad.gitpdm.git.client import _find_git_executable
 
                 result = _find_git_executable()
                 assert result == "/usr/local/bin/git"
@@ -313,7 +312,7 @@ class TestGitClientMacOSPaths:
                 # First three paths fail, fourth succeeds (Homebrew)
                 mock_isfile.side_effect = [False, False, False, True]
 
-                from freecad_gitpdm.git.client import _find_git_executable
+                from freecad.gitpdm.git.client import _find_git_executable
 
                 result = _find_git_executable()
                 assert result == "/opt/homebrew/bin/git"
@@ -325,7 +324,7 @@ class TestGitClientMacOSPaths:
                 with patch("subprocess.run") as mock_run:
                     mock_run.return_value = Mock(returncode=0)
 
-                    from freecad_gitpdm.git.client import _find_git_executable
+                    from freecad.gitpdm.git.client import _find_git_executable
 
                     result = _find_git_executable()
                     assert result == "git"

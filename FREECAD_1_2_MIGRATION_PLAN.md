@@ -94,14 +94,18 @@ GitPDM/
 **Required structure for FreeCAD 1.2.0+:**
 ```
 GitPDM/
+├── __init__.py               # Compatibility shim (redirects to freecad.gitpdm)
+├── InitGui.py                # Compatibility shim (loads freecad.gitpdm.init_gui)
 ├── freecad/
 │   └── gitpdm/               # All addon code here
-│       ├── __init__.py       # New entry point (was Init.py)
-│       ├── init_gui.py       # New entry point (was InitGui.py)
+│       ├── __init__.py       # Actual entry point
+│       ├── init_gui.py       # Actual GUI entry point
 │       ├── workbench.py
 │       ├── commands.py
 │       └── ...
 ```
+
+**Note:** The root-level `__init__.py` and `InitGui.py` are compatibility shims that allow FreeCAD to discover the addon while maintaining the new structure inside `freecad/gitpdm/`.
 
 ## Migration Strategy
 
@@ -140,8 +144,8 @@ Files to update (examples):
 **Import Change Pattern:**
 ```python
 # OLD
-from freecad_gitpdm.core import log
-from freecad_gitpdm import commands
+from freecad.gitpdm.core import log
+from freecad.gitpdm import commands
 
 # NEW
 from freecad.gitpdm.core import log

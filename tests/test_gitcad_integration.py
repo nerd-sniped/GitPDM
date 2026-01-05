@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Tests for GitCAD integration layer (Sprint 3)
 Tests native Python core implementation.
@@ -9,7 +8,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from freecad_gitpdm.export import gitcad_integration
+from freecad.gitpdm.export import fcstd_export
 
 
 class TestNativeCoreIntegration:
@@ -64,7 +63,7 @@ class TestNativeCoreIntegration:
     def test_export_with_native_core(self, temp_repo, sample_fcstd):
         """Test export using native Python core."""
         # Export the file
-        result = gitcad_integration.gitcad_export_if_available(
+        result = fcstd_export.export_if_available(
             str(temp_repo),
             str(sample_fcstd)
         )
@@ -80,7 +79,7 @@ class TestNativeCoreIntegration:
     def test_import_with_native_core(self, temp_repo, sample_fcstd):
         """Test import using native Python core."""
         # First export to create uncompressed directory
-        gitcad_integration.gitcad_export_if_available(
+        fcstd_export.export_if_available(
             str(temp_repo),
             str(sample_fcstd)
         )
@@ -89,7 +88,7 @@ class TestNativeCoreIntegration:
         sample_fcstd.unlink()
         
         # Import should recreate it
-        result = gitcad_integration.gitcad_import_if_available(
+        result = fcstd_export.import_if_available(
             str(temp_repo),
             str(sample_fcstd)
         )
@@ -108,7 +107,7 @@ class TestNativeCoreIntegration:
         txt_file = temp_repo / "test.txt"
         txt_file.write_text("test")
         
-        result = gitcad_integration.gitcad_export_if_available(
+        result = fcstd_export.export_if_available(
             str(temp_repo),
             str(txt_file)
         )
@@ -119,7 +118,7 @@ class TestNativeCoreIntegration:
     def test_import_nonexistent_uncompressed_dir(self, temp_repo, sample_fcstd):
         """Test that import handles missing uncompressed directory gracefully."""
         # Try to import without exporting first
-        result = gitcad_integration.gitcad_import_if_available(
+        result = fcstd_export.import_if_available(
             str(temp_repo),
             str(sample_fcstd)
         )
@@ -133,14 +132,14 @@ class TestNativeCoreIntegration:
         original_content = sample_fcstd.read_bytes()
         
         # Export
-        gitcad_integration.gitcad_export_if_available(
+        fcstd_export.export_if_available(
             str(temp_repo),
             str(sample_fcstd)
         )
         
         # Delete and import
         sample_fcstd.unlink()
-        gitcad_integration.gitcad_import_if_available(
+        fcstd_export.import_if_available(
             str(temp_repo),
             str(sample_fcstd)
         )
@@ -153,3 +152,4 @@ class TestNativeCoreIntegration:
 
 
 # Sprint 3: Feature flag tests removed - native core is now the only implementation
+

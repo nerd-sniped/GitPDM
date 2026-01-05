@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Tests for fcstd_tool module
 Sprint 1: Core logic migration testing
@@ -10,8 +9,8 @@ import tempfile
 import zipfile
 import shutil
 
-from freecad_gitpdm.core import fcstd_tool
-from freecad_gitpdm.core.config_manager import FCStdConfig
+from freecad.gitpdm.core import fcstd_tool
+from freecad.gitpdm.core.config_manager import FCStdConfig
 
 
 @pytest.fixture
@@ -19,16 +18,16 @@ def temp_repo():
     """Create a temporary repository for testing."""
     with tempfile.TemporaryDirectory() as tmpdir:
         repo = Path(tmpdir)
-        (repo / ".git").mkdir()
-        (repo / "FreeCAD_Automation").mkdir()
+        (repo / \".git\").mkdir()
+        (repo / \".gitpdm\").mkdir()
         
         # Create a default config
-        config_file = repo / "FreeCAD_Automation" / "config.json"
+        config_file = repo / \".gitpdm\" / \"config.json\"
         config = FCStdConfig()
         
         import json
         with open(config_file, 'w') as f:
-            json.dump(config.to_gitcad_format(), f)
+            json.dump(config.to_dict(), f)
         
         yield repo
 

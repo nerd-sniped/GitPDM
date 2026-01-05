@@ -25,8 +25,8 @@ if dw and dw.widget():
         print(f"\nTesting native core flow...")
         
         # Step through using native core modules
-        from freecad_gitpdm.core.config_manager import has_config
-        from freecad_gitpdm.core.lock_manager import LockManager
+        from freecad.gitpdm.core.config_manager import has_config
+        from freecad.gitpdm.core.lock_manager import LockManager
         
         print(f"1. has_config: {has_config(repo)}")
         

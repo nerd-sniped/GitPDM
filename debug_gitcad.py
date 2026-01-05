@@ -9,9 +9,9 @@ print("Python version:", sys.version)
 # Step 1: Check imports (now using native core)
 print("\n=== Testing imports ===")
 try:
-    from freecad_gitpdm.core.config_manager import has_config, load_config
-    from freecad_gitpdm.core.lock_manager import LockManager
-    from freecad_gitpdm.core.fcstd_tool import export_fcstd, import_fcstd
+    from freecad.gitpdm.core.config_manager import has_config, load_config
+    from freecad.gitpdm.core.lock_manager import LockManager
+    from freecad.gitpdm.core.fcstd_tool import export_fcstd, import_fcstd
     print("✓ Native core imports successful")
 except Exception as e:
     print(f"✗ Import failed: {e}")
@@ -21,7 +21,7 @@ except Exception as e:
 # Step 2: Check if GitPDM/GitCAD directory exists
 print("\n=== Checking directories ===")
 import os
-repo_root = Path(r"C:\Factorem\Nerd-Sniped\GitPDM\GitCAD-main")
+repo_root = Path(r"C:\Factorem\Nerd-Sniped\GitPDM")
 automation_dir = repo_root / "FreeCAD_Automation"
 config_file = automation_dir / "config.json"
 
