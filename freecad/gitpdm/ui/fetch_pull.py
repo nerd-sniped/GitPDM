@@ -106,7 +106,7 @@ class FetchPullHandler:
 
         # CRITICAL Guard: block pull while ANY FreeCAD files are open
         # Pull can modify working tree files, corrupting open .FCStd files
-        open_docs = self._parent._get_all_open_fcstd_documents()
+        open_docs = self._parent._get_open_repo_documents()
         if open_docs:
             details_lines = ["Open FreeCAD documents:"]
             details_lines.extend([f"  - {p}" for p in open_docs[:10]])
