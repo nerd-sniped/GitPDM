@@ -7,9 +7,16 @@ The actual GUI initialization is in freecad/gitpdm/init_gui.py
 # Import and execute the workbench registration from the actual module
 import sys
 from pathlib import Path
+import os
 
 # Ensure the freecad package is importable
-addon_dir = Path(__file__).parent
+# Handle cases where __file__ might not be defined
+try:
+    addon_dir = Path(__file__).parent
+except NameError:
+    # Fallback: use current working directory or module path
+    addon_dir = Path(os.getcwd())
+    
 if str(addon_dir) not in sys.path:
     sys.path.insert(0, str(addon_dir))
 

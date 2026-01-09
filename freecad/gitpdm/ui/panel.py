@@ -1,6 +1,6 @@
 """
 GitPDM Panel UI Module
-Sprint 5 Phase 1: Refactored with modular components
+Phases 1-3: Modular actions-based architecture
 """
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -15,10 +15,10 @@ from freecad.gitpdm.git import client
 from freecad.gitpdm.ui import dialogs
 from freecad.gitpdm.ui.github_auth import GitHubAuthHandler
 from freecad.gitpdm.ui.file_browser import FileBrowserHandler
-from freecad.gitpdm.ui.fetch_pull import FetchPullHandler
-from freecad.gitpdm.ui.commit_push import CommitPushHandler
-from freecad.gitpdm.ui.repo_validator import RepoValidationHandler
-from freecad.gitpdm.ui.branch_ops import BranchOperationsHandler
+# Phase 2-3: Action-based handlers
+from freecad.gitpdm.ui.action_commit_push import ActionCommitPushHandler
+from freecad.gitpdm.ui.action_validation import ActionValidationHandler
+from freecad.gitpdm.ui.action_fetch_pull import ActionFetchPullHandler
 from freecad.gitpdm.ui.components import DocumentObserver, StatusWidget, RepositoryWidget, ChangesWidget
 from freecad.gitpdm.export import exporter, mapper
 from freecad.gitpdm.core import paths as core_paths
@@ -51,18 +51,16 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._job_runner = self._services.job_runner()
         self._job_runner.job_finished.connect(self._on_job_finished)
 
-        # Initialize handlers (Sprint 4)
+        # Initialize handlers (Phases 2-3: Action-based)
         self._github_auth = GitHubAuthHandler(self, self._services)
         self._file_browser = FileBrowserHandler(
             self, self._git_client, self._job_runner
         )
-        self._fetch_pull = FetchPullHandler(self, self._git_client, self._job_runner)
-        self._commit_push = CommitPushHandler(self, self._git_client, self._job_runner)
-        self._repo_validator = RepoValidationHandler(self, self._git_client)
-        self._branch_ops = BranchOperationsHandler(
-            self, self._git_client, self._job_runner
-        )
-        # GitCAD lock handler (Phase 2)
+        self._fetch_pull = ActionFetchPullHandler(self, self._git_client, self._job_runner)
+        self._commit_push = ActionCommitPushHandler(self, self._git_client, self._job_runner)
+        self._repo_validator = ActionValidationHandler(self, self._git_client, self._job_runner)
+        
+        # GitCAD lock handler
         from freecad.gitpdm.ui.lock_handler import LockHandler
         self._lock_handler = LockHandler(
             self, self._git_client, self._job_runner
@@ -96,13 +94,11 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._group_git_check = None
         self._group_repo_selector = None
         self._group_status = None
-        self._group_branch = None
         self._group_changes = None
         self._group_actions = None
         self._actions_extra_container = None
         self._repo_browser_container = None
         self._is_compact = False
-        self._branch_combo_updating = False  # Prevent recursive combo change events
 
         # Font sizes for labels
         self._meta_font_size = 9
@@ -137,7 +133,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         main_layout.addWidget(self._repository_widget)
         
         self._build_github_account_section(main_layout)
-        self._build_branch_section(main_layout)
         
         # ChangesWidget (Sprint 5 Phase 1.4)
         self._changes_widget = ChangesWidget(self, self._git_client, self._job_runner)
@@ -248,7 +243,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self.compact_toggle_btn.setText("Expand" if compact else "Collapse")
         show_full = not compact
         # Only toggle visibility for sections meant to be user-toggleable.
-        # System and Branch sections are permanently hidden per current UX.
         for w in [
             getattr(self, "_group_repo_selector", None),
             getattr(self, "_group_github_account", None),
@@ -377,10 +371,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         """Access connect remote button from RepositoryWidget."""
         return self._repository_widget.connect_remote_btn
     
-    @property
-    def branch_label(self):
-        """Access branch label from StatusWidget."""
-        return self._status_widget.branch_label
+
     
     @property
     def working_tree_label(self):
@@ -588,88 +579,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         layout.addWidget(group)
         self._group_github_account = group
-
-    def _build_branch_section(self, layout):
-        """
-        Build the branch management section with selector and actions.
-
-        Args:
-            layout: Parent layout to add widgets to
-        """
-        group = QtWidgets.QGroupBox("Branch")
-        group_layout = QtWidgets.QVBoxLayout()
-        group_layout.setContentsMargins(6, 4, 6, 4)
-        group_layout.setSpacing(4)
-        group.setLayout(group_layout)
-
-        # Branch selector row
-        selector_layout = QtWidgets.QHBoxLayout()
-        selector_layout.setSpacing(4)
-
-        selector_layout.addWidget(QtWidgets.QLabel("Current:"))
-
-        self.branch_combo = QtWidgets.QComboBox()
-        self.branch_combo.setMinimumWidth(120)
-        self.branch_combo.setSizePolicy(
-            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred
-        )
-        self.branch_combo.currentIndexChanged.connect(
-            self._branch_ops.branch_combo_changed
-        )
-        selector_layout.addWidget(self.branch_combo)
-
-        group_layout.addLayout(selector_layout)
-
-        # Action buttons row
-        actions_layout = QtWidgets.QHBoxLayout()
-        actions_layout.setSpacing(4)
-
-        self.new_branch_btn = QtWidgets.QPushButton("New Work Version…")
-        self.new_branch_btn.setToolTip(
-            "Create a new version to try different design ideas\n"
-            "(Like creating a new save file in a video game)\n\n"
-            "Git term: 'branch' - an independent line of development"
-        )
-        self.new_branch_btn.clicked.connect(self._branch_ops.new_branch_clicked)
-        actions_layout.addWidget(self.new_branch_btn)
-
-        self.switch_branch_btn = QtWidgets.QPushButton("Switch Version")
-        self.switch_branch_btn.setToolTip(
-            "Switch to a different work version\n"
-            "(Like loading a different save file)\n\n"
-            "Git term: 'checkout' or 'switch' - changes which branch you're working on"
-        )
-        self.switch_branch_btn.clicked.connect(self._branch_ops.switch_branch_clicked)
-        actions_layout.addWidget(self.switch_branch_btn)
-
-        self.delete_branch_btn = QtWidgets.QPushButton("Delete Version…")
-        self.delete_branch_btn.setToolTip(
-            "Permanently delete a work version you no longer need\n"
-            "(Can't be undone - be careful!)\n\n"
-            "Git term: 'delete branch' - removes a branch permanently"
-        )
-        self.delete_branch_btn.clicked.connect(self._branch_ops.delete_branch_clicked)
-        actions_layout.addWidget(self.delete_branch_btn)
-
-        group_layout.addLayout(actions_layout)
-
-        worktree_help_layout = QtWidgets.QHBoxLayout()
-        worktree_help_layout.addStretch()
-        self.worktree_help_btn = QtWidgets.QPushButton("About Work Versions")
-        self.worktree_help_btn.setToolTip(
-            "Learn how to keep each work version in its own folder\n"
-            "to prevent file corruption (recommended for complex projects)\n\n"
-            "Git term: 'worktree' - gives each branch its own directory"
-        )
-        self.worktree_help_btn.clicked.connect(self._branch_ops.worktree_help_clicked)
-        worktree_help_layout.addWidget(self.worktree_help_btn)
-        group_layout.addLayout(worktree_help_layout)
-
-        layout.addWidget(group)
-        # Branch section DISABLED: Needs export/import cycle to prevent file corruption
-        # TODO Sprint 8: Implement fcstd export before branch switch, import after
-        group.setVisible(False)
-        self._group_branch = group
 
     def _build_buttons_section(self, layout):
         """
@@ -1248,14 +1157,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     # ========== File Browser (Sprint 4: Delegated to FileBrowserHandler) ==========
     # Browser UI creation and management delegated to self._file_browser
 
-    def _refresh_branch_list(self):
-        """Update the branch list in the combo box (delegates to handler)."""
-        self._branch_ops.refresh_branch_list()
-
-    def _update_branch_button_states(self):
-        """Update enabled/disabled state of branch action buttons (delegates to handler)."""
-        self._branch_ops.update_branch_button_states()
-
     def _show_repo_opened_dialog(
         self, repo_path: str, action: str, repo_name: str = None
     ):
@@ -1419,6 +1320,39 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             return []
         return open_paths
 
+    def _get_all_open_fcstd_documents(self):
+        """
+        Return list of ALL open .FCStd files in FreeCAD, regardless of location.
+
+        This is used for worktree safety - we need to ensure NO FreeCAD files are open
+        when performing any git operations, since git worktree operations can affect
+        files in other worktrees indirectly.
+
+        Returns:
+            List of absolute paths to open .FCStd files
+        """
+        try:
+            import FreeCAD
+
+            list_docs = getattr(FreeCAD, "listDocuments", None)
+            if not callable(list_docs):
+                return []
+        except Exception:
+            return []
+
+        open_paths = []
+        try:
+            for doc in list_docs().values():
+                path = getattr(doc, "FileName", "") or ""
+                if path and path.lower().endswith(".fcstd"):
+                    try:
+                        open_paths.append(os.path.abspath(os.path.normpath(path)))
+                    except Exception:
+                        continue
+        except Exception:
+            return []
+        return open_paths
+
     def _start_working_directory_refresh(self):
         """Start periodic timer to maintain repo folder as FreeCAD's working directory."""
         if not hasattr(self, "_wd_refresh_timer"):
@@ -1451,10 +1385,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 self._set_freecad_working_directory(self._current_repo_root)
             except Exception as e:
                 log.debug(f"Working directory refresh error: {e}")
-
-    def _refresh_after_branch_operation(self):
-        """Refresh UI after branch operations (delegates to handler)."""
-        self._branch_ops.refresh_after_branch_operation()
 
     # Fetch/pull button handlers delegated to self._fetch_pull
 
@@ -1523,8 +1453,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 or self._commit_push.is_busy()
                 or self._job_runner.is_busy()
                 or self._active_operations  # Check tracked operations
-                or self._branch_ops._is_switching_branch
-                or self._branch_ops._is_loading_branches
             ):
                 self._update_operation_status(status_text)
 
