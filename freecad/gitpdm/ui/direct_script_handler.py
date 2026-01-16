@@ -98,6 +98,56 @@ class DirectScriptHandler:
         )
         self._show_result(result, "Add Remote")
     
+    # ========================================================================
+    # Additional Methods for Compatibility
+    # ========================================================================
+    
+    def validate_repo_path(self, path):
+        """Validate repository path - minimal implementation."""
+        result = script_validate(path)
+        # Silently validates - panel will handle UI updates
+        return result.success
+    
+    def fetch_branch_and_status(self, repo_root):
+        """Fetch branch and status - triggers panel refresh."""
+        # Panel will handle status updates via its own mechanisms
+        if hasattr(self.panel, '_refresh_git_status'):
+            self.panel._refresh_git_status()
+    
+    def refresh_clicked(self):
+        """Refresh button - triggers panel refresh."""
+        if hasattr(self.panel, '_refresh_git_status'):
+            self.panel._refresh_git_status()
+    
+    def create_repo_clicked(self):
+        """Create repo button - shows not implemented message."""
+        QtWidgets.QMessageBox.information(
+            self.panel,
+            "Create Repository",
+            "Repository creation wizard not yet implemented in minimal mode."
+        )
+    
+    def connect_remote_clicked(self):
+        """Connect remote button - delegates to add_remote."""
+        self.add_remote_clicked()
+    
+    def is_busy(self):
+        """Check if handler is busy - always False for synchronous scripts."""
+        return False
+    
+    def update_commit_push_button_label(self):
+        """Update button label - no-op for minimal mode."""
+        pass
+    
+    def handle_fetch_result(self, job):
+        """Handle fetch result - no-op for minimal mode."""
+        pass
+    
+    def _set_freecad_working_directory(self, directory):
+        """Set FreeCAD working directory - delegates to panel."""
+        if hasattr(self.panel, '_set_freecad_working_directory'):
+            self.panel._set_freecad_working_directory(directory)
+    
     def _show_result(self, result, operation: str):
         """Show script result - 1 helper method."""
         if result.success:

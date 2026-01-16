@@ -1,6 +1,5 @@
 """
 GitPDM Panel UI Module
-Phases 1-3: Modular actions-based architecture
 """
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -15,10 +14,8 @@ from freecad.gitpdm.git import client
 from freecad.gitpdm.ui import dialogs
 from freecad.gitpdm.ui.github_auth import GitHubAuthHandler
 from freecad.gitpdm.ui.file_browser import FileBrowserHandler
-# Phase 2-3: Action-based handlers
-from freecad.gitpdm.ui.action_commit_push import ActionCommitPushHandler
-from freecad.gitpdm.ui.action_validation import ActionValidationHandler
-from freecad.gitpdm.ui.action_fetch_pull import ActionFetchPullHandler
+# Phase 3: Direct script handler - minimal Python between buttons and scripts
+from freecad.gitpdm.ui.direct_script_handler import DirectScriptHandler
 from freecad.gitpdm.ui.components import DocumentObserver, StatusWidget, RepositoryWidget, ChangesWidget
 from freecad.gitpdm.export import exporter, mapper
 from freecad.gitpdm.core import paths as core_paths
@@ -51,14 +48,14 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._job_runner = self._services.job_runner()
         self._job_runner.job_finished.connect(self._on_job_finished)
 
-        # Initialize handlers (Phases 2-3: Action-based)
+        # Initialize handlers
         self._github_auth = GitHubAuthHandler(self, self._services)
         self._file_browser = FileBrowserHandler(
             self, self._git_client, self._job_runner
         )
-        self._fetch_pull = ActionFetchPullHandler(self, self._git_client, self._job_runner)
-        self._commit_push = ActionCommitPushHandler(self, self._git_client, self._job_runner)
-        self._repo_validator = ActionValidationHandler(self, self._git_client, self._job_runner)
+        
+        # Phase 3: Direct script handler - buttons call PowerShell scripts directly
+        self._script_handler = DirectScriptHandler(self)
         
         # GitCAD lock handler
         from freecad.gitpdm.ui.lock_handler import LockHandler
@@ -199,7 +196,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             "Save a checkpoint of your current work\n"
             "(Git term: 'commit' - creates a saved snapshot)"
         )
-        self.compact_commit_btn.clicked.connect(self._commit_push.commit_clicked)
+        self.compact_commit_btn.clicked.connect(self._script_handler.commit_clicked)
         row.addWidget(self.compact_commit_btn)
 
         container.setVisible(False)
@@ -601,7 +598,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             "Check if your team has shared new changes on GitHub\n"
             "(Git term: 'fetch' - downloads info about remote changes without applying them)"
         )
-        self.fetch_btn.clicked.connect(self._fetch_pull.fetch_clicked)
+        self.fetch_btn.clicked.connect(self._script_handler.fetch_clicked)
         row1_layout.addWidget(self.fetch_btn)
 
         self.pull_btn = QtWidgets.QPushButton("Get Updates")
@@ -610,7 +607,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             "Download and apply changes from your team\n"
             "(Git term: 'pull' - combines fetch + merge to update your local files)"
         )
-        self.pull_btn.clicked.connect(self._fetch_pull.pull_clicked)
+        self.pull_btn.clicked.connect(self._script_handler.pull_clicked)
         row1_layout.addWidget(self.pull_btn)
 
         group_layout.addLayout(row1_layout)
@@ -652,7 +649,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             "Save your work and share it with your team on GitHub\n"
             "(Git terms: 'commit' = save checkpoint, 'push' = upload to GitHub)"
         )
-        self.commit_push_btn.clicked.connect(self._commit_push.commit_push_clicked)
+        self.commit_push_btn.clicked.connect(self._script_handler.commit_and_push_clicked)
 
         # Dropdown menu for workflow selection
         self.workflow_menu = QtWidgets.QMenu(self)
@@ -981,12 +978,12 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.root_toggle_btn.setText("Hide root" if checked else "Show root")
 
     def _validate_repo_path(self, path):
-        """Validate repository path - delegated to RepoValidationHandler."""
-        self._repo_validator.validate_repo_path(path)
+        """Validate repository path - delegated to DirectScriptHandler."""
+        self._script_handler.validate_repo_path(path)
 
     def _fetch_branch_and_status(self, repo_root):
-        """Fetch branch and status - delegated to RepoValidationHandler."""
-        self._repo_validator.fetch_branch_and_status(repo_root)
+        """Fetch branch and status - delegated to DirectScriptHandler."""
+        self._script_handler.fetch_branch_and_status(repo_root)
 
     def _update_upstream_info(self, repo_root):
         """
@@ -1008,7 +1005,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._status_widget.update_upstream_info(repo_root)
 
     # ========== Fetch/Pull Operations (Sprint 4: Delegated to FetchPullHandler) ==========
-    # Fetch and pull operations fully delegated to self._fetch_pull handler
+    # Fetch and pull operations fully delegated to self._script_handler
 
     def _update_button_states(self):
         """Update enabled/disabled state of action buttons (uses cached values only)."""
@@ -1031,8 +1028,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         changes_present = len(self._file_statuses) > 0
         commit_msg_ok = False
         busy = (
-            self._fetch_pull.is_busy()
-            or self._commit_push.is_busy()
+            self._script_handler.is_busy()
             or self._job_runner.is_busy()
         )
 
@@ -1373,7 +1369,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         Args:
             directory: Absolute path to set as working directory
         """
-        self._repo_validator._set_freecad_working_directory(directory)
+        self._script_handler._set_freecad_working_directory(directory)
 
     def _refresh_working_directory(self):
         """Periodic refresh of working directory to maintain repo folder as default."""
@@ -1386,7 +1382,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             except Exception as e:
                 log.debug(f"Working directory refresh error: {e}")
 
-    # Fetch/pull button handlers delegated to self._fetch_pull
+    # Fetch/pull button handlers delegated to self._script_handler
 
     def _update_operation_status(self, status_text):
         """
@@ -1449,8 +1445,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         def _to_ready():
             # Sprint PERF-4: Check all operation states including active_operations
             if not (
-                self._fetch_pull.is_busy()
-                or self._commit_push.is_busy()
+                self._script_handler.is_busy()
                 or self._job_runner.is_busy()
                 or self._active_operations  # Check tracked operations
             ):
@@ -1562,7 +1557,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
     def _update_commit_push_button_default_label(self):
         """Set the combined button label based on workflow mode."""
-        self._commit_push.update_commit_push_button_label()
+        self._script_handler.update_commit_push_button_label()
 
     def _on_commit_message_changed(self):
         """Called when commit message text changes (debounced)."""
@@ -1571,15 +1566,15 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
     def _on_refresh_clicked(self):
         """Handle Refresh Status button click."""
-        self._repo_validator.refresh_clicked()
+        self._script_handler.refresh_clicked()
 
     def _on_create_repo_clicked(self):
         """Handle Create Repo button click."""
-        self._repo_validator.create_repo_clicked()
+        self._script_handler.create_repo_clicked()
 
     def _on_connect_remote_clicked(self):
         """Handle Connect Remote button click."""
-        self._repo_validator.connect_remote_clicked()
+        self._script_handler.connect_remote_clicked()
 
     def _on_job_finished(self, job):
         """
@@ -1593,11 +1588,11 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         log.debug(f"Job finished: {job_type}")
 
         if job_type == "fetch":
-            self._fetch_pull.handle_fetch_result(job)
+            self._script_handler.handle_fetch_result(job)
         elif job_type == "stage_previews":
             self._handle_stage_previews_result(job)
 
-    # Fetch result handling delegated to self._fetch_pull handler
+    # Fetch result handling delegated to self._script_handler
 
     # --- Sprint 6: Generate Previews ---
 
