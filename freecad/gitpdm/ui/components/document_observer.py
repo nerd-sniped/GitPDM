@@ -62,6 +62,9 @@ class DocumentObserver:
 
             log.debug(f"Checking if {filename} is in {repo_root}")
 
+            # Check if file is in repository
+            # Note: This only triggers for .FCStd files. For other file types,
+            # users need to click Refresh button to see changes.
             if filename.startswith(repo_root):
                 log.info(f"Document saved in repo, scheduling refresh")
 

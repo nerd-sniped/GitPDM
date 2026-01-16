@@ -92,6 +92,13 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._is_updating_upstream = (
             False  # Sprint PERF-1: prevent concurrent upstream updates
         )
+        
+        # Auto-refresh timer for detecting file system changes
+        self._auto_refresh_timer = QtCore.QTimer(self)
+        self._auto_refresh_timer.setInterval(5000)  # Check every 5 seconds
+        self._auto_refresh_timer.timeout.connect(self._on_auto_refresh_tick)
+        self._auto_refresh_enabled = True  # Enable by default
+        
         self._doc_observer = None
         self._group_git_check = None
         self._group_repo_selector = None
@@ -281,6 +288,11 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
             # Start periodic working directory refresh to maintain repo folder as default
             self._start_working_directory_refresh()
+            
+            # Start auto-refresh timer to detect file system changes
+            if self._auto_refresh_enabled and self._current_repo_root:
+                self._auto_refresh_timer.start()
+                log.info("Auto-refresh timer started (5 second interval)")
 
             log.info("GitPDM dock panel initialized")
         except Exception as e:
@@ -313,6 +325,11 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
     def closeEvent(self, event):
         """Handle dock widget close - cleanup observers."""
+        # Stop auto-refresh timer
+        if hasattr(self, '_auto_refresh_timer'):
+            self._auto_refresh_timer.stop()
+            log.debug("Auto-refresh timer stopped")
+        
         if self._doc_observer is not None:
             try:
                 import FreeCAD
@@ -509,6 +526,16 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 # Refresh lock handler availability
                 if hasattr(self, '_lock_handler'):
                     self._lock_handler.check_availability(path)
+        
+        # Start or restart auto-refresh timer
+        if hasattr(self, '_auto_refresh_timer') and self._auto_refresh_enabled:
+            if path:
+                if not self._auto_refresh_timer.isActive():
+                    self._auto_refresh_timer.start()
+                    log.info("Auto-refresh timer started for repository")
+            else:
+                self._auto_refresh_timer.stop()
+                log.debug("Auto-refresh timer stopped (no repo)")
         
         # Trigger validation
         self._validate_repo_path_async()
@@ -1443,6 +1470,25 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 f"Working… {self._busy_label}",
                 is_error=False,
             )
+    
+    def _on_auto_refresh_tick(self):
+        """
+        Periodic auto-refresh to detect file system changes.
+        
+        This runs every 5 seconds to check for new/modified files that
+        aren't detected by the DocumentObserver (which only sees .FCStd saves).
+        """
+        # Only refresh if we have a repo and aren't already refreshing
+        if not self._current_repo_root or self._is_refreshing_status:
+            return
+        
+        # Only refresh if not busy with other operations
+        if self._active_operations:
+            log.debug("Skipping auto-refresh: operations in progress")
+            return
+        
+        log.debug("Auto-refresh: checking for file changes")
+        self._refresh_status_views(self._current_repo_root)
 
     def _set_ready_later(self, delay_ms=1500, status_text="Ready"):
         """Return UI to Ready after a short delay if idle (Sprint PERF-4: enhanced)."""

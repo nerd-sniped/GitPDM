@@ -1347,6 +1347,8 @@ class GitClient:
             return "AUTH_OR_PERMISSION"
         if "could not read from remote repository" in lower:
             return "AUTH_OR_PERMISSION"
+        if "repository not found" in lower:
+            return "REPO_NOT_FOUND"
 
         if "no configured push destination" in lower:
             return "NO_UPSTREAM"

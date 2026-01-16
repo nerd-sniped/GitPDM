@@ -611,19 +611,48 @@ class _ProgressPage(QtWidgets.QWizardPage):
             self._add_step("Setting up remote…")
             log.info(f"Step 8: Adding origin remote")
             clone_url = repo_info.clone_url
+            log.info(f"Clone URL from GitHub: {clone_url}")
+            log.info(f"Repo full name: {repo_info.full_name}")
+            
+            # Sanitize URL (remove trailing slashes)
+            clone_url = clone_url.rstrip('/')
+            log.info(f"Sanitized clone URL: {clone_url}")
+            
             remote_result = git_client.add_remote(folder_abs, "origin", clone_url)
             if not remote_result.ok:
                 log.error(f"Failed to add remote: {remote_result.stderr}")
                 self._update_step_error(8, remote_result.stderr)
                 return
-            self._update_step_success(8, "Origin remote added")
+            self._update_step_success(8, f"Origin remote added: {clone_url}")
 
             # === STEP 9: Push to GitHub ===
             self._add_step("Pushing to GitHub…")
             log.info(f"Step 9: Pushing to GitHub")
+            log.info(f"Remote URL: {clone_url}")
+            log.info(f"Remote name: origin")
+            
             push_result = git_client.push(folder_abs, "origin")
             if not push_result.ok:
-                if "AUTH_OR_PERMISSION" in (push_result.error_code or ""):
+                error_code = push_result.error_code or ""
+                if "REPO_NOT_FOUND" in error_code:
+                    msg = (
+                        f"Repository not found on GitHub.\n\n"
+                        f"Expected: {clone_url}\n"
+                        f"Repository: {repo_info.full_name}\n\n"
+                        f"This can happen if:\n"
+                        f"• Repository was created under wrong account/org\n"
+                        f"• URL formatting issue\n"
+                        f"• GitHub needs a moment to propagate changes\n\n"
+                        f"Try:\n"
+                        f"1. Visit {repo_info.html_url} to verify it exists\n"
+                        f"2. Check you're authenticated as the correct user\n"
+                        f"3. Wait 30 seconds and try pushing manually:\n"
+                        f"   cd \"{folder_abs}\"\n"
+                        f"   git push -u origin main"
+                    )
+                    log.error(f"Push failed - repo not found: {clone_url}")
+                    self._update_step_error(9, msg)
+                elif "AUTH_OR_PERMISSION" in error_code:
                     msg = (
                         "Authentication failed.\n\n"
                         "Ensure Git Credential Manager is configured and "
