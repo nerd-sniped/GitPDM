@@ -85,7 +85,33 @@ GitPDM incorporates and builds upon innovations from the GitCAD project by Micha
 Comprehensive documentation is available in the [docs](docs/) folder:
 
 - **[Complete Documentation](docs/README.md)** - Full user guide, tutorials, and reference
+- **[Button API Guide](docs/BUTTON_API.md)** - How to add new Git operations
+- **[Development Cheatsheet](docs/CHEATSHEET.md)** - Quick reference for developers
 - **[Testing Guide](docs/TESTING_GUIDE.md)** - For contributors and testers
+
+## Architecture
+
+GitPDM uses a clean, simple architecture:
+
+```
+Button Click (UI)
+    ↓
+Handler Method (2-5 lines Python)
+    ↓
+Script Executor
+    ↓
+PowerShell/Bash Script
+    ↓
+Git Command
+```
+
+**Key Benefits:**
+- **Simple**: Direct path from UI to Git, no middleware
+- **Testable**: Scripts can be run independently from command line
+- **Maintainable**: Git logic in scripts, Python only for UI
+- **Cross-platform**: PowerShell (Windows) / Bash (Linux/Mac)
+
+See [BUTTON_API.md](docs/BUTTON_API.md) for how to add new operations.
 
 ## Module Structure
 
@@ -100,11 +126,11 @@ GitPDM/
 │       ├── workbench.py      # Workbench definition
 │       ├── commands.py       # FreeCAD commands
 │       ├── auth/             # GitHub authentication
-│       ├── core/             # Core functionality
+│       ├── core/             # Core functionality & script executor
 │       ├── export/           # Export workflows
-│       ├── git/              # Git operations
+│       ├── git/              # Git client operations
 │       ├── github/           # GitHub API
-│       ├── gitcad/           # GitCAD integration
+│       ├── scripts/          # PowerShell/Bash git scripts
 │       └── ui/               # User interface
 ├── tests/                    # Test suite
 ├── docs/                     # Documentation

@@ -1,5 +1,5 @@
 """
-GitPDM Panel UI Module
+GitPDM Panel UI Module - Main FreeCAD Dock Widget
 """
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -14,7 +14,6 @@ from freecad.gitpdm.git import client
 from freecad.gitpdm.ui import dialogs
 from freecad.gitpdm.ui.github_auth import GitHubAuthHandler
 from freecad.gitpdm.ui.file_browser import FileBrowserHandler
-# Phase 3: Direct script handler - minimal Python between buttons and scripts
 from freecad.gitpdm.ui.direct_script_handler import DirectScriptHandler
 from freecad.gitpdm.ui.components import DocumentObserver, StatusWidget, RepositoryWidget, ChangesWidget
 from freecad.gitpdm.export import exporter, mapper
@@ -26,8 +25,14 @@ from freecad.gitpdm.core import publish
 
 class GitPDMDockWidget(QtWidgets.QDockWidget):
     """
-    Main GitPDM dock widget panel
-    Sprint 1: Git status, validation, and controls
+    Main GitPDM dock widget panel.
+    
+    Provides UI for:
+    - Git repository status and operations
+    - Commit, push, fetch, pull controls
+    - GitHub authentication
+    - Export and preview generation
+    - GitCAD lock management
     """
 
     def __init__(self, services=None):
@@ -36,7 +41,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.setWindowTitle("Git PDM")
         self.setMinimumWidth(300)
 
-        # Service container (Sprint 3)
+        # Service container
         if services is None:
             from freecad.gitpdm.core.services import get_services
 
@@ -54,7 +59,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self, self._git_client, self._job_runner
         )
         
-        # Phase 3: Direct script handler - buttons call PowerShell scripts directly
+        # Git operations handler - executes scripts directly
         self._script_handler = DirectScriptHandler(self)
         
         # GitCAD lock handler
