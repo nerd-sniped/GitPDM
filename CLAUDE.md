@@ -104,7 +104,7 @@ CI fail.
 
 ### CI
 
-`.github/workflows/ci.yml` runs on push/PR to `main` and `develop`: ruff lint
+`.github/workflows/ci.yml` runs on push/PR to `main` and `dev`: ruff lint
 and format check, pytest across Python 3.10/3.11/3.12 on Linux/Windows/macOS,
 and the architecture guard. All three must pass.
 
