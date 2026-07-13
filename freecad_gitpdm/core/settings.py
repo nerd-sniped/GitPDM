@@ -11,6 +11,13 @@ from freecad_gitpdm.core import log
 # Parameter group path in FreeCAD's parameter tree
 PARAM_GROUP_PATH = "User parameter:BaseApp/Preferences/Mod/GitPDM"
 
+# FreeCAD's own document-save preferences (not GitPDM-specific).
+# CompressionLevel controls the zlib deflate level used when zipping .FCStd
+# files (0 = store/no compression, 9 = max). It's a global FreeCAD
+# preference, not per-repo or per-document.
+DOCUMENT_PARAM_GROUP_PATH = "User parameter:BaseApp/Preferences/Document"
+GIT_FRIENDLY_COMPRESSION_LEVEL = 0
+
 
 def get_param_group():
     """
@@ -55,6 +62,53 @@ def load_repo_path():
     except Exception as e:
         log.error(f"Failed to load repo path: {e}")
         return ""
+
+
+def get_fcstd_compression_level():
+    """
+    Read FreeCAD's current .FCStd save compression level (0-9).
+
+    Returns:
+        int | None: current level, or None if it couldn't be read
+    """
+    try:
+        import FreeCAD
+
+        param_group = FreeCAD.ParamGet(DOCUMENT_PARAM_GROUP_PATH)
+        return param_group.GetInt("CompressionLevel", 3)
+    except Exception as e:
+        log.error(f"Failed to read FCStd compression level: {e}")
+        return None
+
+
+def ensure_git_friendly_fcstd_compression():
+    """
+    Set FreeCAD's .FCStd save compression to 0 (store, no deflate).
+
+    .FCStd files are ZIP archives. Deflate compression makes even a small
+    model edit rewrite most of the archive's bytes, so Git can't diff or
+    delta-compress saves meaningfully. Storing entries uncompressed keeps
+    unchanged internal files byte-identical across saves, so Git's own pack
+    compression (and Git LFS) can actually do its job.
+
+    This is a global FreeCAD preference (applies to every document FreeCAD
+    saves, not just files in a Git repo), so it's only written when it's
+    not already at the git-friendly level, and is meant to be called once a
+    repo becomes the active GitPDM repo.
+    """
+    try:
+        import FreeCAD
+
+        param_group = FreeCAD.ParamGet(DOCUMENT_PARAM_GROUP_PATH)
+        current = param_group.GetInt("CompressionLevel", 3)
+        if current != GIT_FRIENDLY_COMPRESSION_LEVEL:
+            param_group.SetInt("CompressionLevel", GIT_FRIENDLY_COMPRESSION_LEVEL)
+            log.info(
+                "Set FreeCAD document compression level to 0 (store) for "
+                "git-friendly .FCStd saves"
+            )
+    except Exception as e:
+        log.error(f"Failed to set FCStd compression level: {e}")
 
 
 def save_setting(key, value):

@@ -415,6 +415,16 @@ Git is optimized for many small text changes. CAD files are larger binaries.
 
 ---
 
+## Why GitPDM Sets FreeCAD's Compression Level to 0
+
+`.FCStd` files are ZIP archives, and FreeCAD compresses (deflates) the entries inside by default. Deflate output is sensitive to small input changes — editing one feature can rewrite most of the archive's compressed bytes even though the underlying model barely changed, which leaves Git (and LFS) nothing meaningful to diff or delta-compress between saves.
+
+When GitPDM validates a repository (opening an existing one, or right after creating a new one through the wizard), it sets FreeCAD's own **Compression level** preference (`Edit → Preferences → General → Save`) to **0** (store, no deflate). With entries stored uncompressed, unchanged internal files stay byte-identical across saves, so Git's own pack compression and LFS can actually do their job without any extra tooling.
+
+This is a FreeCAD-wide preference, not a per-repository setting — FreeCAD doesn't support saving it per project — so it affects every `.FCStd` file you save afterward, not only ones tracked by GitPDM. GitPDM only changes it (and logs when it does, in the Report View) if it isn't already set to 0; it won't repeatedly overwrite a value you set yourself. If you'd rather manage this manually, set it back in FreeCAD's preferences — GitPDM won't fight you on it until the next repo you open triggers the check again.
+
+---
+
 ## What “Publishing” Adds Beyond Regular Commits
 
 A regular commit is primarily for restoring and collaborating on versions.

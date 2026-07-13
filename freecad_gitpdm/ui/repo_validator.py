@@ -227,6 +227,11 @@ class RepoValidationHandler:
         # This ensures Save As dialog defaults to repo folder
         self._set_freecad_working_directory(repo_root)
 
+        # Set .FCStd save compression to 0 (store) so Git can actually diff
+        # and delta-compress saves instead of getting an unrelated blob of
+        # deflate bytes on every change.
+        settings.ensure_git_friendly_fcstd_compression()
+
         # Fetch branch and status
         self.fetch_branch_and_status(repo_root)
         # Refresh repo browser
