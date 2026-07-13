@@ -312,6 +312,20 @@ class RepoValidationHandler:
                     param_grp.SetString("FileOpenSavePath", directory)
                     log.info(f"Set FreeCAD FileOpenSavePath: {directory}")
 
+                # Force Qt's own file dialog instead of the OS-native one.
+                # The native Windows Save dialog keeps its own persisted
+                # "last folder used" (in the registry) that silently overrides
+                # whatever directory FreeCAD/GitPDM passes in; Qt's dialog
+                # honors FileOpenSavePath/DefaultPath directly.
+                try:
+                    dlg_param = FreeCAD.ParamGet(
+                        "User parameter:BaseApp/Preferences/Dialog"
+                    )
+                    if dlg_param:
+                        dlg_param.SetBool("DontUseNativeDialog", True)
+                except Exception as e:
+                    log.debug(f"Could not set DontUseNativeDialog: {e}")
+
                 # Also set document-specific parameters
                 try:
                     doc_param = FreeCAD.ParamGet(

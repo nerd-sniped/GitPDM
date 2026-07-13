@@ -36,14 +36,25 @@ class TestDetectCategory:
 
 
 def _write_manifest(
-    previews_dir, rel_dir, part_name, source_rel, category="part", bbox=None
+    previews_dir,
+    rel_dir,
+    part_name,
+    source_rel,
+    category="part",
+    bbox=None,
+    artifacts=None,
 ):
     out_dir = previews_dir / rel_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / f"{part_name}.png").write_bytes(b"fake-png")
+    if artifacts is None:
+        artifacts = {
+            "model": f"previews/{rel_dir}/{part_name}.obj",
+            "stl": f"previews/{part_name}.stl",
+        }
     manifest = {
         "source": {"path": source_rel},
-        "artifacts": {"model": f"previews/{rel_dir}/{part_name}.obj"},
+        "artifacts": artifacts,
         "stats": {"bboxMm": bbox or [10.0, 20.0, 30.0]},
         "category": category,
     }
@@ -82,6 +93,24 @@ class TestCollectEntries:
         (previews / "bad.json").write_text("not json", encoding="utf-8")
         assert glossary.collect_entries(tmp_path, {}) == []
 
+    def test_link_prefers_stl_over_model(self, tmp_path):
+        previews = tmp_path / "previews"
+        _write_manifest(previews, "cad/a", "A", "cad/a/A.FCStd")
+        entries = glossary.collect_entries(tmp_path, {})
+        assert entries[0]["link_rel"] == "previews/A.stl"
+
+    def test_link_falls_back_to_model_without_stl(self, tmp_path):
+        previews = tmp_path / "previews"
+        _write_manifest(
+            previews,
+            "cad/a",
+            "A",
+            "cad/a/A.FCStd",
+            artifacts={"model": "previews/cad/a/A.obj"},
+        )
+        entries = glossary.collect_entries(tmp_path, {})
+        assert entries[0]["link_rel"] == "previews/cad/a/A.obj"
+
 
 class TestRenderSection:
     def test_empty_state(self):
@@ -97,15 +126,30 @@ class TestRenderSection:
                 "source_rel": "cad/Bracket.FCStd",
                 "category": "part",
                 "png_rel": "previews/Bracket.png",
-                "model_rel": "previews/Bracket.obj",
+                "link_rel": "previews/Bracket.stl",
                 "bbox": "10.0 x 20.0 x 30.0",
             }
         ]
         section = glossary.render_section(entries)
         assert "Bracket" in section
         assert "cad/Bracket.FCStd" in section
+        assert "[![Bracket](previews/Bracket.png)](previews/Bracket.stl)" in section
+        assert "[Bracket](previews/Bracket.stl)" in section
+
+    def test_renders_thumbnail_without_link_when_no_model(self):
+        entries = [
+            {
+                "name": "Bracket",
+                "source_rel": "cad/Bracket.FCStd",
+                "category": "part",
+                "png_rel": "previews/Bracket.png",
+                "link_rel": None,
+                "bbox": "10.0 x 20.0 x 30.0",
+            }
+        ]
+        section = glossary.render_section(entries)
         assert "![Bracket](previews/Bracket.png)" in section
-        assert "[Bracket](previews/Bracket.obj)" in section
+        assert "[![Bracket]" not in section
 
 
 class TestUpdateReadme:

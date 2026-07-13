@@ -185,6 +185,12 @@ default — the section is inserted between
 `<!-- GITPDM:PART-GLOSSARY:START -->` / `<!-- GITPDM:PART-GLOSSARY:END -->`
 markers so the rest of your `README.md` is left untouched.
 
+The thumbnail and part name both link to the part's `.stl` file. GitHub
+renders an interactive 3D viewer when you open an `.stl` blob directly, so
+clicking through from the glossary opens that viewer (this only works on
+GitHub's own file page — a live 3D viewer can't be embedded inline in a
+rendered `README.md`).
+
 1. Add (or edit) `.freecad-pdm/preset.json` with a `partGlossary` section:
    ```json
    {
@@ -202,6 +208,23 @@ markers so the rest of your `README.md` is left untouched.
 4. `exclude` — glob patterns (matched against the repo-relative source path,
    e.g. `cad/fasteners/*`) for parts to always leave out of the glossary.
 5. Commit the preset, export/publish a part, and check `README.md`.
+
+---
+
+## How to Avoid Wrong Save Locations for New Parts
+
+**Goal:** Make sure new documents save inside your repo, not some unrelated
+folder.
+
+FreeCAD's own Save dialog can't be reliably steered to a specific folder for
+a document that has never been saved before — its starting folder comes from
+internal state that isn't refreshed from preferences per dialog, so it can
+default to your home folder or whatever folder a previous project last used.
+
+For a document created via **File → New**, use **Git PDM → Save Into Repo**
+instead of `Ctrl+S` for its first save. It shows its own dialog defaulting to
+the repo's `cad/` folder and saves directly — once saved this way, later
+`Ctrl+S`/Save As on that document will also default correctly.
 
 ---
 
@@ -277,6 +300,8 @@ Accurate lookup documentation. Minimal narrative.
 - Optional GitHub integration via OAuth device flow
 - Preview export and publishing pipeline (thumbnail PNG, JSON metadata, STL)
 - Auto-generated "Part Glossary" section in `README.md` from exported previews
+- "Save Into Repo" command so new documents reliably save inside the repo
+  instead of wherever FreeCAD's Save dialog last defaulted to
 - Safety guards to reduce risk of file corruption during risky operations
 
 ### Known limitation: branch switching

@@ -23,7 +23,7 @@ class GitPDMWorkbench(FreeCADGui.Workbench):
         from freecad_gitpdm import commands
 
         # List of command names to register
-        self._commands = ["GitPDM_TogglePanel"]
+        self._commands = ["GitPDM_TogglePanel", "GitPDM_SaveIntoRepo"]
 
         # Create toolbar
         self.appendToolbar("Git PDM", self._commands)

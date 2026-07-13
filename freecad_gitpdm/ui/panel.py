@@ -46,6 +46,24 @@ class _DocumentObserver:
         self._refresh_timer.timeout.connect(self._do_refresh)
         log.debug("DocumentObserver created")
 
+    def slotCreatedDocument(self, doc):
+        """
+        Called when a new document is created (e.g. File > New).
+
+        Reasserts the working directory immediately, rather than waiting on
+        the periodic timer, since a document created via File > New can be
+        saved for the first time before that timer's next tick — and by then
+        FreeCAD may have already reset FileOpenSavePath to whatever folder a
+        prior document/dialog last touched.
+        """
+        if not self._panel._current_repo_root:
+            return
+        try:
+            self._panel._set_freecad_working_directory(self._panel._current_repo_root)
+            log.debug("Reasserted working directory on new document creation")
+        except Exception as e:
+            log.debug(f"Failed to reassert working directory on new document: {e}")
+
     def slotFinishSaveDocument(self, doc, filename):
         """Called after a document is saved."""
         log.info(f"Document saved: {filename}")

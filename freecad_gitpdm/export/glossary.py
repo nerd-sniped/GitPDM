@@ -59,7 +59,8 @@ def _load_entry(json_path: Path, repo_root: Path) -> Optional[Dict[str, Any]]:
 
     png_path = json_path.with_suffix(".png")
     artifacts = data.get("artifacts", {}) or {}
-    model_rel = artifacts.get("model") or artifacts.get("stl")
+    # Prefer STL: GitHub renders an interactive 3D viewer for .stl blobs.
+    link_rel = artifacts.get("stl") or artifacts.get("model")
 
     bbox = (data.get("stats", {}) or {}).get("bboxMm")
     if isinstance(bbox, list) and len(bbox) == 3 and all(v is not None for v in bbox):
@@ -74,7 +75,7 @@ def _load_entry(json_path: Path, repo_root: Path) -> Optional[Dict[str, Any]]:
         "png_rel": png_path.relative_to(repo_root).as_posix()
         if png_path.is_file()
         else None,
-        "model_rel": model_rel,
+        "link_rel": link_rel,
         "bbox": bbox_str,
     }
 
@@ -123,8 +124,13 @@ def render_section(entries: List[Dict[str, Any]]) -> str:
         lines.append("| Preview | Name | Path | Category | Bounding Box (mm) |")
         lines.append("|---|---|---|---|---|")
         for e in entries:
-            thumb = f"![{e['name']}]({e['png_rel']})" if e["png_rel"] else ""
-            name = f"[{e['name']}]({e['model_rel']})" if e["model_rel"] else e["name"]
+            if e["png_rel"] and e["link_rel"]:
+                thumb = f"[![{e['name']}]({e['png_rel']})]({e['link_rel']})"
+            elif e["png_rel"]:
+                thumb = f"![{e['name']}]({e['png_rel']})"
+            else:
+                thumb = ""
+            name = f"[{e['name']}]({e['link_rel']})" if e["link_rel"] else e["name"]
             lines.append(
                 f"| {thumb} | {name} | `{e['source_rel']}` | {e['category']} | {e['bbox']} |"
             )

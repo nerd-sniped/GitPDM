@@ -691,31 +691,6 @@ class _ProgressPage(QtWidgets.QWizardPage):
         if index >= 0:
             self._update_step_error(index, message)
 
-    def _add_status(self, message: str):
-        """Append message to status display."""
-        current = self._status_text.toPlainText()
-        if current:
-            self._status_text.setText(current + "\n" + message)
-        else:
-            self._status_text.setText(message)
-        # Scroll to bottom
-        cursor = self._status_text.textCursor()
-        cursor.movePosition(cursor.End)
-        self._status_text.setTextCursor(cursor)
-
-    def _show_recovery(self, context: str, folder: str, repo_url: str):
-        """Show recovery steps for partial failure."""
-        msg = (
-            f"Repository was created on GitHub but local setup encountered an issue.\n\n"
-            f"Recovery steps:\n"
-            f"1. Delete the repository on GitHub: {repo_url}\n"
-            f"   OR\n"
-            f"2. Fix the issue and manually initialize {folder}\n"
-            f"   Then run: git remote add origin {repo_url}\n"
-            f"   And: git push -u origin main"
-        )
-        self._add_status(msg)
-
     def _set_step_active(self, index: int):
         """Mark step as in-progress."""
         if 0 <= index < self._progress_list.count():
@@ -747,7 +722,7 @@ class _ProgressPage(QtWidgets.QWizardPage):
             self._status_text.setText(message)
         # Scroll to bottom
         cursor = self._status_text.textCursor()
-        cursor.movePosition(cursor.End)
+        cursor.movePosition(QtGui.QTextCursor.MoveOperation.End)
         self._status_text.setTextCursor(cursor)
 
     def _show_recovery(self, context: str, folder: str, repo_url: str):
