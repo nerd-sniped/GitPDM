@@ -173,6 +173,38 @@ Goal-oriented recipes for specific problems.
 
 ---
 
+## How to Configure the Part Glossary
+
+**Goal:** Show exported parts in your project's `README.md` automatically.
+
+GitPDM maintains a "Part Glossary" section in your repository's `README.md`,
+listing every part with a generated preview (thumbnail, path, category,
+bounding box) so collaborators can browse parts without digging through
+folders. It's regenerated every time you export/publish, and is enabled by
+default — the section is inserted between
+`<!-- GITPDM:PART-GLOSSARY:START -->` / `<!-- GITPDM:PART-GLOSSARY:END -->`
+markers so the rest of your `README.md` is left untouched.
+
+1. Add (or edit) `.freecad-pdm/preset.json` with a `partGlossary` section:
+   ```json
+   {
+     "partGlossary": {
+       "enabled": true,
+       "onlyAssemblies": false,
+       "exclude": ["cad/fasteners/*"]
+     }
+   }
+   ```
+2. `enabled` — turn the whole feature off (`false`) if you don't want GitPDM
+   touching `README.md`.
+3. `onlyAssemblies` — only list parts GitPDM detects as assemblies (documents
+   with linked sub-parts or more than one body), hiding standalone parts.
+4. `exclude` — glob patterns (matched against the repo-relative source path,
+   e.g. `cad/fasteners/*`) for parts to always leave out of the glossary.
+5. Commit the preset, export/publish a part, and check `README.md`.
+
+---
+
 ## How to Fix “Git Is Not Recognized as a Command”
 
 **Goal:** Make Git available to GitPDM.
@@ -244,6 +276,7 @@ Accurate lookup documentation. Minimal narrative.
 - Version control of files inside a Git repository (commit/push/pull/fetch)
 - Optional GitHub integration via OAuth device flow
 - Preview export and publishing pipeline (thumbnail PNG, JSON metadata, STL)
+- Auto-generated "Part Glossary" section in `README.md` from exported previews
 - Safety guards to reduce risk of file corruption during risky operations
 
 ### Known limitation: branch switching
@@ -305,6 +338,10 @@ previews/
              preview.json
              preview.glb
 ```
+
+Each part's `preview.json` includes a `category` field (`"part"` or
+`"assembly"`, auto-detected) used by the Part Glossary's `onlyAssemblies`
+filter — see [How to Configure the Part Glossary](#how-to-configure-the-part-glossary).
 
 ---
 

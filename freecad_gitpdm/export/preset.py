@@ -35,7 +35,15 @@ _DEFAULT_PRESET: Dict[str, Any] = {
         "angularDeflectionDeg": 15,
         "relative": False,
     },
+    "partGlossary": {
+        "enabled": True,
+        "onlyAssemblies": False,
+        "exclude": [],
+    },
 }
+
+# Cap on number of exclude glob patterns to keep preset.json reasonable
+_MAX_EXCLUDE_PATTERNS = 200
 
 
 @dataclass
@@ -131,6 +139,18 @@ def _sanitize_preset(data: Dict[str, Any]) -> Dict[str, Any]:
 
     rel = bool(m_in.get("relative", m_out["relative"]))
     m_out["relative"] = rel
+
+    # Part Glossary
+    g_in = data.get("partGlossary", {}) or {}
+    g_out = result["partGlossary"]
+    g_out["enabled"] = bool(g_in.get("enabled", g_out["enabled"]))
+    g_out["onlyAssemblies"] = bool(g_in.get("onlyAssemblies", g_out["onlyAssemblies"]))
+    exclude_in = g_in.get("exclude", g_out["exclude"])
+    if isinstance(exclude_in, list):
+        exclude = [p for p in exclude_in if isinstance(p, str)][:_MAX_EXCLUDE_PATTERNS]
+    else:
+        exclude = []
+    g_out["exclude"] = exclude
 
     return result
 

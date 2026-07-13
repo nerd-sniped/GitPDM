@@ -24,6 +24,7 @@ from freecad_gitpdm.export.manifest import freecad_version_string, sha256_file
 from freecad_gitpdm.export.thumbnail import set_view_for_thumbnail, save_thumbnail
 from freecad_gitpdm.export.model_export import export_glb, compute_bbox_mm
 from freecad_gitpdm.export.backup_manager import move_fcbak_to_previews
+from freecad_gitpdm.export import glossary
 
 
 @dataclass
@@ -39,6 +40,7 @@ class ExportResult:
     mesh_stats: Optional[Dict[str, Any]]
     warnings: List[str]
     preset_used: Dict[str, Any]
+    readme_path: Optional[Path] = None
 
 
 def export_active_document(repo_root: str) -> ExportResult:
@@ -302,6 +304,7 @@ def export_active_document(repo_root: str) -> ExportResult:
             },
             "artifacts": model_artifacts,
             "meshStats": mesh_stats,
+            "category": glossary.detect_category(doc),
         }
         if thumb_err:
             manifest["thumbnailError"] = thumb_err
@@ -339,6 +342,12 @@ def export_active_document(repo_root: str) -> ExportResult:
             f"glb={'ok' if not glb_err else 'err'})"
         )
 
+        readme_path = None
+        try:
+            readme_path = glossary.regenerate(Path(repo_root_n), preset)
+        except Exception as e:
+            log.warning(f"Part glossary update failed: {e}")
+
         return ExportResult(
             ok=True,
             png_path=png_path if png_path.exists() else None,
@@ -351,6 +360,7 @@ def export_active_document(repo_root: str) -> ExportResult:
             mesh_stats=mesh_stats,
             warnings=warnings,
             preset_used=preset,
+            readme_path=readme_path,
         )
     except Exception as e:
         log.error(f"Export failed: {e}")

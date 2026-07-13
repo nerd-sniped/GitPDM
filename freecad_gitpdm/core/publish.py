@@ -185,6 +185,13 @@ class PublishCoordinator:
             if glb_rel:
                 paths_to_stage.append(glb_rel)
 
+        if export_result.readme_path and export_result.readme_path.exists():
+            readme_rel = core_paths.to_repo_rel(
+                str(export_result.readme_path), repo_root
+            )
+            if readme_rel:
+                paths_to_stage.append(readme_rel)
+
         # If requested, stage everything in working tree
         if stage_all:
             cmd_result = self.git.stage_all(repo_root)

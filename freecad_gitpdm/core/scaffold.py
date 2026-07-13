@@ -34,6 +34,11 @@ _DEFAULT_PRESET = {
         "angularDeflectionDeg": 15,
         "relative": False,
     },
+    "partGlossary": {
+        "enabled": True,
+        "onlyAssemblies": False,
+        "exclude": [],
+    },
 }
 
 # Recommended .gitattributes for LFS
