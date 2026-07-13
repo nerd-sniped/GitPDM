@@ -11,8 +11,9 @@ leaving FreeCAD. Full user-facing documentation (tutorials, how-tos, reference)
 lives in `docs/README.md` — read that for feature behavior; this file is about
 working on the code.
 
-Current version: 0.3.0 (see `docs/README.md`; `pyproject.toml` and
-`freecad_gitpdm/__init__.py` still say 0.1.0 and haven't been bumped in step).
+Current version: 0.4.0 (kept in sync across `docs/README.md`,
+`pyproject.toml`, `freecad_gitpdm/__init__.py`, and `Init.py` — bump all four
+together when releasing).
 
 ## Entry points / how FreeCAD loads this
 
