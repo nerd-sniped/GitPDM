@@ -40,7 +40,13 @@ Closed since the table above was first written:
 - ~~**G1 container acceptance**~~ ✅ Verified 2026-07-17: `docker run --rm -e GITPDM_TOKEN=<pat> python:3.12-slim sh -c "pip install -q -e . && python -m freecad_gitpdm.auth.check"` → `OK — source=env provider=github host=github.com login=nerd-sniped`, exit 0. Genuinely keyring-less image, no SSH, no `.env`. R2.1's acceptance criterion is fully met; G2's container smoke job should still make this a permanent CI check rather than a one-off.
 - ~~**v0.4.0 Release page**~~ ✅ Published 2026-07-17 (<https://github.com/nerd-sniped/GitPDM/releases/tag/v0.4.0>, source archive; Tutorial 1's download link now resolves). G2 still automates purpose-built archives for v0.5.0.
 
-No open items remain blocking G1; it is fully verified end-to-end.
+No open items remain blocking G1 or G2; both are fully verified end-to-end. The
+critical path for the sister deployment repo (G1 → G2) is clear — it can now
+build its container image pinned to `v0.5.0`. **G3 is next up**: read its
+brief below before starting: it's partly a regression fix
+(`core/settings.py:ensure_git_friendly_fcstd_compression()` silently flips a
+*global* FreeCAD preference today), it's parallel-safe with G4, and it's a
+dependency for G7 (docs sweep). Branch from `dev` @ `db88ff9`.
 
 ---
 
