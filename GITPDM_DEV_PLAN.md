@@ -36,6 +36,7 @@ Also landed on `dev` (2026-07-17), outside any phase:
 
 Closed since the table above was first written:
 
+- ~~**G2 release acceptance**~~ ✅ Verified 2026-07-17: tag `v0.5.0` pushed from `dev` @ `b09b27d`, `release.yml` run [29614097103](https://github.com/nerd-sniped/GitPDM/actions/runs/29614097103) completed with all four jobs green (verify, build, container-smoke, publish). Release page live at <https://github.com/nerd-sniped/GitPDM/releases/tag/v0.5.0> (not a draft/prerelease) with `GitPDM-v0.5.0.zip` attached and downloadable — Tutorial 1's release link now resolves to a real, purpose-built archive. No open items remain blocking G2.
 - ~~**G1 container acceptance**~~ ✅ Verified 2026-07-17: `docker run --rm -e GITPDM_TOKEN=<pat> python:3.12-slim sh -c "pip install -q -e . && python -m freecad_gitpdm.auth.check"` → `OK — source=env provider=github host=github.com login=nerd-sniped`, exit 0. Genuinely keyring-less image, no SSH, no `.env`. R2.1's acceptance criterion is fully met; G2's container smoke job should still make this a permanent CI check rather than a one-off.
 - ~~**v0.4.0 Release page**~~ ✅ Published 2026-07-17 (<https://github.com/nerd-sniped/GitPDM/releases/tag/v0.4.0>, source archive; Tutorial 1's download link now resolves). G2 still automates purpose-built archives for v0.5.0.
 
