@@ -11,10 +11,12 @@ leaving FreeCAD. Full user-facing documentation (tutorials, how-tos, reference)
 lives in `docs/README.md` — read that for feature behavior; this file is about
 working on the code.
 
-Current version: 0.4.0 (kept in sync across `docs/README.md`,
+Current version: 0.5.0 (kept in sync across `docs/README.md`,
 `pyproject.toml`, `freecad_gitpdm/__init__.py`, and `Init.py` — bump all four
-together when releasing). `v0.4.0` is tagged from pre-credential-engine
-`main`; the next release is v0.5.0 (see roadmap below).
+together when releasing). `v0.4.0` was tagged from pre-credential-engine
+`main`; v0.5.0 carries G1 (credential engine) + G2 (release automation) and
+is tagged via `git tag v0.5.0 && git push origin v0.5.0`, which fires
+`.github/workflows/release.yml`.
 
 ## Roadmap / current status
 
@@ -24,11 +26,11 @@ repo root on the `dev` branch. Read the phase brief before implementing,
 and update the plan's **Status ledger** in the same PR as the work.
 Feature work happens on `dev`; CI runs on push/PR to both `main` and `dev`.
 
-Status: **G1 (headless credential engine) is implemented** on `dev`.
-**Next up is G2**: tag-triggered release archive + container smoke job —
-the CI workflow itself already exists, do not rebuild it. G3 (storage
-modes) is parallel-safe and can run any time. The overriding constraint
-for every phase: desktop behavior must be a no-op or an improvement
+Status: **G1 (headless credential engine) and G2 (release + CI) are
+implemented** on `dev`. **Next up is G3**: storage modes (delta vs. LFS,
+repo-scoped compression). G4 (provider abstraction) is unblocked by G1 and
+can start any time. The overriding constraint for every phase: desktop
+behavior must be a no-op or an improvement
 ("the desktop user is sacred").
 
 ## Entry points / how FreeCAD loads this

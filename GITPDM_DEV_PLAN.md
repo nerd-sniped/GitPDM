@@ -23,8 +23,8 @@ Keep this table current — update it in the same PR as the work it describes.
 | Phase | Status | Where / when |
 |---|---|---|
 | G1 credential engine | ✅ Implemented | `dev` @ `ceaa4f5`, 2026-07-17 |
-| G2 release + CI | ⏳ **Next up** | — |
-| G3 storage modes | Not started (parallel-safe) | — |
+| G2 release + CI | ✅ Implemented | `dev`, 2026-07-17 |
+| G3 storage modes | ⏳ **Next up** (parallel-safe) | — |
 | G4 provider abstraction | Not started (needs G1 ✅) | — |
 | G5–G8 | Not started | — |
 
@@ -88,9 +88,15 @@ No open items remain blocking G1; it is fully verified end-to-end.
 
 ---
 
-## Phase G2 — Release + CI *(unblocks the sister repo's image build)* ⏳ NEXT UP
+## Phase G2 — Release + CI *(unblocks the sister repo's image build)* ✅ IMPLEMENTED
 
 **Implements:** R3.1, R3.2. **Depends on:** G1 merged. ✅ (G1 is on `dev`; merge or branch from it.)
+
+**As built** (`dev`, 2026-07-17):
+
+- `.github/workflows/release.yml` — new workflow, triggered on `v*` tags only; existing `ci.yml` untouched. Four jobs: `verify` (ruff + pytest + architecture guard, gates the rest), `build` (asserts the tag matches all four synced version fields, assembles `Init.py`/`InitGui.py`/`freecad_gitpdm/` into a `GitPDM/` layout, zips it, uploads as a build artifact), `container-smoke` (downloads the artifact, unzips into a clean `Mod/`-shaped directory, imports `freecad_gitpdm` with `FreeCAD`/`FreeCADGui` mocked the same way `tests/conftest.py` does — this is belt-and-suspenders since the package currently imports clean with no FreeCAD present at all, per its try/except-guarded `core/log.py`), and `publish` (creates the GitHub Release via `softprops/action-gh-release`, attaching the archive, `contents: write` permission scoped to that job only).
+- README support matrix (R3.2) was already updated in `acfa289` ("current stable + one prior" policy) — no further change needed here.
+- Version bumped to **0.5.0** across `pyproject.toml`, `Init.py`, `freecad_gitpdm/__init__.py`, `docs/README.md` in this same change. The `v0.5.0` tag push (which fires the release workflow above) is a separate, explicit step — not done automatically as part of the code change.
 
 **Context (corrected in v2):** CI already exists — `.github/workflows/ci.yml` runs ruff lint + format check, pytest across Python 3.10/3.11/3.12 on Linux/Windows/macOS (FreeCAD mocked via `tests/conftest.py`), and `tools/architecture_guard.py`, on push/PR to `main` and `dev`. **Do not rebuild it.** This phase only adds release automation.
 

@@ -1,0 +1,125 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  verify:
+    name: Verify (lint + test)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install package + dev deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run ruff lint + format check
+        run: |
+          ruff check .
+          ruff format --check .
+
+      - name: Run tests
+        run: pytest
+
+      - name: Run architecture guard
+        run: python tools/architecture_guard.py
+
+  build:
+    name: Build release archive
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check tag matches synced version fields
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PYPROJECT_VERSION=$(grep -m1 '^version = ' pyproject.toml | sed -E 's/version = "(.*)"/\1/')
+          INIT_VERSION=$(grep -m1 '__version__' Init.py | sed -E 's/__version__ = "(.*)"/\1/')
+          PKG_VERSION=$(grep -m1 '__version__' freecad_gitpdm/__init__.py | sed -E 's/__version__ = "(.*)"/\1/')
+          echo "tag=$TAG_VERSION pyproject=$PYPROJECT_VERSION Init.py=$INIT_VERSION freecad_gitpdm/__init__.py=$PKG_VERSION"
+          if [ "$TAG_VERSION" != "$PYPROJECT_VERSION" ] || [ "$TAG_VERSION" != "$INIT_VERSION" ] || [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match synced version fields (pyproject.toml=$PYPROJECT_VERSION, Init.py=$INIT_VERSION, freecad_gitpdm/__init__.py=$PKG_VERSION)"
+            exit 1
+          fi
+
+      - name: Assemble addon layout
+        run: |
+          mkdir -p build/GitPDM
+          cp Init.py InitGui.py build/GitPDM/
+          cp -r freecad_gitpdm build/GitPDM/freecad_gitpdm
+          find build/GitPDM -name '__pycache__' -type d -prune -exec rm -rf {} +
+          find build/GitPDM -name '*.pyc' -delete
+
+      - name: Build archive
+        run: |
+          cd build
+          zip -r "../GitPDM-${GITHUB_REF_NAME}.zip" GitPDM
+
+      - name: Upload archive artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-archive
+          path: GitPDM-*.zip
+
+  container-smoke:
+    name: Container smoke test
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download archive artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-archive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Extract into a clean Mod/-shaped directory
+        run: |
+          mkdir -p Mod
+          unzip -q GitPDM-*.zip -d Mod
+
+      - name: Import freecad_gitpdm with FreeCAD mocked, no repo checkout present
+        working-directory: Mod/GitPDM
+        run: |
+          python -c "
+          import sys
+          from unittest.mock import MagicMock
+          sys.modules['FreeCAD'] = MagicMock()
+          sys.modules['FreeCADGui'] = MagicMock()
+          import freecad_gitpdm
+          print('smoke OK, version', freecad_gitpdm.__version__)
+          "
+
+  publish:
+    name: Publish GitHub Release
+    needs: container-smoke
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download archive artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-archive
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: GitPDM-*.zip
+          generate_release_notes: true
