@@ -71,7 +71,22 @@ class ServiceContainer:
         return jobs.get_job_runner()
 
     def github_api_client(self):
-        """Create a GitHubApiClient from stored token, or return None."""
+        """Create a GitHubApiClient from the credential chain, or None.
+
+        Environment-provided credentials (GITPDM_TOKEN_FILE / GITPDM_TOKEN,
+        Phase G1) take precedence and require no configured host or stored
+        token. With no env backends active, behavior is unchanged: a host
+        setting plus a stored token are required.
+        """
+
+        from freecad_gitpdm.auth.credential_chain import resolve_env_credential
+        from freecad_gitpdm.github.api_client import GitHubApiClient
+
+        ua = "GitPDM/1.0"
+
+        env_cred = resolve_env_credential()
+        if env_cred is not None:
+            return GitHubApiClient("api.github.com", env_cred.token.access_token, ua)
 
         host = (self.settings.load_github_host() or "").strip()
         if not host:
@@ -84,9 +99,6 @@ class ServiceContainer:
         if not token_resp:
             return None
 
-        from freecad_gitpdm.github.api_client import GitHubApiClient
-
-        ua = "GitPDM/1.0"
         return GitHubApiClient("api.github.com", token_resp.access_token, ua)
 
 

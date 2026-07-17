@@ -139,6 +139,7 @@ class WindowsCredentialStore(TokenStore):
             "expires_in": token.expires_in,
             "refresh_token_expires_in": token.refresh_token_expires_in,
             "obtained_at_utc": token.obtained_at_utc,
+            "provider": token.provider,
         }
         token_json = json.dumps(token_data)
         token_bytes = token_json.encode("utf-8")
@@ -243,6 +244,7 @@ class WindowsCredentialStore(TokenStore):
                     expires_in=token_data.get("expires_in"),
                     refresh_token_expires_in=token_data.get("refresh_token_expires_in"),
                     obtained_at_utc=token_data.get("obtained_at_utc", ""),
+                    provider=token_data.get("provider", "github"),
                 )
             finally:
                 # Free credential

@@ -32,6 +32,39 @@ def _get_subprocess_kwargs():
     return kwargs
 
 
+def _headless_credential_args():
+    """
+    Extra `git -c` arguments bridging environment-provided tokens
+    (GITPDM_TOKEN / GITPDM_TOKEN_FILE) into git's credential lookup for
+    network operations (Phase G1 / R2.1: containers have no keyring and
+    no interactive credential helper).
+
+    Returns [] on desktop (no env credential backends active), leaving
+    the user's normal credential helper (e.g., GitHub Desktop) untouched.
+    The helper script references the env vars by name only — no token
+    value ever appears on a command line or in a process listing.
+    """
+    try:
+        from freecad_gitpdm.auth.credential_chain import headless_backends_active
+
+        if not headless_backends_active():
+            return []
+    except Exception:
+        return []
+
+    helper = (
+        '!f() { if [ "$1" = "get" ]; then '
+        'echo "username=x-access-token"; '
+        'if [ -n "$GITPDM_TOKEN_FILE" ]; then '
+        'echo "password=$(cat "$GITPDM_TOKEN_FILE")"; '
+        'else echo "password=$GITPDM_TOKEN"; fi; '
+        "fi; }; f"
+    )
+    # The empty helper first clears any system-configured helpers so the
+    # env-provided token is authoritative in headless mode.
+    return ["-c", "credential.helper=", "-c", f"credential.helper={helper}"]
+
+
 # Status kinds for porcelain parsing
 STATUS_MODIFIED = "MODIFIED"
 STATUS_ADDED = "ADDED"
@@ -411,7 +444,7 @@ class GitClient:
                     )
 
             result = subprocess.run(
-                [git_cmd, "clone", clone_url, dest_abs],
+                [git_cmd, *_headless_credential_args(), "clone", clone_url, dest_abs],
                 capture_output=True,
                 text=True,
                 timeout=300,
@@ -1076,7 +1109,14 @@ class GitClient:
         git_cmd = self._get_git_command()
         try:
             proc_result = subprocess.run(
-                [git_cmd, "-C", repo_root, "fetch", remote],
+                [
+                    git_cmd,
+                    *_headless_credential_args(),
+                    "-C",
+                    repo_root,
+                    "fetch",
+                    remote,
+                ],
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -1451,10 +1491,11 @@ class GitClient:
 
         git_cmd = self._get_git_command()
 
+        cred_args = _headless_credential_args()
         if self.has_upstream(repo_root):
-            args = [git_cmd, "-C", repo_root, "push"]
+            args = [git_cmd, *cred_args, "-C", repo_root, "push"]
         else:
-            args = [git_cmd, "-C", repo_root, "push", "-u", remote, "HEAD"]
+            args = [git_cmd, *cred_args, "-C", repo_root, "push", "-u", remote, "HEAD"]
 
         result = self._run_command(args, timeout=180)
 
@@ -1518,6 +1559,7 @@ class GitClient:
                 # Use: git pull --ff-only <remote> <branch>
                 command = [
                     git_cmd,
+                    *_headless_credential_args(),
                     "-C",
                     repo_root,
                     "pull",
@@ -1527,7 +1569,14 @@ class GitClient:
                 ]
             else:
                 # Use: git pull --ff-only (default upstream)
-                command = [git_cmd, "-C", repo_root, "pull", "--ff-only"]
+                command = [
+                    git_cmd,
+                    *_headless_credential_args(),
+                    "-C",
+                    repo_root,
+                    "pull",
+                    "--ff-only",
+                ]
 
             proc_result = subprocess.run(
                 command,
