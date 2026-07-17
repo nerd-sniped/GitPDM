@@ -24,7 +24,8 @@ GitPDM is a FreeCAD workbench addon that brings Git version control and GitHub c
 **Goal:** Install GitPDM, create a repository, and make two commits.
 
 **Prerequisites:**
-- FreeCAD (0.20, 0.21, or 1.0)
+- FreeCAD — supported policy: **current stable + one prior** (1.1.x and 1.0.x
+  at the time of this release; originally developed on 0.20–1.0)
 - Git installed and available on PATH (`git --version` works)
 
 ### 1) Install GitPDM (manual)
@@ -314,7 +315,7 @@ Branch switching is currently limited because FreeCAD `.FCStd` files are ZIP arc
 
 | Requirement | Version | Notes |
 |-------------|---------|-------|
-| FreeCAD | 0.20, 0.21, or 1.0 | Install from https://www.freecad.org/downloads.php |
+| FreeCAD | Current stable + one prior (1.1.x / 1.0.x as of this release) | Policy — verified manually before each release. Originally developed on 0.20–1.0. Install from https://www.freecad.org/downloads.php |
 | Git | 2.20+ | Install from https://git-scm.com/ |
 | Python | 3.8+ | Bundled with FreeCAD |
 | PySide2 or PySide6 | Any | Bundled with FreeCAD |

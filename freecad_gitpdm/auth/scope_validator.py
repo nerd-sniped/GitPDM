@@ -28,7 +28,7 @@ def parse_scopes(scope_string: str) -> Set[str]:
     Parse space-separated or comma-separated scope string into set.
 
     Args:
-        scope_string: Space-separated or comma-separated OAuth scopes 
+        scope_string: Space-separated or comma-separated OAuth scopes
                      (e.g., "repo read:user" or "repo,read:user")
 
     Returns:
@@ -38,7 +38,7 @@ def parse_scopes(scope_string: str) -> Set[str]:
         return set()
     # Handle both space-separated and comma-separated formats
     # GitHub typically uses space-separated, but some responses may use commas
-    delimiter = ',' if ',' in scope_string and ' ' not in scope_string else ' '
+    delimiter = "," if "," in scope_string and " " not in scope_string else " "
     return set(s.strip() for s in scope_string.split(delimiter) if s.strip())
 
 

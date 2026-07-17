@@ -13,7 +13,23 @@ working on the code.
 
 Current version: 0.4.0 (kept in sync across `docs/README.md`,
 `pyproject.toml`, `freecad_gitpdm/__init__.py`, and `Init.py` — bump all four
-together when releasing).
+together when releasing). `v0.4.0` is tagged from pre-credential-engine
+`main`; the next release is v0.5.0 (see roadmap below).
+
+## Roadmap / current status
+
+Development follows `GITPDM_DEV_PLAN.md` (phases G1–G8, one phase = one PR)
+with `GITPDM_REQUIREMENTS.md` as the requirements companion — both at the
+repo root on the `dev` branch. Read the phase brief before implementing,
+and update the plan's **Status ledger** in the same PR as the work.
+Feature work happens on `dev`; CI runs on push/PR to both `main` and `dev`.
+
+Status: **G1 (headless credential engine) is implemented** on `dev`.
+**Next up is G2**: tag-triggered release archive + container smoke job —
+the CI workflow itself already exists, do not rebuild it. G3 (storage
+modes) is parallel-safe and can run any time. The overriding constraint
+for every phase: desktop behavior must be a no-op or an improvement
+("the desktop user is sacred").
 
 ## Entry points / how FreeCAD loads this
 
@@ -31,7 +47,15 @@ when running tests or scripts outside the app.
 
 - `auth/` — GitHub OAuth device flow (`oauth_device_flow.py`), token storage
   abstracted per-OS (`token_store_wincred.py` / `_macos.py` / `_linux.py` via
-  `token_store_factory.py`), scope validation, token refresh.
+  `token_store_factory.py`), scope validation, token refresh. Headless
+  credential resolution (`credential_chain.py`): `GITPDM_TOKEN_FILE` >
+  `GITPDM_TOKEN` > keyring, with an opt-in file store
+  (`token_store_file.py`, only reachable when `GITPDM_ALLOW_FILE_TOKENS=1` —
+  a security invariant asserted by tests). `python -m freecad_gitpdm.auth.check`
+  is the keyring-less container smoke test; it must keep working without
+  FreeCAD installed. When env credential backends are active, `git/client.py`
+  bridges the token into network git commands via an inline credential
+  helper; on desktop (no env vars) that bridge must stay a no-op.
 - `git/client.py` — subprocess wrapper around the `git` CLI; all Git
   operations (commit/push/pull/fetch/branch) go through here.
 - `github/` — GitHub REST API client, rate limiting, repo creation, identity,

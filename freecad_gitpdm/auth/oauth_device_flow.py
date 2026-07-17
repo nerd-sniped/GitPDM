@@ -81,6 +81,10 @@ class TokenResponse:
         expires_in: int | None - Seconds until token expires
         refresh_token_expires_in: int | None - Seconds until refresh_token expires
         obtained_at_utc: str - ISO 8601 UTC timestamp when token was obtained
+        provider: str - Git host provider this token belongs to
+                        (e.g., "github", "gitlab"); defaults to "github"
+                        so tokens stored before this field existed load
+                        unchanged
     """
 
     access_token: str
@@ -90,6 +94,7 @@ class TokenResponse:
     expires_in: Optional[int] = None
     refresh_token_expires_in: Optional[int] = None
     obtained_at_utc: str = ""
+    provider: str = "github"
 
 
 def request_device_code(
