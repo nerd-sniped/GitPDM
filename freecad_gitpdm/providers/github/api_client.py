@@ -24,9 +24,9 @@ from typing import Optional, Tuple, Dict, Any
 from urllib import request, error
 
 from freecad_gitpdm.core import log
-from freecad_gitpdm.github.errors import GitHubApiError, GitHubApiNetworkError
+from freecad_gitpdm.providers.github.errors import GitHubApiError, GitHubApiNetworkError
 from freecad_gitpdm.core.result import Result
-from freecad_gitpdm.github.rate_limiter import RateLimiter
+from freecad_gitpdm.providers.github.rate_limiter import RateLimiter
 
 
 @dataclass

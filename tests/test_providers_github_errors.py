@@ -4,7 +4,7 @@ Tests for github.errors module - GitHub API error classification
 """
 
 import pytest
-from freecad_gitpdm.github.errors import GitHubApiError, GitHubApiNetworkError
+from freecad_gitpdm.providers.github.errors import GitHubApiError, GitHubApiNetworkError
 
 
 class TestGitHubApiError:

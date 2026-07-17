@@ -8,6 +8,7 @@ Sprint OAUTH-6: Caching, error handling, token invalidation detection.
 from __future__ import annotations
 
 import os
+import re
 from typing import Callable, List, Optional
 
 # Qt compatibility layer - try PySide6 first, then PySide2
@@ -23,10 +24,10 @@ except ImportError:  # pragma: no cover
 
 from freecad_gitpdm.core import log, settings, jobs
 from freecad_gitpdm.git.client import GitClient
-from freecad_gitpdm.github.repos import RepoInfo, list_repos
-from freecad_gitpdm.github.api_client import GitHubApiClient
-from freecad_gitpdm.github.errors import GitHubApiError, GitHubApiNetworkError
-from freecad_gitpdm.github.cache import get_github_api_cache
+from freecad_gitpdm.providers.github.repos import RepoInfo, list_repos
+from freecad_gitpdm.providers.github.api_client import GitHubApiClient
+from freecad_gitpdm.providers.github.errors import GitHubApiError, GitHubApiNetworkError
+from freecad_gitpdm.providers.github.cache import get_github_api_cache
 
 
 class RepoPickerDialog(QtWidgets.QDialog):
@@ -94,20 +95,22 @@ class RepoPickerDialog(QtWidgets.QDialog):
         self._session_expired_message.hide()
         layout.addWidget(self._session_expired_message)
 
-        # External URL input section
-        url_section = QtWidgets.QGroupBox("Or Clone from External URL")
+        # External URL input section (Phase G4: works for any git remote,
+        # not just GitHub — this is the GenericProvider clone path)
+        url_section = QtWidgets.QGroupBox("Or Clone from a Git URL")
         url_layout = QtWidgets.QVBoxLayout()
         url_section.setLayout(url_layout)
 
         url_help = QtWidgets.QLabel(
-            "Enter a GitHub repository URL to clone a project not in your account:"
+            "Enter any git repository URL to clone a project not in your account "
+            "(GitHub, GitLab, self-hosted, …):"
         )
         url_help.setWordWrap(True)
         url_help.setStyleSheet("color: gray; font-size: 9pt;")
         url_layout.addWidget(url_help)
 
         self.url_input = QtWidgets.QLineEdit()
-        self.url_input.setPlaceholderText("https://github.com/owner/repository")
+        self.url_input.setPlaceholderText("https://example.com/owner/repository.git")
         self.url_input.textChanged.connect(self._on_url_changed)
         url_layout.addWidget(self.url_input)
 
@@ -356,21 +359,27 @@ class RepoPickerDialog(QtWidgets.QDialog):
 
     def _parse_repo_url(self, url: str) -> Optional[tuple]:
         """
-        Parse a GitHub URL and extract clone URL and repo name.
+        Parse a git repository URL and extract clone URL and repo name.
         Returns (clone_url, repo_name) or None if invalid.
 
-        Supports:
-        - https://github.com/owner/repo
-        - https://github.com/owner/repo.git
-        - git@github.com:owner/repo.git
-        """
-        import re
+        Recognizes GitHub URLs specially (to normalize to the canonical
+        https clone URL, matching pre-G4 behavior exactly); any other
+        well-formed git URL (GitLab, self-hosted, a bare local path, …)
+        is accepted as-is via a provider-neutral fallback — this is the
+        clone path GenericProvider users rely on (R5.1: paste a URL you
+        already have).
 
+        Supports:
+        - https://github.com/owner/repo[.git]
+        - git@github.com:owner/repo.git
+        - any other https://, http://, ssh://, git@host:, or
+          user@host:/path remote URL
+        """
         url = url.strip()
         if not url:
             return None
 
-        # Pattern for HTTPS URLs
+        # Pattern for GitHub HTTPS URLs
         https_pattern = r"https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$"
         match = re.match(https_pattern, url, re.IGNORECASE)
         if match:
@@ -378,13 +387,23 @@ class RepoPickerDialog(QtWidgets.QDialog):
             clone_url = f"https://github.com/{owner}/{repo}.git"
             return (clone_url, repo)
 
-        # Pattern for SSH URLs
+        # Pattern for GitHub SSH URLs
         ssh_pattern = r"git@github\.com:([^/]+)/(.+?)(?:\.git)?$"
         match = re.match(ssh_pattern, url)
         if match:
             owner, repo = match.groups()
             clone_url = f"https://github.com/{owner}/{repo}.git"
             return (clone_url, repo)
+
+        # Provider-neutral fallback: any other well-formed git remote URL
+        # (https://, http://, ssh://, or scp-like user@host:path).
+        generic_pattern = r"^(https?://|ssh://|[\w.-]+@[\w.-]+:).+"
+        if re.match(generic_pattern, url, re.IGNORECASE):
+            repo_name = url.rstrip("/").split("/")[-1]
+            if repo_name.endswith(".git"):
+                repo_name = repo_name[: -len(".git")]
+            repo_name = repo_name.split(":")[-1] or "repository"
+            return (url, repo_name)
 
         return None
 
@@ -399,10 +418,11 @@ class RepoPickerDialog(QtWidgets.QDialog):
                 QtWidgets.QMessageBox.warning(
                     self,
                     "Invalid URL",
-                    "Please enter a valid GitHub repository URL.\n\n"
+                    "Please enter a valid git repository URL.\n\n"
                     "Examples:\n"
                     "• https://github.com/owner/repository\n"
-                    "• git@github.com:owner/repository.git",
+                    "• git@github.com:owner/repository.git\n"
+                    "• https://gitlab.example.com/owner/repository.git",
                 )
                 return
 
@@ -519,11 +539,13 @@ class RepoPickerDialog(QtWidgets.QDialog):
             "clone_repo",
             args,
             callback=lambda job: self._on_clone_from_url_finished(
-                job, repo_name, dest_path
+                job, repo_name, dest_path, clone_url
             ),
         )
 
-    def _on_clone_from_url_finished(self, job, repo_name: str, dest_path: str):
+    def _on_clone_from_url_finished(
+        self, job, repo_name: str, dest_path: str, clone_url: str
+    ):
         """Handle completion of external URL clone."""
         result = job.get("result", {}) if isinstance(job, dict) else {}
         success = result.get("success", False)
@@ -531,6 +553,7 @@ class RepoPickerDialog(QtWidgets.QDialog):
 
         if success:
             self._cloned_path = dest_path
+            self._save_cloned_provider(dest_path, clone_url)
             self.status_label.setText(f"Cloned {repo_name} → {dest_path}")
             self.status_label.setStyleSheet("color: green;")
             self._set_loading_state(False)
@@ -560,6 +583,7 @@ class RepoPickerDialog(QtWidgets.QDialog):
 
         if success:
             self._cloned_path = dest_path
+            self._save_cloned_provider(dest_path, repo.clone_url)
             self.status_label.setText(f"Cloned {repo.full_name} → {dest_path}")
             self.status_label.setStyleSheet("color: green;")
             self._set_loading_state(False)
@@ -583,6 +607,27 @@ class RepoPickerDialog(QtWidgets.QDialog):
         self._set_loading_state(False)
 
     # --- Helpers ---
+
+    def _save_cloned_provider(self, repo_root: str, clone_url: str):
+        """Persist the repo's provider (Phase G4) based on the URL cloned.
+
+        Only github.com URLs get the "github" provider; everything else
+        (GitLab, self-hosted, a bare local path) is "generic" — same
+        default GenericProvider makes zero host API calls against.
+        """
+        try:
+            from freecad_gitpdm.core import provider_config
+
+            host_is_github = bool(
+                re.search(
+                    r"(^|[@/])github\.com([:/]|$)", clone_url or "", re.IGNORECASE
+                )
+            )
+            provider_config.set_provider_config(
+                repo_root, "github" if host_is_github else "generic"
+            )
+        except (OSError, ValueError) as e:
+            log.debug(f"Could not persist provider config for {repo_root}: {e}")
 
     def _show_connect_prompt(self):
         self._connect_message.show()

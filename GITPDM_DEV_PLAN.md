@@ -24,8 +24,8 @@ Keep this table current — update it in the same PR as the work it describes.
 |---|---|---|
 | G1 credential engine | ✅ Implemented | `dev` @ `ceaa4f5`, 2026-07-17 |
 | G2 release + CI | ✅ Implemented | `dev`, 2026-07-17 |
-| G3 storage modes | ⏳ **Next up** (parallel-safe) | — |
-| G4 provider abstraction | Not started (needs G1 ✅) | — |
+| G3 storage modes | ✅ Implemented (not yet merged to `dev`) | `g3-storage-modes` branch off `dev`, 2026-07-17 |
+| G4 provider abstraction | ✅ Implemented | `g4-provider-abstraction` branch off `dev`, 2026-07-17 |
 | G5–G8 | Not started | — |
 
 Also landed on `dev` (2026-07-17), outside any phase:
@@ -42,11 +42,84 @@ Closed since the table above was first written:
 
 No open items remain blocking G1 or G2; both are fully verified end-to-end. The
 critical path for the sister deployment repo (G1 → G2) is clear — it can now
-build its container image pinned to `v0.5.0`. **G3 is next up**: read its
-brief below before starting: it's partly a regression fix
-(`core/settings.py:ensure_git_friendly_fcstd_compression()` silently flips a
-*global* FreeCAD preference today), it's parallel-safe with G4, and it's a
-dependency for G7 (docs sweep). Branch from `dev` @ `db88ff9`.
+build its container image pinned to `v0.5.0`. **G3 and G4 are both
+implemented**, each on its own branch off `dev` @ `db88ff9` (parallel-safe,
+per the sequencing diagram) — neither has merged into `dev` yet, so this file
+still reads as if G3 were "next up" when checked out from `dev` directly.
+Merging both (in either order — they touch different files, `core/storage_mode.py`
+vs. `freecad_gitpdm/providers/`, `core/provider_config.py`) is the remaining
+step before G5 (needs G1 + G4) or G7 (needs G3) can start.
+
+**G4 as built** (`g4-provider-abstraction` branch off `dev`, 2026-07-17 — kept
+for reference; the brief below is the original spec):
+
+- `github/` → `freecad_gitpdm/providers/github/`: moved as a subpackage
+  (`api_client.py`, `cache.py`, `create_repo.py`, `errors.py`, `identity.py`,
+  `rate_limiter.py`, `repos.py` unchanged apart from import paths), not a
+  single `github.py` file as the brief sketched — the existing files already
+  total ~700 lines and the architecture guard exists precisely to push back
+  on that kind of growth. `providers/github/provider.py` adds `GitHubProvider`,
+  which composes them and is the only class instantiated outside this
+  subpackage.
+- `providers/base.py` — `ProviderCapabilities` (the four flags from the
+  brief) and `BaseProvider`, the contract every provider implements
+  (`create_remote_repo`, `fetch_identity`, `build_api_client`, plus the
+  auth-endpoint properties below). `GenericProvider` extends it: all
+  capabilities `False`, `build_api_client()` returns `None`,
+  `create_remote_repo()` raises `NotImplementedError` with the
+  paste-a-URL instruction text.
+- `providers/gitlab.py` — stub per spec: `supports_device_flow=True` (R5.2),
+  everything else `False`, every method raises `NotImplementedError`.
+- `providers/__init__.py` — `get_provider_class()` / `get_provider()`
+  registry; unknown ids fall back to `GenericProvider` (the base case, not
+  an error). This is the only place outside `providers/` that imports the
+  concrete provider classes — the choke point the "do not leak provider
+  conditionals" constraint asked for.
+- **Auth endpoint ownership (R5.1):** GitHub's OAuth endpoints and client id
+  moved from `auth/config.py` into `providers/github/provider.py` as
+  `GitHubProvider` class-level config; `auth/config.py` now re-exports the
+  same names from there so `ui/github_auth.py` and
+  `providers/github/identity.py` didn't need to change. `GitLabProvider`'s
+  endpoint properties raise `NotImplementedError` (no endpoints exist yet
+  to own).
+- **Per-repo provider selection (R5.3):** `core/provider_config.py`,
+  mirroring the `.freecad-pdm/config.json` pattern (independently of G3's
+  `storage_mode.py`, since the branches haven't merged — same file, disjoint
+  keys, ordinary merge). Missing/malformed config defaults to `"github"`,
+  never anything else — every repo GitPDM has ever created predates this
+  field. `core/services.py` gained `provider_for_repo()` /
+  `api_client_for()`; `github_api_client()` stays as a backward-compatible
+  wrapper so existing callers are unchanged.
+- **UI (capability-gated, not provider-gated):** `ui/new_repo_wizard.py`
+  gained a provider-choice page ahead of the existing input page; GitHub is
+  disabled there (not hidden — with an explanatory hint) when no API client
+  is available, never a hard block on opening the wizard at all
+  (`panel.py:_on_new_repo_clicked` no longer forces a GitHub connection
+  before opening it). The progress page branches once on
+  `provider.capabilities.supports_repo_creation`: the GitHub path now calls
+  `provider.create_remote_repo(...)` instead of importing
+  `create_user_repo`/`CreateRepoRequest` directly; the generic path skips
+  straight to local init using the pasted remote URL. Both paths persist the
+  chosen provider via `provider_config.set_provider_config()` on success.
+  `ui/repo_picker.py`'s "clone from URL" section (already provider-agnostic
+  in spirit) now accepts any well-formed git URL, not just GitHub's, and
+  records `"github"` vs `"generic"` on the cloned repo based on the host.
+- **Rename sweep (R4.3):** narrower than the brief implied — `docs/README.md`'s
+  title was already "Git-based Product Data Management for FreeCAD" from an
+  earlier pass, so no title change was needed. Repo topics are a GitHub
+  project setting, not code; left as a manual follow-up. UI strings were
+  updated where the provider is genuinely variable (repo picker's URL
+  section); GitHub-specific flows that only GitHub supports (the device-flow
+  dialog, OAuth connect/disconnect) still say "GitHub" on purpose — capability
+  flags decide whether they're offered, not their wording.
+- **Forcing test:** `tests/test_generic_provider_flow.py` — `git init --bare`
+  as the remote, `GenericProvider` end to end (configure → clone → save →
+  commit → push) via `GitClient`, with `urllib.request.urlopen` patched to
+  raise `AssertionError` if ever called. Plus `tests/test_providers.py`
+  (registry, capability flags per provider, `auth/config.py` backward
+  compatibility) and `tests/test_provider_config.py` (defaults, malformed
+  JSON, unknown ids, key preservation). 190 tests pass; ruff, format check,
+  and the architecture guard are all clean.
 
 ---
 
@@ -142,7 +215,7 @@ dependency for G7 (docs sweep). Branch from `dev` @ `db88ff9`.
 
 ---
 
-## Phase G4 — Provider abstraction *(architecturally urgent: stops GitHub leakage)*
+## Phase G4 — Provider abstraction *(architecturally urgent: stops GitHub leakage)* ✅ IMPLEMENTED
 
 **Implements:** R5.1, R5.2, R5.3, R4.3. **Depends on:** G1 (uses `Credential.provider`).
 

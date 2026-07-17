@@ -1207,23 +1207,16 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             )
 
     def _on_new_repo_clicked(self):
-        """Open New Repo wizard to create GitHub repo + local scaffold."""
+        """Open New Repo wizard to create a repo (GitHub, or any other git
+        remote) + local scaffold. GitHub connection is optional (Phase G4):
+        the wizard's provider page offers "another git remote" when it's
+        unavailable, so it's never a hard requirement to get started."""
         try:
             from freecad_gitpdm.ui.new_repo_wizard import NewRepoWizard
 
-            # Check if user is connected to GitHub
+            # GitHub is one option among several; not connecting just means
+            # the wizard defaults to the generic-remote path.
             api_client = self._create_github_client()
-            if not api_client:
-                log.info("Not connected to GitHub; prompting connect")
-                self._on_github_connect_clicked()
-                api_client = self._create_github_client()
-                if not api_client:
-                    QtWidgets.QMessageBox.information(
-                        self,
-                        "New Repository",
-                        "Please connect to GitHub first.",
-                    )
-                    return
 
             wizard = NewRepoWizard(api_client=api_client, parent=self)
             if wizard.exec():

@@ -70,23 +70,35 @@ class ServiceContainer:
 
         return jobs.get_job_runner()
 
-    def github_api_client(self):
-        """Create a GitHubApiClient from the credential chain, or None.
+    def provider_for_repo(self, repo_root: str):
+        """Resolve the active BaseProvider for a repo (Phase G4).
 
-        Environment-provided credentials (GITPDM_TOKEN_FILE / GITPDM_TOKEN,
-        Phase G1) take precedence and require no configured host or stored
-        token. With no env backends active, behavior is unchanged: a host
-        setting plus a stored token are required.
+        Reads `.freecad-pdm/config.json`'s `provider` field (see
+        `core/provider_config.py`); defaults to GitHub for repos that
+        predate this field, so existing desktop behavior is unchanged.
+        """
+
+        from freecad_gitpdm.core.provider_config import get_provider_id
+        from freecad_gitpdm.providers import get_provider
+
+        return get_provider(get_provider_id(repo_root))
+
+    def api_client_for(self, provider):
+        """Build `provider`'s host API client from the credential chain, or None.
+
+        Providers with no host API (GenericProvider, and the GitLab stub)
+        return None here via `BaseProvider.build_api_client`. Environment
+        credentials (GITPDM_TOKEN_FILE / GITPDM_TOKEN, Phase G1) take
+        precedence and require no configured host or stored token.
         """
 
         from freecad_gitpdm.auth.credential_chain import resolve_env_credential
-        from freecad_gitpdm.github.api_client import GitHubApiClient
 
         ua = "GitPDM/1.0"
 
         env_cred = resolve_env_credential()
         if env_cred is not None:
-            return GitHubApiClient("api.github.com", env_cred.token.access_token, ua)
+            return provider.build_api_client(env_cred.token.access_token, ua)
 
         host = (self.settings.load_github_host() or "").strip()
         if not host:
@@ -99,7 +111,20 @@ class ServiceContainer:
         if not token_resp:
             return None
 
-        return GitHubApiClient("api.github.com", token_resp.access_token, ua)
+        return provider.build_api_client(token_resp.access_token, ua)
+
+    def github_api_client(self):
+        """Create a GitHubApiClient from the credential chain, or None.
+
+        Kept for backward compatibility with existing callers that only
+        ever spoke to GitHub; behavior is unchanged from before Phase G4.
+        New provider-aware code should use `provider_for_repo()` +
+        `api_client_for()` instead.
+        """
+
+        from freecad_gitpdm.providers.github.provider import GitHubProvider
+
+        return self.api_client_for(GitHubProvider())
 
 
 _singleton: ServiceContainer | None = None

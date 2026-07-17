@@ -10,8 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from freecad_gitpdm.github.api_client import GitHubApiClient
-from freecad_gitpdm.github.errors import GitHubApiNetworkError, GitHubApiError
+from freecad_gitpdm.providers.github.api_client import GitHubApiClient
+from freecad_gitpdm.providers.github.errors import GitHubApiNetworkError, GitHubApiError
 
 
 @dataclass

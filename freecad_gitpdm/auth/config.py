@@ -1,40 +1,35 @@
 # -*- coding: utf-8 -*-
 """
 GitPDM OAuth Configuration
-Sprint OAUTH-0: GitHub OAuth Device Flow constants
 
-This module defines OAuth endpoints and client configuration for
-GitHub authentication. No actual network calls or token handling
-happens in this sprint.
+Phase G4: the GitHub OAuth endpoints and client id are now owned by
+`providers.github.provider.GitHubProvider` (R5.1 — provider classes own
+their auth config so the G1 credential chain and refresh path can consult
+them instead of a hardcoded GitHub URL). This module re-exports the same
+names for backward compatibility with existing callers (`ui/github_auth.py`,
+`providers/github/identity.py`) rather than churning every call site in
+this phase.
 """
 
-# GitHub OAuth endpoints
-GITHUB_HOST = "github.com"
-GITHUB_API_BASE = "https://api.github.com"
-DEVICE_CODE_URL = "https://github.com/login/device/code"
-TOKEN_URL = "https://github.com/login/oauth/access_token"
-VERIFICATION_URI_DEFAULT = "https://github.com/login/device"
+from freecad_gitpdm.providers.github.provider import (
+    DEFAULT_SCOPES,
+    DEVICE_CODE_URL,
+    GITHUB_API_BASE,
+    GITHUB_HOST,
+    TOKEN_URL,
+    VERIFICATION_URI_DEFAULT,
+    GitHubProvider,
+)
 
-# OAuth scopes requested
-# - read:user: Get user profile (username, email)
-# - repo: Full repository access (required for git push operations)
-#
-# NOTE: The 'repo' scope is broad but necessary because:
-#   1. Git push via HTTPS requires 'repo' scope (GitHub requirement)
-#   2. Repository creation via API requires 'repo' scope
-#   3. Alternative 'public_repo' only works for public repos
-#
-# ARCHITECTURE NOTE: OAuth Apps (current architecture) grant access to ALL
-# repositories. To limit access to specific repositories, GitPDM would need
-# to migrate to GitHub Apps architecture, which supports per-repo installation.
-# See docs/OAUTH_DEVICE_FLOW.md for detailed discussion.
-#
-# Future: Consider adding GitHub App support for per-repository permissions.
-DEFAULT_SCOPES = ["read:user", "repo"]
-
-# Client ID for GitPDM GitHub OAuth App
-# Fallback: "REPLACE_ME" indicates OAuth is not yet configured
-_CLIENT_ID = "Ov23li9bhJnBzf4o55fw"
+__all__ = [
+    "GITHUB_HOST",
+    "GITHUB_API_BASE",
+    "DEVICE_CODE_URL",
+    "TOKEN_URL",
+    "VERIFICATION_URI_DEFAULT",
+    "DEFAULT_SCOPES",
+    "get_client_id",
+]
 
 
 def get_client_id():
@@ -45,9 +40,8 @@ def get_client_id():
         str | None: Client ID if configured, None if placeholder
 
     Notes:
-        Returns None when _CLIENT_ID is still "REPLACE_ME" so UI
+        Delegates to GitHubProvider.get_client_id(), which returns None
+        when the client id is still the "REPLACE_ME" placeholder so UI
         can show "Not configured" message to users.
     """
-    if _CLIENT_ID == "REPLACE_ME":
-        return None
-    return _CLIENT_ID
+    return GitHubProvider().get_client_id()
