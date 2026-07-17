@@ -34,10 +34,12 @@ Also landed on `dev` (2026-07-17), outside any phase:
 - Fixed dead token-refresh wiring in `github/identity.py` (imported a nonexistent `get_token_store`; the ImportError was silently swallowed, so pre-request refresh never ran).
 - `v0.4.0` tagged from pre-G1 `main`.
 
-Open items not yet closable:
+Closed since the table above was first written:
 
-- **G1 container acceptance** (R2.1 acceptance criterion): `docker run -e GITPDM_TOKEN=<pat> … python -m freecad_gitpdm.auth.check` in a keyring-less image. Verified locally on Windows (chain, CLI, precedence, gating invariant, 162-test suite) but not yet in an actual container — G2's container smoke job should absorb this as a permanent CI check.
+- ~~**G1 container acceptance**~~ ✅ Verified 2026-07-17: `docker run --rm -e GITPDM_TOKEN=<pat> python:3.12-slim sh -c "pip install -q -e . && python -m freecad_gitpdm.auth.check"` → `OK — source=env provider=github host=github.com login=nerd-sniped`, exit 0. Genuinely keyring-less image, no SSH, no `.env`. R2.1's acceptance criterion is fully met; G2's container smoke job should still make this a permanent CI check rather than a one-off.
 - ~~**v0.4.0 Release page**~~ ✅ Published 2026-07-17 (<https://github.com/nerd-sniped/GitPDM/releases/tag/v0.4.0>, source archive; Tutorial 1's download link now resolves). G2 still automates purpose-built archives for v0.5.0.
+
+No open items remain blocking G1; it is fully verified end-to-end.
 
 ---
 
@@ -64,7 +66,7 @@ Open items not yet closable:
 - `git/client.py:_headless_credential_args()` — bridges env tokens into `clone`/`fetch`/`pull`/`push` via an inline credential helper referencing env var names only (no token on any command line); returns `[]` on desktop so existing helpers are untouched. This item wasn't in the original brief but is required by R2.1's "authenticates and **pushes** in a container".
 - `core/services.py:github_api_client()` — env credentials take precedence; desktop path unchanged.
 - Refresh was already implemented but dead (see Status ledger); the wiring bug is fixed. Per-provider token URL parameterization deferred to G4 as planned.
-- Outstanding: the docker acceptance run (see Status ledger).
+- ~~Outstanding: the docker acceptance run~~ ✅ Verified 2026-07-17: `python:3.12-slim` container, `GITPDM_TOKEN` only (no keyring, no SSH, no `.env`), `python -m freecad_gitpdm.auth.check` → `OK — source=env provider=github host=github.com login=nerd-sniped`, exit 0. R2.1's acceptance criterion is met.
 
 **Context (corrected in v2):** GitPDM currently assumes an OS keyring — that assumption does fail in containers. But it does **not** model tokens as immortal strings: `auth/oauth_device_flow.py` defines `TokenResponse` with `refresh_token`, `expires_in`, `refresh_token_expires_in`, and `obtained_at_utc`; `auth/token_refresh.py` implements expiry detection (5-minute buffer), transparent refresh, and graceful degradation to re-auth (`ensure_fresh_token`). Persistence goes through a `TokenStore` ABC (`auth/token_store.py`) with per-OS backends chosen by `auth/token_store_factory.py`. **Extend these pieces; do not rewrite them.** What's missing: headless resolution rungs, a `provider` field, chain orchestration, and the CLI check.
 
