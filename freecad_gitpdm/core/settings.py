@@ -81,34 +81,94 @@ def get_fcstd_compression_level():
         return None
 
 
-def ensure_git_friendly_fcstd_compression():
+# --- G3: repo-scoped compression, not a silent global flip (R1.2) ---
+#
+# CompressionLevel is a global FreeCAD preference with no per-document
+# override in the public API, so the only window we can shrink without
+# touching FreeCAD internals is the save call itself: FreeCAD notifies
+# document observers via slotStartSaveDocument/slotFinishSaveDocument
+# around each save, and CompressionLevel is read at serialization time
+# inside that window. Scoping to the save call (rather than "while a
+# GitPDM repo is open") is *tighter* than the requirement asks for and
+# fully satisfies it: saves of any other document, even ones open at the
+# same time, are never affected. See ui/panel.py's _DocumentObserver for
+# the call sites.
+_PRIOR_COMPRESSION_KEY = "PriorCompressionLevelBeforeGitPDM"
+_COMPRESSION_SCOPE_ACTIVE_KEY = "CompressionScopeActive"
+
+
+def enter_git_friendly_compression_scope():
     """
-    Set FreeCAD's .FCStd save compression to 0 (store, no deflate).
+    Record the current global compression level (once per scope) and set
+    it to 0 (store, no deflate) so an imminent .FCStd save is git-friendly.
 
     .FCStd files are ZIP archives. Deflate compression makes even a small
     model edit rewrite most of the archive's bytes, so Git can't diff or
     delta-compress saves meaningfully. Storing entries uncompressed keeps
     unchanged internal files byte-identical across saves, so Git's own pack
-    compression (and Git LFS) can actually do its job.
+    compression can actually do its job.
 
-    This is a global FreeCAD preference (applies to every document FreeCAD
-    saves, not just files in a Git repo), so it's only written when it's
-    not already at the git-friendly level, and is meant to be called once a
-    repo becomes the active GitPDM repo.
+    Must be paired with exit_git_friendly_compression_scope() once the
+    save completes, to restore the user's prior global preference.
     """
     try:
         import FreeCAD
 
+        if not load_bool_setting(_COMPRESSION_SCOPE_ACTIVE_KEY, False):
+            current = get_fcstd_compression_level()
+            if current is None:
+                return
+            save_setting(_PRIOR_COMPRESSION_KEY, str(current))
+            save_bool_setting(_COMPRESSION_SCOPE_ACTIVE_KEY, True)
+
         param_group = FreeCAD.ParamGet(DOCUMENT_PARAM_GROUP_PATH)
-        current = param_group.GetInt("CompressionLevel", 3)
-        if current != GIT_FRIENDLY_COMPRESSION_LEVEL:
+        if param_group.GetInt("CompressionLevel", 3) != GIT_FRIENDLY_COMPRESSION_LEVEL:
             param_group.SetInt("CompressionLevel", GIT_FRIENDLY_COMPRESSION_LEVEL)
             log.info(
-                "Set FreeCAD document compression level to 0 (store) for "
-                "git-friendly .FCStd saves"
+                "Set FreeCAD document compression level to 0 (store) for this "
+                "git-friendly .FCStd save; will restore afterward"
             )
     except Exception as e:
-        log.error(f"Failed to set FCStd compression level: {e}")
+        log.error(f"Failed to enter git-friendly compression scope: {e}")
+
+
+def exit_git_friendly_compression_scope():
+    """
+    Restore the global compression level recorded by
+    enter_git_friendly_compression_scope(). No-op if no scope is active,
+    so it is always safe to call unconditionally after a save completes.
+    """
+    if not load_bool_setting(_COMPRESSION_SCOPE_ACTIVE_KEY, False):
+        return
+    try:
+        import FreeCAD
+
+        prior_raw = load_setting(_PRIOR_COMPRESSION_KEY, "")
+        prior = int(prior_raw) if prior_raw != "" else 3
+        param_group = FreeCAD.ParamGet(DOCUMENT_PARAM_GROUP_PATH)
+        param_group.SetInt("CompressionLevel", prior)
+        log.info(f"Restored FreeCAD document compression level to {prior}")
+    except Exception as e:
+        log.error(f"Failed to restore compression level: {e}")
+    finally:
+        save_bool_setting(_COMPRESSION_SCOPE_ACTIVE_KEY, False)
+        save_setting(_PRIOR_COMPRESSION_KEY, "")
+
+
+def recover_stuck_compression_scope():
+    """
+    If a previous session crashed mid-save (leaving the compression scope
+    flagged active with no matching exit call), restore the recorded prior
+    value now instead of leaving the user's global preference pinned at 0
+    indefinitely. Meant to be called once during startup/deferred init.
+    """
+    if load_bool_setting(_COMPRESSION_SCOPE_ACTIVE_KEY, False):
+        log.warning(
+            "Found a GitPDM compression scope left active from a previous "
+            "session (likely interrupted mid-save); restoring prior "
+            "compression level"
+        )
+        exit_git_friendly_compression_scope()
 
 
 def save_setting(key, value):

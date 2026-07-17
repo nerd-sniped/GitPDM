@@ -25,7 +25,7 @@ import os
 import re
 from typing import Optional, Tuple, Callable
 
-from freecad_gitpdm.core import log, scaffold
+from freecad_gitpdm.core import log, scaffold, storage_mode
 from freecad_gitpdm.github.create_repo import (
     create_user_repo,
     CreateRepoRequest,
@@ -229,18 +229,33 @@ class _OptionsPage(QtWidgets.QWizardPage):
         self._scaffold_check.setChecked(True)
         layout.addWidget(self._scaffold_check)
 
-        # LFS checkbox
-        self._lfs_check = QtWidgets.QCheckBox(
-            "Enable Git LFS tracking for CAD files (*.FCStd, *.glb)"
+        # Storage mode (G3): delta (default, free) vs lfs (opt-in, for teams).
+        # Compression=0 and Git LFS are mutually defeating, so this is a
+        # single either/or choice, not an independent LFS toggle.
+        mode_group = QtWidgets.QGroupBox("Storage mode")
+        mode_layout = QtWidgets.QVBoxLayout()
+        mode_group.setLayout(mode_layout)
+
+        self._delta_radio = QtWidgets.QRadioButton("Delta (default, free)")
+        self._delta_radio.setChecked(True)
+        self._delta_radio.setToolTip(
+            storage_mode.describe_mode(storage_mode.MODE_DELTA)
         )
-        self._lfs_check.setChecked(True)
-        layout.addWidget(self._lfs_check)
+        mode_layout.addWidget(self._delta_radio)
+
+        self._lfs_radio = QtWidgets.QRadioButton("LFS (opt-in, for teams)")
+        self._lfs_radio.setToolTip(storage_mode.describe_mode(storage_mode.MODE_LFS))
+        mode_layout.addWidget(self._lfs_radio)
+
+        layout.addWidget(mode_group)
 
         # Info box
         info_text = QtWidgets.QLabel(
             "• Scaffolding: Creates folder structure and initial config\n"
-            "• Git LFS: Optimizes large binary files (install Git LFS if not present)\n\n"
-            "You can modify these settings later in your repository."
+            "• Delta mode: free, unmetered, best for working alone\n"
+            "• LFS mode: enables file locking for teams; restores normal "
+            "compression and uses GitHub's metered LFS storage\n\n"
+            "You can change the storage mode later in your repository."
         )
         info_text.setWordWrap(True)
         info_text.setStyleSheet("color: #666;")
@@ -249,10 +264,15 @@ class _OptionsPage(QtWidgets.QWizardPage):
         layout.addStretch()
 
     def get_options(self) -> dict:
-        """Return dict with scaffold and lfs options."""
+        """Return dict with scaffold and storage mode options."""
+        mode = (
+            storage_mode.MODE_LFS
+            if self._lfs_radio.isChecked()
+            else storage_mode.MODE_DELTA
+        )
         return {
             "enable_scaffold": self._scaffold_check.isChecked(),
-            "enable_lfs": self._lfs_check.isChecked(),
+            "storage_mode": mode,
         }
 
 
@@ -348,7 +368,7 @@ class _ProgressPage(QtWidgets.QWizardPage):
         private = inputs["private"]
         description = inputs["description"]
         enable_scaffold = options["enable_scaffold"]
-        enable_lfs = options["enable_lfs"]
+        selected_storage_mode = options["storage_mode"]
 
         if not api_client:
             self._add_step_error(0, "API client not available")
@@ -523,7 +543,7 @@ class _ProgressPage(QtWidgets.QWizardPage):
             if enable_scaffold:
                 try:
                     scaffold.apply_scaffold(
-                        folder_abs, enable_lfs=enable_lfs, write_preset=True
+                        folder_abs, mode=selected_storage_mode, write_preset=True
                     )
                     log.info(f"Scaffolding created successfully")
                     self._update_step_success(
@@ -548,7 +568,7 @@ class _ProgressPage(QtWidgets.QWizardPage):
             # === STEP 5: Configure LFS ===
             self._add_step("Configuring Git LFS…")
             log.info(f"Step 5: Configuring Git LFS")
-            if enable_lfs:
+            if selected_storage_mode == storage_mode.MODE_LFS:
                 lfs_result = git_client.lfs_install()
                 if lfs_result.ok:
                     log.info(f"Git LFS configured")
@@ -559,8 +579,8 @@ class _ProgressPage(QtWidgets.QWizardPage):
                         5, "Git LFS config written (install may be needed)"
                     )
             else:
-                log.info(f"Git LFS skipped")
-                self._update_step_success(5, "Git LFS skipped")
+                log.info(f"Git LFS skipped (delta mode)")
+                self._update_step_success(5, "Git LFS skipped (delta mode)")
 
             # === STEP 6: Stage files ===
             self._add_step("Staging files…")
