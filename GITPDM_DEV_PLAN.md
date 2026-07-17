@@ -37,7 +37,7 @@ Also landed on `dev` (2026-07-17), outside any phase:
 Open items not yet closable:
 
 - **G1 container acceptance** (R2.1 acceptance criterion): `docker run -e GITPDM_TOKEN=<pat> … python -m freecad_gitpdm.auth.check` in a keyring-less image. Verified locally on Windows (chain, CLI, precedence, gating invariant, 162-test suite) but not yet in an actual container — G2's container smoke job should absorb this as a permanent CI check.
-- **v0.4.0 Release page**: the tag exists but the GitHub Release must be created via the web UI (no `gh` CLI on the dev machine). G2 automates this for v0.5.0.
+- ~~**v0.4.0 Release page**~~ ✅ Published 2026-07-17 (<https://github.com/nerd-sniped/GitPDM/releases/tag/v0.4.0>, source archive; Tutorial 1's download link now resolves). G2 still automates purpose-built archives for v0.5.0.
 
 ---
 
