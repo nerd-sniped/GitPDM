@@ -512,7 +512,8 @@ class GitClient:
                 [git_cmd, "-C", repo_root, "branch", "--format=%(refname:short)"],
                 capture_output=True,
                 text=True,
-                timeout=15 ** _get_subprocess_kwargs(),
+                timeout=15,
+                **_get_subprocess_kwargs(),
             )
             if result.returncode == 0:
                 branches = [
@@ -560,7 +561,8 @@ class GitClient:
                 [git_cmd, "-C", repo_root, "branch", "-r", "--format=%(refname:short)"],
                 capture_output=True,
                 text=True,
-                timeout=15 ** _get_subprocess_kwargs(),
+                timeout=15,
+                **_get_subprocess_kwargs(),
             )
             if result.returncode == 0:
                 branches = [
@@ -1531,8 +1533,8 @@ class GitClient:
                 command,
                 capture_output=True,
                 text=True,
-                timeout=120  # 2 minutes for pull
-                ** _get_subprocess_kwargs(),
+                timeout=120,  # 2 minutes for pull
+                **_get_subprocess_kwargs(),
             )
 
             result["stdout"] = proc_result.stdout.strip()

@@ -213,3 +213,33 @@ class TestCmdResult:
         )
         assert result.ok is False
         assert result.error_code == "GIT_ERROR"
+
+
+class TestSubprocessKwargsRegression:
+    """Regression tests for the broken `timeout=N ** _get_subprocess_kwargs()`
+    splats that made these methods raise TypeError on every call."""
+
+    @patch("subprocess.run")
+    def test_list_local_branches_runs(self, mock_run, tmp_path):
+        mock_run.return_value = MagicMock(returncode=0, stdout="main\ndev\n", stderr="")
+        client = GitClient()
+        branches = client.list_local_branches(str(tmp_path))
+        assert branches == ["main", "dev"]
+
+    @patch("subprocess.run")
+    def test_list_remote_branches_runs(self, mock_run, tmp_path):
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout="origin/main\n", stderr=""
+        )
+        client = GitClient()
+        branches = client.list_remote_branches(str(tmp_path))
+        assert branches == ["origin/main"]
+
+    @patch("subprocess.run")
+    def test_pull_ff_only_runs(self, mock_run, tmp_path):
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout="Already up to date.", stderr=""
+        )
+        client = GitClient()
+        result = client.pull_ff_only(str(tmp_path))
+        assert result["ok"] is True

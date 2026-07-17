@@ -40,9 +40,9 @@ def fetch_viewer_identity(client: GitHubApiClient) -> IdentityResult:
 
     try:
         # Load current token to check expiry
-        from freecad_gitpdm.auth.token_store_factory import get_token_store
+        from freecad_gitpdm.auth.token_store_factory import create_token_store
 
-        store = get_token_store()
+        store = create_token_store()
         host = settings.load_github_host()
         account = settings.load_github_login()
         current_token = store.load(host, account)
