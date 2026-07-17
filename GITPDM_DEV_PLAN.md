@@ -16,6 +16,29 @@ Draft v1 was written from the README; v2 corrects it against the code. Substanti
 - **R3.2 clarified:** no FreeCAD-in-CI; the support matrix is a documented policy verified manually per release (CI mocks FreeCAD by design).
 - Minor: benchmark script goes in `tools/` (repo convention), not `scripts/`; `.freecad-pdm/` config-file pattern already exists (`export/preset.py`) for G3 to mirror.
 
+## Status ledger
+
+Keep this table current — update it in the same PR as the work it describes.
+
+| Phase | Status | Where / when |
+|---|---|---|
+| G1 credential engine | ✅ Implemented | `dev` @ `ceaa4f5`, 2026-07-17 |
+| G2 release + CI | ⏳ **Next up** | — |
+| G3 storage modes | Not started (parallel-safe) | — |
+| G4 provider abstraction | Not started (needs G1 ✅) | — |
+| G5–G8 | Not started | — |
+
+Also landed on `dev` (2026-07-17), outside any phase:
+
+- Fixed a `TypeError` in `list_local_branches`, `list_remote_branches`, and `pull_ff_only` (broken `timeout=N ** _get_subprocess_kwargs()` splat — these methods crashed on every call).
+- Fixed dead token-refresh wiring in `github/identity.py` (imported a nonexistent `get_token_store`; the ImportError was silently swallowed, so pre-request refresh never ran).
+- `v0.4.0` tagged from pre-G1 `main`.
+
+Open items not yet closable:
+
+- **G1 container acceptance** (R2.1 acceptance criterion): `docker run -e GITPDM_TOKEN=<pat> … python -m freecad_gitpdm.auth.check` in a keyring-less image. Verified locally on Windows (chain, CLI, precedence, gating invariant, 162-test suite) but not yet in an actual container — G2's container smoke job should absorb this as a permanent CI check.
+- **v0.4.0 Release page**: the tag exists but the GitHub Release must be created via the web UI (no `gh` CLI on the dev machine). G2 automates this for v0.5.0.
+
 ---
 
 ## How to use this document (instructions to the implementing agent)
@@ -28,9 +51,20 @@ Draft v1 was written from the README; v2 corrects it against the code. Substanti
 
 ---
 
-## Phase G1 — Credential engine *(BLOCKER for everything external)*
+## Phase G1 — Credential engine *(BLOCKER for everything external)* ✅ IMPLEMENTED
 
 **Implements:** R2.1, R2.1a. **Depends on:** nothing.
+
+**As built** (`dev` @ `ceaa4f5`, 2026-07-17 — kept for reference; the brief below is the original spec):
+
+- `auth/credential_chain.py` — `resolve_credential()` / `resolve_env_credential()` / `headless_backends_active()`; interactive rungs (device flow, PAT prompt) stay in the UI layer as planned.
+- `auth/token_store_file.py` — `FileTokenStore`, constructible only under `GITPDM_ALLOW_FILE_TOKENS=1`; factory falls back to it only when the flag is set AND the OS store is unavailable.
+- `TokenResponse.provider` (default `"github"`) rather than a separate `Credential` wrapper — stores serialize field-by-field with `.get()` defaults, so pre-existing stored tokens load unchanged.
+- `auth/check.py` — `python -m freecad_gitpdm.auth.check`, runs without FreeCAD.
+- `git/client.py:_headless_credential_args()` — bridges env tokens into `clone`/`fetch`/`pull`/`push` via an inline credential helper referencing env var names only (no token on any command line); returns `[]` on desktop so existing helpers are untouched. This item wasn't in the original brief but is required by R2.1's "authenticates and **pushes** in a container".
+- `core/services.py:github_api_client()` — env credentials take precedence; desktop path unchanged.
+- Refresh was already implemented but dead (see Status ledger); the wiring bug is fixed. Per-provider token URL parameterization deferred to G4 as planned.
+- Outstanding: the docker acceptance run (see Status ledger).
 
 **Context (corrected in v2):** GitPDM currently assumes an OS keyring — that assumption does fail in containers. But it does **not** model tokens as immortal strings: `auth/oauth_device_flow.py` defines `TokenResponse` with `refresh_token`, `expires_in`, `refresh_token_expires_in`, and `obtained_at_utc`; `auth/token_refresh.py` implements expiry detection (5-minute buffer), transparent refresh, and graceful degradation to re-auth (`ensure_fresh_token`). Persistence goes through a `TokenStore` ABC (`auth/token_store.py`) with per-OS backends chosen by `auth/token_store_factory.py`. **Extend these pieces; do not rewrite them.** What's missing: headless resolution rungs, a `provider` field, chain orchestration, and the CLI check.
 
@@ -52,9 +86,9 @@ Draft v1 was written from the README; v2 corrects it against the code. Substanti
 
 ---
 
-## Phase G2 — Release + CI *(unblocks the sister repo's image build)*
+## Phase G2 — Release + CI *(unblocks the sister repo's image build)* ⏳ NEXT UP
 
-**Implements:** R3.1, R3.2. **Depends on:** G1 merged.
+**Implements:** R3.1, R3.2. **Depends on:** G1 merged. ✅ (G1 is on `dev`; merge or branch from it.)
 
 **Context (corrected in v2):** CI already exists — `.github/workflows/ci.yml` runs ruff lint + format check, pytest across Python 3.10/3.11/3.12 on Linux/Windows/macOS (FreeCAD mocked via `tests/conftest.py`), and `tools/architecture_guard.py`, on push/PR to `main` and `dev`. **Do not rebuild it.** This phase only adds release automation.
 
