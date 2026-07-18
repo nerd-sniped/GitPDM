@@ -430,68 +430,145 @@ def load_default_clone_dir() -> str:
     return load_setting("DefaultCloneDir", "")
 
 
-# --- Sprint OAUTH-0: GitHub OAuth settings (metadata only) ---
+# --- Multi-provider connection settings ---
+#
+# Every provider gets its own namespaced set of connection-state keys, so
+# e.g. a GitLab connection doesn't collide with or overwrite a GitHub one -
+# a user (or a repo) can have both connected at once. GitHub's original
+# Sprint OAUTH-0/OAUTH-2 functions below are kept as thin wrappers around
+# these, calling with provider_id="github" - the underlying parameter-store
+# keys ("GitHubConnected", "GitHubLogin", etc.) are unchanged, so existing
+# stored settings load exactly as before with zero migration.
+
+_PROVIDER_KEY_PREFIXES = {
+    "github": "GitHub",
+    "gitlab": "GitLab",
+    "gitea": "Gitea",
+    "bitbucket": "Bitbucket",
+    "sourcehut": "SourceHut",
+}
 
 
-def save_github_connected(connected):
-    """
-    Save GitHub connection status (metadata only, no tokens).
-
-    Args:
-        connected: bool indicating if user is connected to GitHub
-    """
-    save_bool_setting("GitHubConnected", bool(connected))
-
-
-def load_github_connected():
-    """
-    Load GitHub connection status.
-
-    Returns:
-        bool: True if GitHub is connected, False otherwise
-    """
-    return load_bool_setting("GitHubConnected", False)
+def _provider_key_prefix(provider_id: str) -> str:
+    """Parameter-store key prefix for a provider's connection-state
+    settings. Providers not in the explicit map above (there shouldn't be
+    any, but this keeps a new provider from crashing settings lookups
+    before someone remembers to add it here) fall back to a capitalized
+    provider_id."""
+    return _PROVIDER_KEY_PREFIXES.get(provider_id, (provider_id or "").capitalize())
 
 
-def save_github_login(login):
-    """
-    Save GitHub username (metadata only, no tokens).
-
-    Args:
-        login: str GitHub username or None to clear
-    """
-    save_setting("GitHubLogin", login or "")
+def save_provider_connected(provider_id: str, connected: bool):
+    """Save a provider's connection status (metadata only, no tokens)."""
+    save_bool_setting(f"{_provider_key_prefix(provider_id)}Connected", bool(connected))
 
 
-def load_github_login():
-    """
-    Load GitHub username.
+def load_provider_connected(provider_id: str) -> bool:
+    """Load a provider's connection status."""
+    return load_bool_setting(f"{_provider_key_prefix(provider_id)}Connected", False)
 
-    Returns:
-        str | None: GitHub username if set, None otherwise
-    """
-    login = load_setting("GitHubLogin", "")
+
+def save_provider_login(provider_id: str, login):
+    """Save a provider's username (metadata only, no tokens)."""
+    save_setting(f"{_provider_key_prefix(provider_id)}Login", login or "")
+
+
+def load_provider_login(provider_id: str):
+    """Load a provider's username. Returns None if unset."""
+    login = load_setting(f"{_provider_key_prefix(provider_id)}Login", "")
     return login if login else None
 
 
-def save_github_host(host):
-    """
-    Save GitHub host (supports GitHub Enterprise).
+def save_provider_host(provider_id: str, host, default_host: str = ""):
+    """Save a provider's host (e.g. for GitHub Enterprise, or a
+    self-hosted Gitea/Forgejo instance's server URL)."""
+    save_setting(f"{_provider_key_prefix(provider_id)}Host", host or default_host)
 
-    Args:
-        host: str GitHub host (e.g., "github.com")
-    """
-    save_setting("GitHubHost", host or "github.com")
+
+def load_provider_host(provider_id: str, default_host: str = "") -> str:
+    """Load a provider's host."""
+    return load_setting(f"{_provider_key_prefix(provider_id)}Host", default_host)
+
+
+def save_provider_user_id(provider_id: str, user_id: int | None):
+    """Save a provider's user id (metadata only)."""
+    try:
+        value = "" if user_id is None else str(int(user_id))
+        save_setting(f"{_provider_key_prefix(provider_id)}UserId", value)
+    except (TypeError, ValueError):
+        save_setting(f"{_provider_key_prefix(provider_id)}UserId", "")
+
+
+def load_provider_user_id(provider_id: str) -> int | None:
+    """Load a provider's user id (int or None)."""
+    raw = load_setting(f"{_provider_key_prefix(provider_id)}UserId", "")
+    try:
+        return int(raw) if raw else None
+    except ValueError:
+        return None
+
+
+def save_provider_last_verified_at(provider_id: str, ts_iso: str | None):
+    """Save a provider's last successful identity verification timestamp (ISO)."""
+    save_setting(f"{_provider_key_prefix(provider_id)}LastVerifiedAt", ts_iso or "")
+
+
+def load_provider_last_verified_at(provider_id: str) -> str:
+    """Load a provider's last successful identity verification timestamp."""
+    return load_setting(f"{_provider_key_prefix(provider_id)}LastVerifiedAt", "")
+
+
+def save_provider_last_api_error(
+    provider_id: str, code: str | None, message: str | None
+):
+    """Persist a provider's last API error classification (no secrets)."""
+    prefix = _provider_key_prefix(provider_id)
+    save_setting(f"{prefix}LastApiErrorCode", code or "")
+    save_setting(f"{prefix}LastApiErrorMessage", message or "")
+
+
+def load_provider_last_api_error(provider_id: str):
+    """Return tuple (code, message) for a provider's last API error."""
+    prefix = _provider_key_prefix(provider_id)
+    code = load_setting(f"{prefix}LastApiErrorCode", "")
+    msg = load_setting(f"{prefix}LastApiErrorMessage", "")
+    return (code or "", msg or "")
+
+
+# --- Sprint OAUTH-0: GitHub OAuth settings (metadata only) ---
+# Thin wrappers over the provider-namespaced functions above, kept for
+# backward compatibility with existing callers (ui/github_auth.py etc.) -
+# same storage keys as before, zero behavior change for existing users.
+
+
+def save_github_connected(connected):
+    """Save GitHub connection status (metadata only, no tokens)."""
+    save_provider_connected("github", connected)
+
+
+def load_github_connected():
+    """Load GitHub connection status."""
+    return load_provider_connected("github")
+
+
+def save_github_login(login):
+    """Save GitHub username (metadata only, no tokens)."""
+    save_provider_login("github", login)
+
+
+def load_github_login():
+    """Load GitHub username."""
+    return load_provider_login("github")
+
+
+def save_github_host(host):
+    """Save GitHub host (supports GitHub Enterprise)."""
+    save_provider_host("github", host, default_host="github.com")
 
 
 def load_github_host():
-    """
-    Load GitHub host.
-
-    Returns:
-        str: GitHub host (default "github.com")
-    """
-    return load_setting("GitHubHost", "github.com")
+    """Load GitHub host."""
+    return load_provider_host("github", default_host="github.com")
 
 
 # --- Sprint OAUTH-2: Session verification metadata ---
@@ -499,42 +576,29 @@ def load_github_host():
 
 def save_github_user_id(user_id: int | None):
     """Save GitHub user id (metadata only)."""
-    try:
-        # Store as string; empty if None
-        value = "" if user_id is None else str(int(user_id))
-        save_setting("GitHubUserId", value)
-    except Exception:
-        save_setting("GitHubUserId", "")
+    save_provider_user_id("github", user_id)
 
 
 def load_github_user_id() -> int | None:
     """Load GitHub user id (int or None)."""
-    raw = load_setting("GitHubUserId", "")
-    try:
-        return int(raw) if raw else None
-    except Exception:
-        return None
+    return load_provider_user_id("github")
 
 
 def save_last_verified_at(ts_iso: str | None):
     """Save last successful identity verification timestamp (ISO)."""
-    save_setting("GitHubLastVerifiedAt", ts_iso or "")
+    save_provider_last_verified_at("github", ts_iso)
 
 
 def load_last_verified_at() -> str:
     """Load last successful identity verification timestamp (ISO string or empty)."""
-    return load_setting("GitHubLastVerifiedAt", "")
+    return load_provider_last_verified_at("github")
 
 
 def save_last_api_error(code: str | None, message: str | None):
     """Persist last API error classification (no secrets)."""
-    save_setting("GitHubLastApiErrorCode", (code or ""))
-    # Message may be user-facing; store redacted/non-sensitive
-    save_setting("GitHubLastApiErrorMessage", (message or ""))
+    save_provider_last_api_error("github", code, message)
 
 
 def load_last_api_error():
     """Return tuple (code, message) for last API error."""
-    code = load_setting("GitHubLastApiErrorCode", "")
-    msg = load_setting("GitHubLastApiErrorMessage", "")
-    return (code or "", msg or "")
+    return load_provider_last_api_error("github")
