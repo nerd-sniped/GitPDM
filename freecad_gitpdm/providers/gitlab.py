@@ -40,6 +40,12 @@ class GitLabProvider(BaseProvider):
     )
     default_host = "gitlab.com"
 
+    # GitLab's documented convention for PAT-over-HTTPS git auth: username
+    # must be "oauth2" specifically (unlike GitHub, which ignores the
+    # username field). Safe to set even in this stub -- it's a static fact
+    # about GitLab's git transport, not an API call.
+    credential_username = "oauth2"
+
     def get_client_id(self) -> Optional[str]:
         raise NotImplementedError(_NOT_IMPLEMENTED)
 

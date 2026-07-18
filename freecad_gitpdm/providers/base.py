@@ -61,6 +61,15 @@ class BaseProvider:
     capabilities: ProviderCapabilities = ProviderCapabilities()
     default_host: str = ""
 
+    # Username to send alongside a PAT/token over HTTPS git auth (the
+    # `username=` line in a git credential helper response). Hosts differ:
+    # GitHub accepts any non-empty value, "x-access-token" is its own
+    # convention; GitLab requires "oauth2" specifically. Consulted by
+    # git/client.py's headless credential bridge (G1) so a container
+    # deployment authenticates correctly against whichever host the repo
+    # is configured for, not just GitHub.
+    credential_username: str = "x-access-token"
+
     # ---- Auth endpoint ownership (R5.1: providers own their auth config,
     # so the G1 credential chain and refresh path can consult them instead
     # of a hardcoded GitHub URL). ----

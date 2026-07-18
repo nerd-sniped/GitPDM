@@ -73,7 +73,14 @@ when running tests or scripts outside the app.
 - `git/client.py` — subprocess wrapper around the `git` CLI; all Git
   operations (commit/push/pull/fetch/branch) go through here. Host-agnostic
   by design (Phase G4's forcing test relies on this): no provider
-  conditionals belong in here.
+  conditionals belong in here. One narrow, deliberate exception:
+  `_headless_credential_username()` asks the active provider (via
+  `GITPDM_PROVIDER` → `providers.get_provider_class()`) for its
+  `credential_username` *property* — the same capability-delegation
+  pattern used everywhere else (read a property, never branch on provider
+  id), needed because GitHub and GitLab disagree on the username to send
+  alongside a PAT over HTTPS. Don't "simplify" this back to a hardcoded
+  value.
 - `providers/` — git host abstraction (Phase G4; R5.1-R5.3). `base.py`
   defines `ProviderCapabilities` (`supports_device_flow`,
   `supports_repo_creation`, `supports_lfs_locking`, `supports_pull_requests`)

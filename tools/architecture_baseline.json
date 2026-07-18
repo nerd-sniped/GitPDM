@@ -7,7 +7,7 @@
     "freecad_gitpdm/ui/commit_push.py": { "max_lines": 575 },
     "freecad_gitpdm/ui/repo_validator.py": { "max_lines": 600, "note": "Bumped from 550: G3 storage-mode caching + G5 session-lock/shallow-clone hooks in _handle_valid_repo/_handle_invalid_repo, merged together (~564)." },
     "freecad_gitpdm/ui/branch_ops.py": { "max_lines": 950 },
-    "freecad_gitpdm/git/client.py": { "max_lines": 2000 },
+    "freecad_gitpdm/git/client.py": { "max_lines": 2050, "note": "Bumped from 2000: provider-aware headless credential username (_headless_credential_username), fixing a hardcoded GitHub-only assumption that broke container auth for GitLab." },
     "freecad_gitpdm/export/exporter.py": { "max_lines": 400 },
     "freecad_gitpdm/export/backup_manager.py": { "max_lines": 150 },
     "freecad_gitpdm/export/manifest.py": { "max_lines": 60 },

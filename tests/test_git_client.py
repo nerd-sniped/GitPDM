@@ -14,7 +14,49 @@ from freecad_gitpdm.git.client import (
     STATUS_MODIFIED,
     STATUS_ADDED,
     STATUS_UNTRACKED,
+    _headless_credential_args,
+    _headless_credential_username,
 )
+
+
+class TestHeadlessCredentialUsername:
+    """Headless container credential auth must match the active provider's
+    username convention, not assume GitHub's unconditionally (found while
+    reviewing the manual test checklist for non-GitHub host coverage)."""
+
+    def test_defaults_to_github_convention_when_unset(self, monkeypatch):
+        monkeypatch.delenv("GITPDM_PROVIDER", raising=False)
+        assert _headless_credential_username() == "x-access-token"
+
+    def test_github_explicit(self, monkeypatch):
+        monkeypatch.setenv("GITPDM_PROVIDER", "github")
+        assert _headless_credential_username() == "x-access-token"
+
+    def test_gitlab_uses_oauth2(self, monkeypatch):
+        monkeypatch.setenv("GITPDM_PROVIDER", "gitlab")
+        assert _headless_credential_username() == "oauth2"
+
+    def test_generic_uses_github_convention(self, monkeypatch):
+        # Most PAT-in-URL/token hosts ignore the username field entirely,
+        # so GenericProvider's default is harmless even though it's named
+        # after GitHub's convention.
+        monkeypatch.setenv("GITPDM_PROVIDER", "generic")
+        assert _headless_credential_username() == "x-access-token"
+
+    def test_unknown_provider_falls_back(self, monkeypatch):
+        monkeypatch.setenv("GITPDM_PROVIDER", "bogus-host")
+        assert _headless_credential_username() == "x-access-token"
+
+    def test_credential_args_thread_gitlab_username(self, monkeypatch):
+        monkeypatch.setenv("GITPDM_TOKEN", "dummy")
+        monkeypatch.setenv("GITPDM_PROVIDER", "gitlab")
+        args = _headless_credential_args()
+        assert any("username=oauth2" in a for a in args)
+
+    def test_credential_args_empty_on_desktop(self, monkeypatch):
+        monkeypatch.delenv("GITPDM_TOKEN", raising=False)
+        monkeypatch.delenv("GITPDM_TOKEN_FILE", raising=False)
+        assert _headless_credential_args() == []
 
 
 class TestGitClient:

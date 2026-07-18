@@ -32,6 +32,25 @@ def _get_subprocess_kwargs():
     return kwargs
 
 
+def _headless_credential_username() -> str:
+    """
+    Username to pair with the env-provided token (Phase G1 / R2.1, extended
+    for R5.1 provider-awareness). Hosts disagree on this: GitHub ignores
+    the username field ("x-access-token" is just its own convention),
+    GitLab requires "oauth2" specifically. Determined from GITPDM_PROVIDER
+    (the same env var the credential chain already reads — see
+    auth/credential_chain.py's ENV_PROVIDER), defaulting to GitHub's
+    convention when unset, same as before this became provider-aware.
+    """
+    try:
+        from freecad_gitpdm.providers import get_provider_class
+
+        provider_id = os.environ.get("GITPDM_PROVIDER", "github")
+        return get_provider_class(provider_id)().credential_username
+    except Exception:
+        return "x-access-token"
+
+
 def _headless_credential_args():
     """
     Extra `git -c` arguments bridging environment-provided tokens
@@ -52,9 +71,10 @@ def _headless_credential_args():
     except Exception:
         return []
 
+    username = _headless_credential_username()
     helper = (
         '!f() { if [ "$1" = "get" ]; then '
-        'echo "username=x-access-token"; '
+        f'echo "username={username}"; '
         'if [ -n "$GITPDM_TOKEN_FILE" ]; then '
         'echo "password=$(cat "$GITPDM_TOKEN_FILE")"; '
         'else echo "password=$GITPDM_TOKEN"; fi; '
