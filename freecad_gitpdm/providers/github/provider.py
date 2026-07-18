@@ -75,7 +75,9 @@ class GitHubProvider(BaseProvider):
     def default_scopes(self) -> List[str]:
         return list(DEFAULT_SCOPES)
 
-    def build_api_client(self, token: str, user_agent: str = "GitPDM/1.0"):
+    def build_api_client(
+        self, token: str, user_agent: str = "GitPDM/1.0", host: Optional[str] = None
+    ):
         from freecad_gitpdm.providers.github.api_client import GitHubApiClient
 
         return GitHubApiClient("api.github.com", token, user_agent)

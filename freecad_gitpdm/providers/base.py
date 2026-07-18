@@ -150,8 +150,16 @@ class BaseProvider:
             f"{self.provider_id} has no host API to list repositories from."
         )
 
-    def build_api_client(self, token: str, user_agent: str = "GitPDM/1.0"):
-        """Construct a host API client for this provider, or None if it has no API."""
+    def build_api_client(
+        self, token: str, user_agent: str = "GitPDM/1.0", host: Optional[str] = None
+    ):
+        """
+        Construct a host API client for this provider, or None if it has no
+        API. `host` is only meaningful for `requires_host_url=True`
+        providers (Gitea/Forgejo) — it's the user-entered server URL;
+        fixed-host providers (GitHub, GitLab) ignore it and use their own
+        `default_host`.
+        """
         return None
 
 

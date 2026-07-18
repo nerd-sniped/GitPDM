@@ -1,16 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-GitLab provider: PAT-paste auth + repo creation/listing via REST API v4.
+Gitea/Forgejo provider: self-hosted, PAT-paste auth, GitHub-API-compatible
+REST v1. No fixed `default_host` — `requires_host_url=True` drives the
+wizard/panel UI to collect the instance's base URL, which then must be
+threaded into `build_api_client(host=...)`.
 
-No device flow: GitLab 17.9+ does support OAuth device flow (R5.2), but
-device flow needs a pre-registered OAuth application per host, which
-GitPDM doesn't have for GitLab yet. R5.2 documents PAT/SSH as "the
-universal floor" for exactly this reason. `requires_manual_token=True`
-drives the wizard/panel PAT-entry UI instead.
-
-Known limitation: only gitlab.com is supported (self-managed GitLab
-instances would need a host-URL field like Gitea/Forgejo's — not built
-here; `requires_host_url` stays False for GitLab in this pass).
+No device flow: the open proposal to add it (go-gitea/gitea#27309) hasn't
+been accepted (R5.2), and even where a host implements device flow, a
+self-hosted instance needs its own OAuth app registration — no universal
+client id exists off-SaaS. PAT/SSH is "the universal floor" (R5.2).
 """
 
 from __future__ import annotations
@@ -24,28 +22,30 @@ from freecad_gitpdm.providers.base import (
     ViewerIdentity,
 )
 
-GITLAB_HOST = "gitlab.com"
 
-
-class GitLabProvider(BaseProvider):
-    provider_id = "gitlab"
-    display_name = "GitLab"
+class GiteaProvider(BaseProvider):
+    provider_id = "gitea"
+    display_name = "Gitea / Forgejo"
     capabilities = ProviderCapabilities(
         supports_device_flow=False,
         supports_repo_creation=True,
         supports_lfs_locking=False,  # D1, deferred until a real lfs-mode team user exists
         supports_pull_requests=False,
         requires_manual_token=True,
+        requires_host_url=True,
     )
-    default_host = GITLAB_HOST
-    credential_username = "oauth2"  # GitLab's PAT-over-HTTPS convention
+    default_host = ""
+    # Any non-empty value works over Gitea's git-over-HTTPS auth (like
+    # GitHub); "x-access-token" (the BaseProvider default) is fine.
 
     def build_api_client(
         self, token: str, user_agent: str = "GitPDM/1.0", host: Optional[str] = None
     ):
-        from freecad_gitpdm.providers.gitlab.api_client import GitLabApiClient
+        from freecad_gitpdm.providers.gitea.api_client import GiteaApiClient
 
-        return GitLabApiClient(self.default_host, token, user_agent)
+        if not host:
+            return None
+        return GiteaApiClient(host, token, user_agent)
 
     def create_remote_repo(
         self,
@@ -54,7 +54,7 @@ class GitLabProvider(BaseProvider):
         private: bool,
         description: Optional[str] = None,
     ) -> RemoteRepoInfo:
-        from freecad_gitpdm.providers.gitlab.create_repo import (
+        from freecad_gitpdm.providers.gitea.create_repo import (
             CreateRepoRequest,
             create_user_repo,
         )
@@ -69,7 +69,7 @@ class GitLabProvider(BaseProvider):
         )
 
     def fetch_identity(self, api_client) -> ViewerIdentity:
-        from freecad_gitpdm.providers.gitlab.identity import fetch_viewer_identity
+        from freecad_gitpdm.providers.gitea.identity import fetch_viewer_identity
 
         result = fetch_viewer_identity(api_client)
         return ViewerIdentity(
@@ -80,6 +80,6 @@ class GitLabProvider(BaseProvider):
         )
 
     def list_repos(self, api_client):
-        from freecad_gitpdm.providers.gitlab.repos import list_repos
+        from freecad_gitpdm.providers.gitea.repos import list_repos
 
         return list_repos(api_client)
