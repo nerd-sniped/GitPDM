@@ -24,6 +24,7 @@ from freecad_gitpdm.core import log, session_lock, settings, jobs, storage_mode
 from freecad_gitpdm.git import client
 from freecad_gitpdm.ui import dialogs
 from freecad_gitpdm.ui.github_auth import GitHubAuthHandler
+from freecad_gitpdm.ui.pat_auth import PatAuthHandler
 from freecad_gitpdm.ui.file_browser import FileBrowserHandler
 from freecad_gitpdm.ui.fetch_pull import FetchPullHandler
 from freecad_gitpdm.ui.commit_push import CommitPushHandler
@@ -184,6 +185,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         # Initialize handlers (Sprint 4)
         self._github_auth = GitHubAuthHandler(self, self._services)
+        self._pat_auth = PatAuthHandler(self, self._services)
         self._file_browser = FileBrowserHandler(
             self, self._git_client, self._job_runner
         )
@@ -253,6 +255,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._build_git_check_section(main_layout)
         self._build_repo_selector(main_layout)
         self._build_github_account_section(main_layout)
+        self._build_other_hosts_section(main_layout)
         self._build_status_section(main_layout)
         self._build_branch_section(main_layout)
         self._build_changes_section(main_layout)
@@ -815,6 +818,133 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         layout.addWidget(group)
         self._group_github_account = group
 
+    def _build_other_hosts_section(self, layout):
+        """
+        Build the "Other Git Hosts" section: one consolidated PAT-connect
+        UI for GitLab/Bitbucket/Gitea-Forgejo/SourceHut, rather than four
+        more GitHub-style sections (device-flow specific, would balloon
+        this file). GitHub keeps its own dedicated section above - it
+        authenticates differently (OAuth device flow) and predates this.
+
+        Args:
+            layout: Parent layout to add widgets to
+        """
+        group = QtWidgets.QGroupBox("Other Git Hosts")
+        group_layout = QtWidgets.QVBoxLayout()
+        group_layout.setContentsMargins(6, 4, 6, 4)
+        group_layout.setSpacing(4)
+        group.setLayout(group_layout)
+
+        from freecad_gitpdm.providers import list_provider_ids, get_provider_class
+
+        self._other_host_ids = sorted(
+            pid for pid in list_provider_ids() if pid not in ("github", "generic")
+        )
+
+        picker_row = QtWidgets.QHBoxLayout()
+        picker_row.setSpacing(4)
+        picker_row.addWidget(QtWidgets.QLabel("Host:"))
+        self.other_hosts_combo = QtWidgets.QComboBox()
+        for provider_id in self._other_host_ids:
+            provider_cls = get_provider_class(provider_id)
+            self.other_hosts_combo.addItem(
+                provider_cls.display_name or provider_id, provider_id
+            )
+        self.other_hosts_combo.currentIndexChanged.connect(
+            self._on_other_hosts_provider_changed
+        )
+        picker_row.addWidget(self.other_hosts_combo, 1)
+        group_layout.addLayout(picker_row)
+
+        self.other_hosts_status_label = QtWidgets.QLabel("")
+        self._set_strong_label(self.other_hosts_status_label, "gray")
+        group_layout.addWidget(self.other_hosts_status_label)
+
+        self._other_hosts_host_url_row = QtWidgets.QWidget()
+        host_url_row_layout = QtWidgets.QHBoxLayout()
+        host_url_row_layout.setContentsMargins(0, 0, 0, 0)
+        self._other_hosts_host_url_row.setLayout(host_url_row_layout)
+        host_url_row_layout.addWidget(QtWidgets.QLabel("Server URL:"))
+        self.other_hosts_host_url_edit = QtWidgets.QLineEdit()
+        self.other_hosts_host_url_edit.setPlaceholderText(
+            "e.g., https://gitea.example.com"
+        )
+        host_url_row_layout.addWidget(self.other_hosts_host_url_edit)
+        group_layout.addWidget(self._other_hosts_host_url_row)
+
+        pat_row = QtWidgets.QHBoxLayout()
+        pat_row.setSpacing(4)
+        self.other_hosts_pat_edit = QtWidgets.QLineEdit()
+        self.other_hosts_pat_edit.setEchoMode(QtWidgets.QLineEdit.Password)
+        self.other_hosts_pat_edit.setPlaceholderText("Paste a Personal Access Token")
+        pat_row.addWidget(self.other_hosts_pat_edit, 1)
+        group_layout.addLayout(pat_row)
+
+        buttons_layout = QtWidgets.QHBoxLayout()
+        buttons_layout.setSpacing(4)
+
+        self.other_hosts_connect_btn = QtWidgets.QPushButton("Connect")
+        self.other_hosts_connect_btn.clicked.connect(
+            self._on_other_hosts_connect_clicked
+        )
+        buttons_layout.addWidget(self.other_hosts_connect_btn)
+
+        self.other_hosts_disconnect_btn = QtWidgets.QPushButton("Disconnect")
+        self.other_hosts_disconnect_btn.clicked.connect(
+            self._on_other_hosts_disconnect_clicked
+        )
+        buttons_layout.addWidget(self.other_hosts_disconnect_btn)
+
+        self.other_hosts_browse_btn = QtWidgets.QPushButton("Browse Repos…")
+        self.other_hosts_browse_btn.setToolTip(
+            "List and clone repositories from the selected, connected host"
+        )
+        self.other_hosts_browse_btn.clicked.connect(self._on_other_hosts_browse_clicked)
+        buttons_layout.addWidget(self.other_hosts_browse_btn)
+
+        group_layout.addLayout(buttons_layout)
+
+        layout.addWidget(group)
+        self._group_other_hosts = group
+
+        if self._other_host_ids:
+            self._on_other_hosts_provider_changed(0)
+
+    def _current_other_host_id(self) -> str:
+        idx = self.other_hosts_combo.currentIndex()
+        if 0 <= idx < len(self._other_host_ids):
+            return self._other_host_ids[idx]
+        return self._other_host_ids[0] if self._other_host_ids else "generic"
+
+    def _on_other_hosts_provider_changed(self, _index):
+        provider_id = self._current_other_host_id()
+        from freecad_gitpdm.providers import get_provider
+
+        provider = get_provider(provider_id)
+        self._other_hosts_host_url_row.setVisible(
+            provider.capabilities.requires_host_url
+        )
+        self.other_hosts_pat_edit.clear()
+        self._pat_auth.update_status_for(provider_id)
+        self._update_other_hosts_buttons()
+
+    def _update_other_hosts_buttons(self):
+        provider_id = self._current_other_host_id()
+        is_connected = settings.load_provider_connected(provider_id)
+        self.other_hosts_connect_btn.setEnabled(not is_connected)
+        self.other_hosts_disconnect_btn.setEnabled(is_connected)
+
+    def _on_other_hosts_connect_clicked(self):
+        provider_id = self._current_other_host_id()
+        self._pat_auth.connect_clicked(
+            provider_id,
+            self.other_hosts_pat_edit.text(),
+            host_url=self.other_hosts_host_url_edit.text(),
+        )
+
+    def _on_other_hosts_disconnect_clicked(self):
+        self._pat_auth.disconnect_clicked(self._current_other_host_id())
+
     def _build_status_section(self, layout):
         """
         Build the status information section
@@ -1278,6 +1408,34 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self._validate_repo_path(folder)
             log.info(f"Selected repo folder: {folder}")
 
+    def _handle_repo_picker_result(self, dlg):
+        """Shared post-dialog handling for any successful RepoPickerDialog
+        clone, regardless of which provider it browsed."""
+        cloned_path = dlg.cloned_path()
+        if not cloned_path:
+            return
+
+        settings.save_repo_path(cloned_path)
+        self.repo_path_field.setText(cloned_path)
+        self._validate_repo_path(cloned_path)
+
+        # Offer to open the cloned folder
+        self._show_repo_opened_dialog(cloned_path, "cloned")
+
+        # Ensure working directory is set immediately after dialog
+        # Use delayed calls to ensure it happens after all UI updates complete
+        if self._current_repo_root:
+            self._set_freecad_working_directory(self._current_repo_root)
+            # Also set with delays to override any FreeCAD resets
+            QtCore.QTimer.singleShot(
+                100,
+                lambda: self._set_freecad_working_directory(self._current_repo_root),
+            )
+            QtCore.QTimer.singleShot(
+                500,
+                lambda: self._set_freecad_working_directory(self._current_repo_root),
+            )
+
     def _on_open_clone_repo_clicked(self):
         """Open repo picker dialog to select and clone GitHub repo."""
         try:
@@ -1293,37 +1451,58 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             )
 
             if dlg.exec():
-                cloned_path = dlg.cloned_path()
-                if cloned_path:
-                    settings.save_repo_path(cloned_path)
-                    self.repo_path_field.setText(cloned_path)
-                    self._validate_repo_path(cloned_path)
-
-                    # Offer to open the cloned folder
-                    self._show_repo_opened_dialog(cloned_path, "cloned")
-
-                    # Ensure working directory is set immediately after dialog
-                    # Use delayed calls to ensure it happens after all UI updates complete
-                    if self._current_repo_root:
-                        self._set_freecad_working_directory(self._current_repo_root)
-                        # Also set with delays to override any FreeCAD resets
-                        QtCore.QTimer.singleShot(
-                            100,
-                            lambda: self._set_freecad_working_directory(
-                                self._current_repo_root
-                            ),
-                        )
-                        QtCore.QTimer.singleShot(
-                            500,
-                            lambda: self._set_freecad_working_directory(
-                                self._current_repo_root
-                            ),
-                        )
+                self._handle_repo_picker_result(dlg)
         except Exception as e:
             log.error(f"Open/Clone flow failed: {e}")
             QtWidgets.QMessageBox.warning(
                 self,
                 "Open/Clone Repo",
+                "Failed to open repo picker. See logs for details.",
+            )
+
+    def _on_other_hosts_browse_clicked(self):
+        """Open repo picker dialog for whichever host is selected in the
+        "Other Git Hosts" section - the payoff of connecting there."""
+        provider_id = self._current_other_host_id()
+        if not settings.load_provider_connected(provider_id):
+            QtWidgets.QMessageBox.information(
+                self,
+                "Not Connected",
+                "Connect to this host first (paste a token and click Connect), "
+                "then Browse Repos.",
+            )
+            return
+
+        try:
+            from freecad_gitpdm.ui.repo_picker import RepoPickerDialog
+            from freecad_gitpdm.providers import get_provider
+
+            provider = get_provider(provider_id)
+
+            def _client_factory():
+                try:
+                    return self._services.api_client_for(provider)
+                except Exception as e:
+                    log.debug(f"Failed to create {provider_id} client: {e}")
+                    return None
+
+            dlg = RepoPickerDialog(
+                parent=self,
+                job_runner=self._job_runner,
+                git_client=self._git_client,
+                client_factory=_client_factory,
+                on_connect_requested=self._on_other_hosts_connect_clicked,
+                default_clone_dir=settings.load_default_clone_dir(),
+                provider=provider,
+            )
+
+            if dlg.exec():
+                self._handle_repo_picker_result(dlg)
+        except Exception as e:
+            log.error(f"Browse {provider_id} repos flow failed: {e}")
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Browse Repos",
                 "Failed to open repo picker. See logs for details.",
             )
 
