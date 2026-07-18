@@ -20,7 +20,7 @@ import glob
 import sys
 import subprocess
 
-from freecad_gitpdm.core import log, settings, jobs
+from freecad_gitpdm.core import log, settings, jobs, storage_mode
 from freecad_gitpdm.git import client
 from freecad_gitpdm.ui import dialogs
 from freecad_gitpdm.ui.github_auth import GitHubAuthHandler
@@ -64,56 +64,88 @@ class _DocumentObserver:
         except Exception as e:
             log.debug(f"Failed to reassert working directory on new document: {e}")
 
+    def slotStartSaveDocument(self, doc, filename):
+        """
+        Called just before a document is serialized to disk (FreeCAD's
+        signalStartSaveDocument). This is the precise, save-scoped hook
+        for the G3 compression fix (see core/settings.py) -- entering the
+        scope here, and exiting it in slotFinishSaveDocument below, means
+        the global CompressionLevel preference is only touched for the
+        duration of this one save, and only when it's a delta-mode
+        GitPDM repo's document being saved.
+        """
+        self._maybe_enter_compression_scope(filename)
+
+    def _maybe_enter_compression_scope(self, filename):
+        """Enter the git-friendly compression scope, but only for saves of
+        a document inside the active delta-mode GitPDM repo."""
+        try:
+            if not filename or not self._panel._current_repo_root:
+                return
+            filename_norm = os.path.normpath(filename)
+            repo_root = os.path.normpath(self._panel._current_repo_root)
+            if not filename_norm.startswith(repo_root):
+                return
+            if storage_mode.get_storage_mode(repo_root) == storage_mode.MODE_DELTA:
+                settings.enter_git_friendly_compression_scope()
+        except Exception as e:
+            log.debug(f"Compression scope check skipped: {e}")
+
     def slotFinishSaveDocument(self, doc, filename):
         """Called after a document is saved."""
-        log.info(f"Document saved: {filename}")
-
-        if not self._panel._current_repo_root:
-            log.debug("No repo configured, skipping refresh")
-            return
-
         try:
-            import os
-            import glob
+            log.info(f"Document saved: {filename}")
 
-            filename = os.path.normpath(filename)
-            repo_root = os.path.normpath(self._panel._current_repo_root)
+            if not self._panel._current_repo_root:
+                log.debug("No repo configured, skipping refresh")
+                return
 
-            log.debug(f"Checking if {filename} is in {repo_root}")
+            try:
+                import os
+                import glob
 
-            if filename.startswith(repo_root):
-                log.info(f"Document saved in repo, scheduling refresh")
+                filename = os.path.normpath(filename)
+                repo_root = os.path.normpath(self._panel._current_repo_root)
 
-                # Reset working directory to repo to ensure next Save As defaults correctly
-                self._panel._set_freecad_working_directory(repo_root)
+                log.debug(f"Checking if {filename} is in {repo_root}")
 
-                # Stop/start the timer on its owning thread to avoid
-                # cross-thread timer operations (Qt enforces thread affinity)
-                try:
-                    QtCore.QMetaObject.invokeMethod(
-                        self._refresh_timer,
-                        "stop",
-                        QtCore.Qt.QueuedConnection,
-                    )
-                    QtCore.QMetaObject.invokeMethod(
-                        self._refresh_timer,
-                        "start",
-                        QtCore.Qt.QueuedConnection,
-                    )
-                except Exception as e:
-                    # Fallback: best-effort direct calls
-                    log.debug(f"Queued timer restart failed, using direct: {e}")
+                if filename.startswith(repo_root):
+                    log.info(f"Document saved in repo, scheduling refresh")
+
+                    # Reset working directory to repo to ensure next Save As defaults correctly
+                    self._panel._set_freecad_working_directory(repo_root)
+
+                    # Stop/start the timer on its owning thread to avoid
+                    # cross-thread timer operations (Qt enforces thread affinity)
                     try:
-                        self._refresh_timer.stop()
-                        self._refresh_timer.start()
-                    except Exception as e2:
-                        log.error(f"Failed to restart refresh timer: {e2}")
-                # Also schedule automatic preview generation for saved FCStd
-                self._panel._schedule_auto_preview_generation(filename)
-            else:
-                log.debug(f"Document outside repo, no refresh")
-        except Exception as e:
-            log.error(f"Error in save handler: {e}")
+                        QtCore.QMetaObject.invokeMethod(
+                            self._refresh_timer,
+                            "stop",
+                            QtCore.Qt.QueuedConnection,
+                        )
+                        QtCore.QMetaObject.invokeMethod(
+                            self._refresh_timer,
+                            "start",
+                            QtCore.Qt.QueuedConnection,
+                        )
+                    except Exception as e:
+                        # Fallback: best-effort direct calls
+                        log.debug(f"Queued timer restart failed, using direct: {e}")
+                        try:
+                            self._refresh_timer.stop()
+                            self._refresh_timer.start()
+                        except Exception as e2:
+                            log.error(f"Failed to restart refresh timer: {e2}")
+                    # Also schedule automatic preview generation for saved FCStd
+                    self._panel._schedule_auto_preview_generation(filename)
+                else:
+                    log.debug(f"Document outside repo, no refresh")
+            except Exception as e:
+                log.error(f"Error in save handler: {e}")
+        finally:
+            # Always exit -- a no-op if we never entered (e.g. lfs mode,
+            # or a save outside the repo), so this is safe unconditionally.
+            settings.exit_git_friendly_compression_scope()
 
     def _do_refresh(self):
         """Execute deferred refresh after save."""
@@ -187,6 +219,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             False  # Sprint PERF-1: prevent concurrent upstream updates
         )
         self._doc_observer = None
+        self._current_storage_mode = storage_mode.DEFAULT_MODE
         self._group_git_check = None
         self._group_repo_selector = None
         self._group_status = None
@@ -339,6 +372,10 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     def _deferred_initialization(self):
         """Run heavy initialization after panel is shown (Sprint PERF-2: fully async)."""
         try:
+            # G3: recover from a compression scope left active by a
+            # previous session that crashed mid-save (see core/settings.py)
+            settings.recover_stuck_compression_scope()
+
             # Sprint PERF-2: Check git availability in background (immediate)
             QtCore.QTimer.singleShot(10, self._check_git_available_async)
 
@@ -799,6 +836,28 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         add_field(1, 1, "Last checked", self.last_fetch_label)
 
         group_layout.addLayout(grid_layout)
+
+        # G3: storage mode row (delta vs. lfs)
+        storage_row = QtWidgets.QHBoxLayout()
+        storage_row.setSpacing(6)
+        storage_caption = QtWidgets.QLabel("Storage Mode:")
+        self._set_meta_label(storage_caption, "gray")
+        storage_row.addWidget(storage_caption)
+        self.storage_mode_label = QtWidgets.QLabel("—")
+        self._set_strong_label(self.storage_mode_label, "black")
+        storage_row.addWidget(self.storage_mode_label)
+        storage_row.addStretch()
+        self.storage_mode_change_btn = QtWidgets.QPushButton("Change…")
+        self.storage_mode_change_btn.setEnabled(False)
+        self.storage_mode_change_btn.setToolTip(
+            "Switch between Delta (free, default) and LFS (opt-in, for "
+            "teams) storage modes for *.FCStd files"
+        )
+        self.storage_mode_change_btn.clicked.connect(
+            self._repo_validator.change_storage_mode_clicked
+        )
+        storage_row.addWidget(self.storage_mode_change_btn)
+        group_layout.addLayout(storage_row)
 
         # Error/message area (Sprint 2)
         self.status_message_label = QtWidgets.QLabel("")
@@ -2017,6 +2076,15 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         """Called when commit message text changes (debounced)."""
         self._button_update_timer.stop()
         self._button_update_timer.start()
+
+    def _update_storage_mode_label(self):
+        """Refresh the Storage Mode row (label text + Change… enabled state)."""
+        has_repo = bool(self._current_repo_root)
+        if has_repo:
+            self.storage_mode_label.setText(self._current_storage_mode)
+        else:
+            self.storage_mode_label.setText("—")
+        self.storage_mode_change_btn.setEnabled(has_repo)
 
     def _on_refresh_clicked(self):
         """Handle Refresh Status button click."""

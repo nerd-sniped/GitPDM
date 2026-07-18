@@ -17,7 +17,7 @@ except ImportError:
             "Neither PySide6 nor PySide2 found. FreeCAD installation may be incomplete."
         ) from e
 
-from freecad_gitpdm.core import log, settings
+from freecad_gitpdm.core import log, settings, storage_mode
 
 
 class RepoValidationHandler:
@@ -140,6 +140,40 @@ class RepoValidationHandler:
         # Perform the actual init in a deferred call to keep UI responsive
         QtCore.QTimer.singleShot(50, lambda: self._do_create_repo(current_path))
 
+    def change_storage_mode_clicked(self):
+        """Handle the Storage Mode 'Change…' button click (G3)."""
+        from freecad_gitpdm.ui.storage_mode_dialog import StorageModeDialog
+
+        if not self._parent._current_repo_root:
+            self._parent._show_status_message("No repository selected", is_error=True)
+            return
+
+        current_mode = self._parent._current_storage_mode
+        dlg = StorageModeDialog(current_mode, parent=self._parent)
+        if dlg.exec() != QtWidgets.QDialog.Accepted:
+            log.info("Storage mode change cancelled")
+            return
+
+        new_mode = dlg.selected_mode
+        if new_mode == current_mode:
+            return
+
+        result = storage_mode.apply_storage_mode(
+            self._parent._current_repo_root, new_mode, git_client=self._git_client
+        )
+        if not result.ok:
+            self._parent._show_status_message(f"Error: {result.message}", is_error=True)
+            return
+
+        self._parent._current_storage_mode = new_mode
+        self._parent._update_storage_mode_label()
+        self._parent._show_status_message(
+            f"Storage mode set to '{new_mode}'. Review and commit "
+            ".gitattributes / .freecad-pdm/config.json to share it.",
+            is_error=False,
+        )
+        log.info(f"Storage mode changed to '{new_mode}'")
+
     def connect_remote_clicked(self):
         """Entry point for Connect Remote button or prompt."""
         if not self._parent._current_repo_root:
@@ -209,6 +243,8 @@ class RepoValidationHandler:
         self._parent.root_toggle_btn.setArrowType(QtCore.Qt.RightArrow)
         self._parent.root_toggle_btn.setText("Show root")
         self._parent.browser_window_btn.setEnabled(False)
+        self._parent._current_storage_mode = storage_mode.DEFAULT_MODE
+        self._parent._update_storage_mode_label()
         self._parent._update_button_states()
 
     def _handle_valid_repo(self, repo_root):
@@ -227,10 +263,13 @@ class RepoValidationHandler:
         # This ensures Save As dialog defaults to repo folder
         self._set_freecad_working_directory(repo_root)
 
-        # Set .FCStd save compression to 0 (store) so Git can actually diff
-        # and delta-compress saves instead of getting an unrelated blob of
-        # deflate bytes on every change.
-        settings.ensure_git_friendly_fcstd_compression()
+        # G3: cache the repo's storage mode for display and for the
+        # document observer's save-time compression scoping (settings.py).
+        # This is read-only here -- it never touches the global FreeCAD
+        # compression preference just because a repo was opened; that was
+        # the R1.2 regression this replaces.
+        self._parent._current_storage_mode = storage_mode.get_storage_mode(repo_root)
+        self._parent._update_storage_mode_label()
 
         # Fetch branch and status
         self.fetch_branch_and_status(repo_root)
@@ -264,6 +303,8 @@ class RepoValidationHandler:
         self._parent._set_strong_label(self._parent.ahead_behind_label, "gray")
         self._parent._set_meta_label(self._parent.last_fetch_label, "gray")
         self._parent._current_repo_root = None
+        self._parent._current_storage_mode = storage_mode.DEFAULT_MODE
+        self._parent._update_storage_mode_label()
         self._parent.root_toggle_btn.setEnabled(False)
         self._parent.root_toggle_btn.setChecked(False)
         self._parent.repo_root_row.setVisible(False)
