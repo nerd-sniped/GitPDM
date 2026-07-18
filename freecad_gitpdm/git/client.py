@@ -75,6 +75,10 @@ STATUS_UNTRACKED = "UNTRACKED"
 STATUS_CONFLICT = "CONFLICT"
 STATUS_UNKNOWN = "UNKNOWN"
 
+# Phase G5 / R2.4: default shallow-clone depth offered by the clone UI when
+# a fast cold-start clone is desirable (e.g. a fresh container).
+DEFAULT_SHALLOW_CLONE_DEPTH = 20
+
 
 @dataclass
 class FileStatus:
@@ -406,8 +410,18 @@ class GitClient:
             log.error(f"Git remote add error: {e}")
             return CmdResult(ok=False, stdout="", stderr=str(e), error_code="os_error")
 
-    def clone_repo(self, clone_url: str, dest_path: str) -> CmdResult:
-        """Clone a repository to dest_path using https clone URL."""
+    def clone_repo(
+        self, clone_url: str, dest_path: str, depth: Optional[int] = None
+    ) -> CmdResult:
+        """Clone a repository to dest_path using https clone URL.
+
+        Args:
+            clone_url: Remote URL to clone.
+            dest_path: Destination directory (must not exist or be empty).
+            depth: When set, passes `--depth N` for a shallow clone (Phase
+                G5 / R2.4 - faster cold-start clones in a container). None
+                (the default) clones full history, unchanged from before.
+        """
         if not self.is_git_available():
             log.error("Git not available for clone")
             return CmdResult(False, "", "Git not available", error_code="no_git")
@@ -443,8 +457,16 @@ class GitClient:
                         error_code="dest_not_empty",
                     )
 
+            depth_args = ["--depth", str(int(depth))] if depth else []
             result = subprocess.run(
-                [git_cmd, *_headless_credential_args(), "clone", clone_url, dest_abs],
+                [
+                    git_cmd,
+                    *_headless_credential_args(),
+                    "clone",
+                    *depth_args,
+                    clone_url,
+                    dest_abs,
+                ],
                 capture_output=True,
                 text=True,
                 timeout=300,
@@ -467,6 +489,87 @@ class GitClient:
             return CmdResult(False, "", "Clone timed out", error_code="timeout")
         except OSError as e:
             log.error(f"Git clone error: {e}")
+            return CmdResult(False, "", str(e), error_code="os_error")
+
+    def is_shallow_repo(self, repo_root) -> bool:
+        """
+        Whether repo_root is a shallow clone (Phase G5 / R2.4).
+
+        Fails open (returns False) on any error - this only gates a UI
+        affordance, never a real git operation, so an unreadable answer
+        should not block anything.
+        """
+        if not self.is_git_available() or not repo_root or not os.path.isdir(repo_root):
+            return False
+
+        git_cmd = self._get_git_command()
+        try:
+            result = subprocess.run(
+                [git_cmd, "-C", repo_root, "rev-parse", "--is-shallow-repository"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                **_get_subprocess_kwargs(),
+            )
+        except (subprocess.TimeoutExpired, OSError) as e:
+            log.debug(f"Could not determine shallow-clone status: {e}")
+            return False
+
+        if result.returncode != 0:
+            return False
+        return result.stdout.strip() == "true"
+
+    def deepen_repo(
+        self, repo_root, remote="origin", depth: Optional[int] = None
+    ) -> CmdResult:
+        """
+        Fetch more history into a shallow clone (Phase G5 / R2.4).
+
+        With depth set, runs `git fetch --deepen N` (N additional commits
+        on top of what's already fetched). With depth=None, fully unshallows
+        via `git fetch --unshallow`.
+        """
+        if not self.is_git_available():
+            return CmdResult(False, "", "Git not available", error_code="no_git")
+        if not repo_root or not os.path.isdir(repo_root):
+            return CmdResult(
+                False, "", "Invalid repository path", error_code="bad_args"
+            )
+
+        git_cmd = self._get_git_command()
+        depth_arg = ["--deepen", str(int(depth))] if depth else ["--unshallow"]
+        try:
+            result = subprocess.run(
+                [
+                    git_cmd,
+                    *_headless_credential_args(),
+                    "-C",
+                    repo_root,
+                    "fetch",
+                    *depth_arg,
+                    remote,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                **_get_subprocess_kwargs(),
+            )
+            if result.returncode == 0:
+                log.info(f"Deepened history for {repo_root}")
+                return CmdResult(True, result.stdout.strip(), result.stderr.strip())
+
+            log.error(f"Git deepen failed (exit {result.returncode})")
+            return CmdResult(
+                False,
+                result.stdout.strip(),
+                result.stderr.strip(),
+                error_code="deepen_failed",
+            )
+        except subprocess.TimeoutExpired:
+            log.error("Git deepen timed out")
+            return CmdResult(False, "", "Deepen timed out", error_code="timeout")
+        except OSError as e:
+            log.error(f"Git deepen error: {e}")
             return CmdResult(False, "", str(e), error_code="os_error")
 
     def current_branch(self, repo_root):

@@ -23,11 +23,23 @@ except ImportError:  # pragma: no cover
         ) from e
 
 from freecad_gitpdm.core import log, settings, jobs
-from freecad_gitpdm.git.client import GitClient
+from freecad_gitpdm.git.client import GitClient, DEFAULT_SHALLOW_CLONE_DEPTH
 from freecad_gitpdm.providers.github.repos import RepoInfo, list_repos
 from freecad_gitpdm.providers.github.api_client import GitHubApiClient
 from freecad_gitpdm.providers.github.errors import GitHubApiError, GitHubApiNetworkError
 from freecad_gitpdm.providers.github.cache import get_github_api_cache
+
+
+def _headless_environment_detected() -> bool:
+    """Best-guess default for the shallow-clone checkbox: checked when a
+    headless credential backend (Phase G1) is active, since that's the
+    existing signal for "this is probably a container", not desktop."""
+    try:
+        from freecad_gitpdm.auth.credential_chain import headless_backends_active
+
+        return headless_backends_active()
+    except Exception:
+        return False
 
 
 class RepoPickerDialog(QtWidgets.QDialog):
@@ -160,6 +172,13 @@ class RepoPickerDialog(QtWidgets.QDialog):
         self.status_label = QtWidgets.QLabel("Loading…")
         self.status_label.setStyleSheet("color: gray;")
         layout.addWidget(self.status_label)
+
+        self.shallow_clone_checkbox = QtWidgets.QCheckBox(
+            f"Shallow clone (faster; last {DEFAULT_SHALLOW_CLONE_DEPTH} "
+            "commits — full history fetchable later)"
+        )
+        self.shallow_clone_checkbox.setChecked(_headless_environment_detected())
+        layout.addWidget(self.shallow_clone_checkbox)
 
         btn_row = QtWidgets.QHBoxLayout()
         btn_row.addStretch()
@@ -472,6 +491,13 @@ class RepoPickerDialog(QtWidgets.QDialog):
                 pass
         return dest_path
 
+    def _clone_depth_args(self) -> list:
+        """--depth args for the clone command, or [] for full history,
+        per the shallow-clone checkbox (Phase G5 / R2.4)."""
+        if self.shallow_clone_checkbox.isChecked():
+            return ["--depth", str(DEFAULT_SHALLOW_CLONE_DEPTH)]
+        return []
+
     def _start_clone(self, repo: RepoInfo, dest_path: str):
         git_cmd = self._git_client._get_git_command()
         if not git_cmd:
@@ -484,7 +510,7 @@ class RepoPickerDialog(QtWidgets.QDialog):
 
         self._selected_repo = repo
         self._set_loading_state(True, "Cloning…")
-        args = [git_cmd, "clone", repo.clone_url, dest_path]
+        args = [git_cmd, "clone", *self._clone_depth_args(), repo.clone_url, dest_path]
 
         self._job_runner.run_job(
             "clone_repo",
@@ -533,7 +559,7 @@ class RepoPickerDialog(QtWidgets.QDialog):
             return
 
         self._set_loading_state(True, "Cloning…")
-        args = [git_cmd, "clone", clone_url, dest_path]
+        args = [git_cmd, "clone", *self._clone_depth_args(), clone_url, dest_path]
 
         self._job_runner.run_job(
             "clone_repo",

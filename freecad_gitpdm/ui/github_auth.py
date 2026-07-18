@@ -38,6 +38,7 @@ class GitHubAuthHandler:
         self._oauth_cancel_token = None
         self._oauth_in_progress = False
         self._oauth_status_label = None
+        self._oauth_browser_fallback_label = None
         self._is_checking_connection = False  # Sprint PERF-4: Track async status check
 
     # ========== Public API ==========
@@ -361,7 +362,7 @@ class GitHubAuthHandler:
         """Create and show the OAuth authorization dialog."""
         self._oauth_dialog = QtWidgets.QDialog(self.panel)
         self._oauth_dialog.setWindowTitle("Connect GitHub")
-        self._oauth_dialog.setMinimumWidth(400)
+        self._oauth_dialog.setMinimumWidth(480)
         self._oauth_dialog.setModal(True)
 
         layout = QtWidgets.QVBoxLayout()
@@ -412,6 +413,26 @@ class GitHubAuthHandler:
 
         layout.addWidget(code_container)
 
+        # Verification URL (selectable text, so it's usable even when the
+        # "open browser" convenience button fails or there's no browser at
+        # all — e.g. a headless container streamed over a video connection).
+        url_title = QtWidgets.QLabel("Or open this link manually:")
+        url_title.setStyleSheet("font-weight: bold; color: #555; font-size: 11px;")
+        layout.addWidget(url_title)
+
+        url_field = QtWidgets.QLineEdit(device_code_response.verification_uri)
+        url_field.setReadOnly(True)
+        url_field.setStyleSheet("font-size: 11px;")
+        url_field.setCursorPosition(0)
+        layout.addWidget(url_field)
+
+        copy_link_btn = QtWidgets.QPushButton("Copy Link")
+        copy_link_btn.setToolTip("Copy the verification link to your clipboard")
+        copy_link_btn.clicked.connect(
+            lambda: self._copy_to_clipboard(device_code_response.verification_uri)
+        )
+        layout.addWidget(copy_link_btn)
+
         # Status label
         self._oauth_status_label = QtWidgets.QLabel(
             "Waiting for you to authorize on GitHub..."
@@ -421,6 +442,17 @@ class GitHubAuthHandler:
         )
         self._oauth_status_label.setAlignment(QtCore.Qt.AlignCenter)
         layout.addWidget(self._oauth_status_label)
+
+        # Browser-open fallback notice — hidden unless QDesktopServices fails
+        # (no browser in the container, xdg-open missing, etc.). Set by
+        # _open_verification_uri below.
+        self._oauth_browser_fallback_label = QtWidgets.QLabel()
+        self._oauth_browser_fallback_label.setWordWrap(True)
+        self._oauth_browser_fallback_label.setStyleSheet(
+            "color: #b35900; font-style: italic; font-size: 10px;"
+        )
+        self._oauth_browser_fallback_label.setVisible(False)
+        layout.addWidget(self._oauth_browser_fallback_label)
 
         # Buttons
         buttons_layout = QtWidgets.QHBoxLayout()
@@ -466,12 +498,29 @@ class GitHubAuthHandler:
             log.warning(f"Failed to copy to clipboard: {e}")
 
     def _open_verification_uri(self, uri):
-        """Open verification URI in default browser."""
+        """Open verification URI in default browser.
+
+        `QDesktopServices.openUrl` returning False (or raising) means there's
+        no browser to hand off to — common in a headless container. That's
+        not fatal since the link is also shown as selectable text, but the
+        user needs to be told the automatic handoff didn't happen.
+        """
+        opened = False
         try:
-            QtGui.QDesktopServices.openUrl(QtCore.QUrl(uri))
-            log.debug(f"Opened browser to {uri}")
+            opened = QtGui.QDesktopServices.openUrl(QtCore.QUrl(uri))
         except Exception as e:
             log.warning(f"Failed to open browser: {e}")
+
+        if opened:
+            log.debug(f"Opened browser to {uri}")
+        else:
+            log.warning(f"Could not open browser automatically for {uri}")
+            if self._oauth_browser_fallback_label is not None:
+                self._oauth_browser_fallback_label.setText(
+                    "Couldn't open a browser automatically — copy the link "
+                    "above and open it manually."
+                )
+                self._oauth_browser_fallback_label.setVisible(True)
 
     def _on_oauth_dialog_cancel(self):
         """Handle Cancel button in OAuth dialog."""

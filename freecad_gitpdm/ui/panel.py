@@ -20,7 +20,7 @@ import glob
 import sys
 import subprocess
 
-from freecad_gitpdm.core import log, settings, jobs, storage_mode
+from freecad_gitpdm.core import log, session_lock, settings, jobs, storage_mode
 from freecad_gitpdm.git import client
 from freecad_gitpdm.ui import dialogs
 from freecad_gitpdm.ui.github_auth import GitHubAuthHandler
@@ -211,6 +211,12 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._button_update_timer.setSingleShot(True)
         self._button_update_timer.setInterval(300)
         self._button_update_timer.timeout.connect(self._do_deferred_button_update)
+        # Phase G5 (R2.3): periodic heartbeat so our session lock doesn't
+        # look abandoned/stale to a second instance during a long session.
+        self._lock_refresh_timer = QtCore.QTimer(self)
+        self._lock_refresh_timer.setInterval(5 * 60 * 1000)
+        self._lock_refresh_timer.timeout.connect(self._on_lock_refresh_tick)
+        self._lock_refresh_timer.start()
         self._cached_has_remote = False
         self._is_refreshing_status = (
             False  # Sprint PERF-1: prevent concurrent status refreshes
@@ -436,7 +442,21 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             except Exception as e:
                 log.warning(f"Failed to unregister observer: {e}")
 
+        if self._current_repo_root:
+            try:
+                session_lock.release_lock(self._current_repo_root)
+            except Exception as e:
+                log.debug(f"Failed to release session lock on close: {e}")
+
         super().closeEvent(event)
+
+    def _on_lock_refresh_tick(self):
+        """Heartbeat: keep our session lock's timestamp fresh (R2.3)."""
+        if self._current_repo_root:
+            try:
+                session_lock.refresh_lock(self._current_repo_root)
+            except Exception as e:
+                log.debug(f"Failed to refresh session lock: {e}")
 
     def _schedule_auto_preview_generation(self, filename):
         """Best-effort automatic preview export after a save/close."""
@@ -566,6 +586,22 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         group_layout.setSpacing(2)
         group.setLayout(group_layout)
 
+        # First-run guidance (Phase G5 / R2.4b) - shown only when no repo
+        # path has been configured yet, so a fresh install doesn't just show
+        # blank fields with no indication of what to do next. Entirely
+        # framing: the buttons it points at ("Join Team Project…", "Start
+        # New Project…") already exist and already require no terminal.
+        self._first_run_hint = QtWidgets.QLabel(
+            "No repository yet — clone an existing one or start a new one "
+            "below to get started."
+        )
+        self._first_run_hint.setWordWrap(True)
+        self._first_run_hint.setStyleSheet(
+            "color: #0066cc; font-style: italic; font-size: 10px;"
+        )
+        self._first_run_hint.setVisible(False)
+        group_layout.addWidget(self._first_run_hint)
+
         # Repo path row
         path_layout = QtWidgets.QHBoxLayout()
         path_layout.setSpacing(4)
@@ -605,6 +641,32 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         path_layout.addWidget(new_repo_btn)
 
         group_layout.addLayout(path_layout)
+
+        # Shallow-clone banner (Phase G5 / R2.4) - hidden unless the active
+        # repo is a shallow clone, so history-truncated state is visible
+        # and recoverable without leaving the panel.
+        self._shallow_banner = QtWidgets.QWidget()
+        shallow_layout = QtWidgets.QHBoxLayout()
+        shallow_layout.setContentsMargins(0, 0, 0, 0)
+        shallow_layout.setSpacing(6)
+        self._shallow_banner.setLayout(shallow_layout)
+
+        shallow_label = QtWidgets.QLabel("History truncated (shallow clone)")
+        shallow_label.setStyleSheet(
+            "color: #b35900; font-style: italic; font-size: 10px;"
+        )
+        shallow_layout.addWidget(shallow_label)
+
+        self._deepen_btn = QtWidgets.QPushButton("Deepen")
+        self._deepen_btn.setToolTip(
+            "Fetch older history so log/diff/blame views aren't truncated"
+        )
+        self._deepen_btn.clicked.connect(self._on_deepen_clicked)
+        shallow_layout.addWidget(self._deepen_btn)
+        shallow_layout.addStretch()
+
+        self._shallow_banner.setVisible(False)
+        group_layout.addWidget(self._shallow_banner)
 
         # Repo root label (resolved path, read-only)
         # Root details (collapsed by default)
@@ -1340,6 +1402,55 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     def _fetch_branch_and_status(self, repo_root):
         """Fetch branch and status - delegated to RepoValidationHandler."""
         self._repo_validator.fetch_branch_and_status(repo_root)
+
+    def _check_shallow_clone_status(self, repo_root):
+        """Show/hide the shallow-clone banner for repo_root (Phase G5 / R2.4)."""
+        if not repo_root:
+            self._shallow_banner.setVisible(False)
+            return
+
+        def _check():
+            return self._git_client.is_shallow_repo(repo_root)
+
+        self._job_runner.run_callable(
+            "check_shallow_repo",
+            _check,
+            on_success=self._on_shallow_status_checked,
+            on_error=lambda e: log.debug(f"Shallow-clone check failed: {e}"),
+        )
+
+    def _on_shallow_status_checked(self, is_shallow):
+        self._shallow_banner.setVisible(bool(is_shallow))
+
+    def _on_deepen_clicked(self):
+        """Fetch older history into a shallow clone (Phase G5 / R2.4)."""
+        if not self._current_repo_root:
+            return
+        repo_root = self._current_repo_root
+        self._deepen_btn.setEnabled(False)
+        self._deepen_btn.setText("Deepening…")
+
+        self._job_runner.run_callable(
+            "deepen_repo",
+            lambda: self._git_client.deepen_repo(repo_root),
+            on_success=lambda result: self._on_deepen_finished(repo_root, result),
+            on_error=lambda e: self._on_deepen_finished(repo_root, None, error=e),
+        )
+
+    def _on_deepen_finished(self, repo_root, result, error=None):
+        self._deepen_btn.setEnabled(True)
+        self._deepen_btn.setText("Deepen")
+
+        if error is not None or result is None or not getattr(result, "ok", False):
+            detail = str(error) if error is not None else getattr(result, "stderr", "")
+            log.warning(f"Deepen failed: {detail}")
+            self._show_status_message("Failed to fetch older history", is_error=True)
+            return
+
+        log.info(f"Deepened history for {repo_root}")
+        self._show_status_message("Fetched older history", is_error=False)
+        if repo_root == self._current_repo_root:
+            self._check_shallow_clone_status(repo_root)
 
     def _update_upstream_info(self, repo_root):
         """
@@ -2452,6 +2563,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         Load the saved repository path from settings and validate it (synchronous).
         """
         saved_path = settings.load_repo_path()
+        self._first_run_hint.setVisible(not saved_path)
         if saved_path:
             self.repo_path_field.blockSignals(True)
             self.repo_path_field.setText(saved_path)
@@ -2465,6 +2577,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     def _load_saved_repo_path_async(self):
         """Load saved repository path and validate in background (Sprint PERF-2)."""
         saved_path = settings.load_repo_path()
+        self._first_run_hint.setVisible(not saved_path)
         if saved_path:
             # Display path immediately
             self.repo_path_field.blockSignals(True)
