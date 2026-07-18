@@ -130,8 +130,13 @@ class BaseProvider:
         name: str,
         private: bool,
         description: Optional[str] = None,
+        workspace: Optional[str] = None,
     ) -> RemoteRepoInfo:
-        """Create a repo on the host. Raises if capabilities.supports_repo_creation is False."""
+        """
+        Create a repo on the host. Raises if capabilities.supports_repo_creation
+        is False. `workspace` is only meaningful for `requires_workspace=True`
+        providers (Bitbucket) — other providers ignore it.
+        """
         raise NotImplementedError(
             f"{self.provider_id} does not support repository creation via API. "
             "Create the repository in your browser (or another tool), then "
@@ -144,8 +149,12 @@ class BaseProvider:
             f"{self.provider_id} has no host API to verify identity against."
         )
 
-    def list_repos(self, api_client) -> List[RepoInfo]:
-        """List repos the credential can access. Raises if no host API exists."""
+    def list_repos(self, api_client, workspace: Optional[str] = None) -> List[RepoInfo]:
+        """
+        List repos the credential can access. Raises if no host API exists.
+        `workspace` is only meaningful for `requires_workspace=True`
+        providers (Bitbucket) — other providers ignore it.
+        """
         raise NotImplementedError(
             f"{self.provider_id} has no host API to list repositories from."
         )

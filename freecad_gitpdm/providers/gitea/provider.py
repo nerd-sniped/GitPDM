@@ -53,6 +53,7 @@ class GiteaProvider(BaseProvider):
         name: str,
         private: bool,
         description: Optional[str] = None,
+        workspace: Optional[str] = None,
     ) -> RemoteRepoInfo:
         from freecad_gitpdm.providers.gitea.create_repo import (
             CreateRepoRequest,
@@ -79,7 +80,7 @@ class GiteaProvider(BaseProvider):
             error_code=result.error_code,
         )
 
-    def list_repos(self, api_client):
+    def list_repos(self, api_client, workspace: Optional[str] = None):
         from freecad_gitpdm.providers.gitea.repos import list_repos
 
         return list_repos(api_client)

@@ -15,6 +15,7 @@ from freecad_gitpdm.providers.base import GenericProvider, ProviderCapabilities
 from freecad_gitpdm.providers.github.provider import GitHubProvider
 from freecad_gitpdm.providers.gitlab.provider import GitLabProvider
 from freecad_gitpdm.providers.gitea.provider import GiteaProvider
+from freecad_gitpdm.providers.bitbucket.provider import BitbucketProvider
 
 
 class TestRegistry:
@@ -23,16 +24,19 @@ class TestRegistry:
         assert get_provider_class("generic") is GenericProvider
         assert get_provider_class("gitlab") is GitLabProvider
         assert get_provider_class("gitea") is GiteaProvider
+        assert get_provider_class("bitbucket") is BitbucketProvider
 
     def test_unknown_id_falls_back_to_generic(self):
-        assert get_provider_class("bitbucket") is GenericProvider
+        assert get_provider_class("not-a-real-provider") is GenericProvider
         assert get_provider_class("") is GenericProvider
 
     def test_case_and_whitespace_insensitive(self):
         assert get_provider_class(" GitHub ") is GitHubProvider
 
     def test_list_provider_ids(self):
-        assert list_provider_ids() == sorted(["github", "generic", "gitlab", "gitea"])
+        assert list_provider_ids() == sorted(
+            ["github", "generic", "gitlab", "gitea", "bitbucket"]
+        )
 
     def test_default_provider_id_is_github(self):
         # Existing repos predate the provider field entirely; the default

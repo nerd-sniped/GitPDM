@@ -88,6 +88,7 @@ class GitHubProvider(BaseProvider):
         name: str,
         private: bool,
         description: Optional[str] = None,
+        workspace: Optional[str] = None,
     ) -> RemoteRepoInfo:
         from freecad_gitpdm.providers.github.create_repo import (
             CreateRepoRequest,
@@ -114,7 +115,7 @@ class GitHubProvider(BaseProvider):
             error_code=result.error_code,
         )
 
-    def list_repos(self, api_client):
+    def list_repos(self, api_client, workspace: Optional[str] = None):
         from freecad_gitpdm.providers.github.repos import list_repos
 
         return list_repos(api_client)
