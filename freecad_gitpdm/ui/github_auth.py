@@ -307,7 +307,7 @@ class GitHubAuthHandler:
     def verify_identity_async(self, force: bool = False):
         """Run identity verification in a worker thread and update UI."""
         try:
-            from freecad_gitpdm.github.identity import fetch_viewer_identity
+            from freecad_gitpdm.providers.github.identity import fetch_viewer_identity
 
             client = self.services.github_api_client()
             if not client:

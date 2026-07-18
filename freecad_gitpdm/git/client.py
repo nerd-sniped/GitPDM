@@ -1865,7 +1865,10 @@ class GitClient:
 
         git_cmd = self._get_git_command()
 
-        args = [git_cmd, "config"]
+        args = [git_cmd]
+        if repo_root:
+            args.extend(["-C", repo_root])
+        args.append("config")
         if local and repo_root:
             args.append("--local")
         elif repo_root:

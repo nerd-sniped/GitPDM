@@ -119,7 +119,7 @@ def get_diagnostics():
 
         # Cache statistics (Sprint OAUTH-6)
         try:
-            from freecad_gitpdm.github.cache import get_github_api_cache
+            from freecad_gitpdm.providers.github.cache import get_github_api_cache
 
             cache = get_github_api_cache()
             stats = cache.get_stats()

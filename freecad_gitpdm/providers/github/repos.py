@@ -11,9 +11,9 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from freecad_gitpdm.core import log
-from freecad_gitpdm.github.api_client import GitHubApiClient
-from freecad_gitpdm.github.errors import GitHubApiError, GitHubApiNetworkError
-from freecad_gitpdm.github.cache import get_github_api_cache
+from freecad_gitpdm.providers.github.api_client import GitHubApiClient
+from freecad_gitpdm.providers.github.errors import GitHubApiError, GitHubApiNetworkError
+from freecad_gitpdm.providers.github.cache import get_github_api_cache
 
 
 @dataclass
