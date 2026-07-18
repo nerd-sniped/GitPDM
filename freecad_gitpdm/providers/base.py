@@ -149,11 +149,19 @@ class BaseProvider:
             f"{self.provider_id} has no host API to verify identity against."
         )
 
-    def list_repos(self, api_client, workspace: Optional[str] = None) -> List[RepoInfo]:
+    def list_repos(
+        self,
+        api_client,
+        workspace: Optional[str] = None,
+        use_cache: bool = True,
+        cache_key_user: str = "default",
+    ) -> List[RepoInfo]:
         """
         List repos the credential can access. Raises if no host API exists.
         `workspace` is only meaningful for `requires_workspace=True`
-        providers (Bitbucket) — other providers ignore it.
+        providers (Bitbucket) — other providers ignore it. `cache_key_user`
+        isolates the response cache per logged-in account (e.g. so signing
+        out of one account and into another doesn't show stale results).
         """
         raise NotImplementedError(
             f"{self.provider_id} has no host API to list repositories from."
