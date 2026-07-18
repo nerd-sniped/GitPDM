@@ -3,6 +3,8 @@
 Tests for git.client module - Git client operations
 """
 
+import os
+
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 from freecad_gitpdm.git.client import (
@@ -243,3 +245,101 @@ class TestSubprocessKwargsRegression:
         client = GitClient()
         result = client.pull_ff_only(str(tmp_path))
         assert result["ok"] is True
+
+
+class TestShallowCloneTolerance:
+    """Phase G5 / R2.4: --depth clone, shallow detection, deepen."""
+
+    @patch("subprocess.run")
+    def test_clone_repo_without_depth_omits_flag(self, mock_run, tmp_path):
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        client = GitClient()
+        client._git_available = True
+        dest = tmp_path / "dest"
+
+        client.clone_repo("https://example.com/repo.git", str(dest))
+
+        args = mock_run.call_args[0][0]
+        assert "--depth" not in args
+
+    @patch("subprocess.run")
+    def test_clone_repo_with_depth_adds_flag(self, mock_run, tmp_path):
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        client = GitClient()
+        client._git_available = True
+        dest = tmp_path / "dest"
+
+        client.clone_repo("https://example.com/repo.git", str(dest), depth=20)
+
+        args = mock_run.call_args[0][0]
+        assert "--depth" in args
+        assert args[args.index("--depth") + 1] == "20"
+        assert args[-2] == "https://example.com/repo.git"
+        assert args[-1] == os.path.abspath(str(dest))
+
+    @patch("subprocess.run")
+    def test_is_shallow_repo_true(self, mock_run, tmp_path):
+        mock_run.return_value = MagicMock(returncode=0, stdout="true\n", stderr="")
+        client = GitClient()
+        client._git_available = True
+
+        assert client.is_shallow_repo(str(tmp_path)) is True
+
+    @patch("subprocess.run")
+    def test_is_shallow_repo_false(self, mock_run, tmp_path):
+        mock_run.return_value = MagicMock(returncode=0, stdout="false\n", stderr="")
+        client = GitClient()
+        client._git_available = True
+
+        assert client.is_shallow_repo(str(tmp_path)) is False
+
+    @patch("subprocess.run")
+    def test_is_shallow_repo_fails_open_on_error(self, mock_run, tmp_path):
+        mock_run.side_effect = OSError("boom")
+        client = GitClient()
+        client._git_available = True
+
+        assert client.is_shallow_repo(str(tmp_path)) is False
+
+    def test_is_shallow_repo_missing_dir_returns_false(self):
+        client = GitClient()
+        client._git_available = True
+
+        assert client.is_shallow_repo("/does/not/exist") is False
+
+    @patch("subprocess.run")
+    def test_deepen_repo_with_depth_uses_deepen_flag(self, mock_run, tmp_path):
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        client = GitClient()
+        client._git_available = True
+
+        result = client.deepen_repo(str(tmp_path), depth=20)
+
+        args = mock_run.call_args[0][0]
+        assert "--deepen" in args
+        assert args[args.index("--deepen") + 1] == "20"
+        assert result.ok is True
+
+    @patch("subprocess.run")
+    def test_deepen_repo_without_depth_unshallows(self, mock_run, tmp_path):
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        client = GitClient()
+        client._git_available = True
+
+        client.deepen_repo(str(tmp_path))
+
+        args = mock_run.call_args[0][0]
+        assert "--unshallow" in args
+
+    @patch("subprocess.run")
+    def test_deepen_repo_failure_returns_error_code(self, mock_run, tmp_path):
+        mock_run.return_value = MagicMock(
+            returncode=1, stdout="", stderr="fatal: not shallow"
+        )
+        client = GitClient()
+        client._git_available = True
+
+        result = client.deepen_repo(str(tmp_path))
+
+        assert result.ok is False
+        assert result.error_code == "deepen_failed"

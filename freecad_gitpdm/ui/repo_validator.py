@@ -17,7 +17,7 @@ except ImportError:
             "Neither PySide6 nor PySide2 found. FreeCAD installation may be incomplete."
         ) from e
 
-from freecad_gitpdm.core import log, settings
+from freecad_gitpdm.core import log, session_lock, settings
 
 
 class RepoValidationHandler:
@@ -210,14 +210,19 @@ class RepoValidationHandler:
         self._parent.root_toggle_btn.setText("Show root")
         self._parent.browser_window_btn.setEnabled(False)
         self._parent._update_button_states()
+        self._parent._check_shallow_clone_status(None)
 
     def _handle_valid_repo(self, repo_root):
         """Handle successful repository validation."""
+        if not self._acquire_session_lock(repo_root):
+            return
+
         # Valid repo
         self._parent.validate_label.setText("OK")
         self._parent.validate_label.setStyleSheet("color: green;")
         self._parent.repo_root_label.setText(repo_root)
         self._parent._current_repo_root = repo_root
+        self._parent._first_run_hint.setVisible(False)
 
         self._parent.root_toggle_btn.setEnabled(True)
         self._parent.repo_root_row.setVisible(self._parent.root_toggle_btn.isChecked())
@@ -238,6 +243,8 @@ class RepoValidationHandler:
         self._parent._file_browser.refresh_files()
         # Update preview status area
         self._parent._update_preview_status_labels()
+        # Show/hide shallow-clone banner (Phase G5 / R2.4)
+        self._parent._check_shallow_clone_status(repo_root)
 
         # Update button states (including branch buttons)
         self._parent._update_button_states()
@@ -246,6 +253,50 @@ class RepoValidationHandler:
         QtCore.QTimer.singleShot(100, self._parent._update_branch_button_states)
 
         log.info(f"Validated repo: {repo_root}")
+
+    def _acquire_session_lock(self, repo_root) -> bool:
+        """
+        Acquire the advisory cross-process session lock for repo_root
+        (Phase G5 / R2.3). Releases any lock we hold on a *different*
+        previously-active repo first (switching repos in the same panel).
+
+        Returns True if activation should proceed, False if the user
+        declined to steal a lock held by another live session.
+        """
+        previous_root = self._parent._current_repo_root
+        if previous_root and previous_root != repo_root:
+            session_lock.release_lock(previous_root)
+
+        result = session_lock.acquire_lock(repo_root)
+        if result.ok:
+            return True
+
+        existing = result.existing
+        detail = (
+            f"PID {existing.pid} on {existing.hostname or 'unknown host'}, "
+            f"opened {existing.timestamp}"
+            if existing
+            else "another session"
+        )
+        choice = QtWidgets.QMessageBox.warning(
+            self._parent,
+            "Repository Already Open",
+            "This repository appears to be open in another GitPDM session "
+            f"({detail}).\n\n"
+            "Opening it here too risks both sessions writing to the same "
+            "working tree at once. Continue anyway?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+        if choice != QtWidgets.QMessageBox.Yes:
+            log.info(f"Declined to open repo locked by another session: {repo_root}")
+            self._parent.validate_label.setText("Locked by another session")
+            self._parent.validate_label.setStyleSheet("color: red;")
+            return False
+
+        session_lock.acquire_lock(repo_root, force=True)
+        log.warning(f"Overrode session lock held by another instance: {repo_root}")
+        return True
 
     def _handle_invalid_repo(self, path):
         """Handle invalid repository path."""
@@ -263,6 +314,8 @@ class RepoValidationHandler:
         self._parent._set_meta_label(self._parent.upstream_label, "gray")
         self._parent._set_strong_label(self._parent.ahead_behind_label, "gray")
         self._parent._set_meta_label(self._parent.last_fetch_label, "gray")
+        if self._parent._current_repo_root:
+            session_lock.release_lock(self._parent._current_repo_root)
         self._parent._current_repo_root = None
         self._parent.root_toggle_btn.setEnabled(False)
         self._parent.root_toggle_btn.setChecked(False)
@@ -273,6 +326,7 @@ class RepoValidationHandler:
         self._parent._update_button_states()
         # Clear browser section
         self._parent._file_browser.clear_browser()
+        self._parent._check_shallow_clone_status(None)
         # Do not overwrite saved path - just show typed text in UI
         log.warning(f"Not a git repository: {path}")
 

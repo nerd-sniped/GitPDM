@@ -26,7 +26,8 @@ Keep this table current — update it in the same PR as the work it describes.
 | G2 release + CI | ✅ Implemented | `dev`, 2026-07-17 |
 | G3 storage modes | ✅ Implemented (not yet merged to `dev`) | `g3-storage-modes` branch off `dev`, 2026-07-17 |
 | G4 provider abstraction | ✅ Implemented & merged | `dev` @ `e5039de` (PR #7), 2026-07-18 |
-| G5–G8 | Not started | — |
+| G5 container ergonomics | ✅ Implemented (not yet merged to `dev`) | `g5-container-ergonomics` branch off `dev`, 2026-07-18 |
+| G6–G8 | Not started | — |
 
 Also landed on `dev` (2026-07-17), outside any phase:
 
@@ -47,13 +48,18 @@ Closed since the table above was first written:
 No open items remain blocking G1 or G2; both are fully verified end-to-end. The
 critical path for the sister deployment repo (G1 → G2) is clear — it can now
 build its container image pinned to `v0.5.0`. **G4 has merged into `dev`**
-(PR #7, `e5039de`, 2026-07-18), so G5 (needs G1 + G4) is now unblocked and can
-start any time. **G3 is implemented but still sits on its own branch**
-(`g3-storage-modes` off `dev` @ `db88ff9`) — merging it is the one remaining
-step before G7 (needs G3) can start. G3 and G4 touched disjoint files
-(`core/storage_mode.py` vs. `freecad_gitpdm/providers/`,
+(PR #7, `e5039de`, 2026-07-18). **G5 is implemented on its own branch**
+(`g5-container-ergonomics` off `dev`, 2026-07-18) — awaiting merge, same as
+G3. **G3 is implemented but still sits on its own branch**
+(`g3-storage-modes` off `dev` @ `db88ff9`) — merging it (and G5) is the
+remaining step before G7 (needs G3) can start. G3 and G4 touched disjoint
+files (`core/storage_mode.py` vs. `freecad_gitpdm/providers/`,
 `core/provider_config.py`), so merging G3 next should be a plain fast-forward
-or trivial merge, not a conflict-resolution job.
+or trivial merge, not a conflict-resolution job. G5 touched `git/client.py`,
+`ui/panel.py`, `ui/repo_validator.py`, `ui/repo_picker.py`,
+`ui/github_auth.py`, and added `core/session_lock.py` — overlaps with G3's
+`core/storage_mode.py`-adjacent work are unlikely but not yet checked against
+each other since neither has merged.
 
 **G4 as built** (merged into `dev` via PR #7 @ `e5039de`, 2026-07-18 — kept
 for reference; the brief below is the original spec):
@@ -245,6 +251,57 @@ for reference; the brief below is the original spec):
 ---
 
 ## Phase G5 — Container ergonomics
+
+**G5 as built** (implemented on `g5-container-ergonomics` off `dev`,
+2026-07-18 — kept for reference; the brief below is the original spec):
+
+- **R2.2:** `ui/github_auth.py`'s device-flow dialog gained a read-only,
+  selectable `QLineEdit` showing the verification URL as literal text (the
+  user code was already selectable) plus a "Copy Link" button.
+  `_open_verification_uri` now checks `QDesktopServices.openUrl`'s return
+  value instead of discarding it; on failure (or an exception) a fallback
+  label appears telling the user to copy the link manually instead of
+  failing silently.
+- **R2.3:** new `core/session_lock.py` — advisory `.git/gitpdm.lock` JSON
+  lockfile (`pid`/`timestamp`/`hostname` exactly as specified). PID
+  liveness is stdlib-only (no psutil/pywin32 added): `os.kill(pid, 0)` on
+  POSIX, `ctypes.windll.kernel32.OpenProcess` on Windows — one function
+  with a platform branch rather than a new per-OS-file factory, since it's
+  small enough not to warrant one. Stale threshold is 15 minutes on a
+  still-live PID. Wired into `ui/repo_validator.py`'s `_handle_valid_repo`/
+  `_handle_invalid_repo` (the single choke point every repo activation and
+  path switch already flows through) with a Yes/No override dialog; a
+  5-minute heartbeat timer in `panel.py` refreshes our own lock so a long
+  session doesn't look abandoned, and `closeEvent` releases it.
+  `tests/test_session_lock.py` covers acquire/release, dead-PID and
+  stale-timestamp auto-clear, live-foreign-PID blocking, and force-steal.
+- **R2.4 (scoped down from the brief — see below):** `git/client.py` gained
+  `clone_repo(..., depth=...)`, `is_shallow_repo()` (fails open on any
+  error — it only gates a UI affordance), and `deepen_repo()`
+  (`--deepen N` or `--unshallow`). `ui/repo_picker.py` exposes a
+  "Shallow clone" checkbox (`DEFAULT_SHALLOW_CLONE_DEPTH = 20`),
+  default-checked when `headless_backends_active()` is true (the existing
+  G1 signal for "probably a container"). `panel.py` shows a persistent
+  "History truncated — Deepen" banner when the active repo is shallow, with
+  a working Deepen button. **Scope decision:** at implementation time there
+  was no commit-log/history/diff/blame UI anywhere in GitPDM to "audit" per
+  the brief's step 3 — that UI doesn't exist yet (still on the roadmap).
+  G5 therefore shipped the shallow-clone infrastructure and the panel-level
+  indicator only, not a new history-browsing feature; commit/push/pull were
+  already history-agnostic and verified working unmodified against a real
+  shallow clone.
+- **R2.4 panel-driven first run:** mostly pre-existing (paste-URL clone in
+  `ui/repo_picker.py`, create-via-provider-API in `ui/new_repo_wizard.py`
+  gated on `capabilities.supports_repo_creation`, both confirmed already
+  degrading correctly for non-API providers per G4). The actual gap closed:
+  `panel.py` now shows a first-run hint above the repo-path field
+  ("No repository yet — clone an existing one or start a new one below")
+  when `settings.load_repo_path()` is empty, instead of just blank fields.
+- Architecture guard: `panel.py`'s baseline bumped 2500 → 2600
+  (`tools/architecture_baseline.json`) for the lock heartbeat, shallow-clone
+  banner, and first-run hint additions.
+- 211 tests pass (up from 202); ruff, format check, and the architecture
+  guard are all clean.
 
 **Implements:** R2.2 (dialog hardening), R2.3 (session guard), R2.4 (shallow clone + panel bootstrap). **Depends on:** G1, G4.
 
