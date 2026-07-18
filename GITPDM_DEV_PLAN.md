@@ -25,7 +25,7 @@ Keep this table current — update it in the same PR as the work it describes.
 | G1 credential engine | ✅ Implemented | `dev` @ `ceaa4f5`, 2026-07-17 |
 | G2 release + CI | ✅ Implemented | `dev`, 2026-07-17 |
 | G3 storage modes | ✅ Implemented (not yet merged to `dev`) | `g3-storage-modes` branch off `dev`, 2026-07-17 |
-| G4 provider abstraction | ✅ Implemented | `g4-provider-abstraction` branch off `dev`, 2026-07-17 |
+| G4 provider abstraction | ✅ Implemented & merged | `dev` @ `e5039de` (PR #7), 2026-07-18 |
 | G5–G8 | Not started | — |
 
 Also landed on `dev` (2026-07-17), outside any phase:
@@ -33,6 +33,10 @@ Also landed on `dev` (2026-07-17), outside any phase:
 - Fixed a `TypeError` in `list_local_branches`, `list_remote_branches`, and `pull_ff_only` (broken `timeout=N ** _get_subprocess_kwargs()` splat — these methods crashed on every call).
 - Fixed dead token-refresh wiring in `github/identity.py` (imported a nonexistent `get_token_store`; the ImportError was silently swallowed, so pre-request refresh never ran).
 - `v0.4.0` tagged from pre-G1 `main`.
+
+Also landed on `dev` (2026-07-18), alongside G4:
+
+- Fixed `git/client.py:set_config()` silently ignoring `repo_root` (missing `-C repo_root`, unlike every sibling method in the class) — `--local` writes landed in the process's cwd instead of the target repo. Dead code until G4's forcing test called it for the first time; caught by CI failing on `ubuntu-latest`/`windows-latest` (no global git identity to mask it) while passing locally and on `macos-latest`. Confirmed via a Linux container with no global git identity: fails before the fix, passes after.
 
 Closed since the table above was first written:
 
@@ -42,15 +46,16 @@ Closed since the table above was first written:
 
 No open items remain blocking G1 or G2; both are fully verified end-to-end. The
 critical path for the sister deployment repo (G1 → G2) is clear — it can now
-build its container image pinned to `v0.5.0`. **G3 and G4 are both
-implemented**, each on its own branch off `dev` @ `db88ff9` (parallel-safe,
-per the sequencing diagram) — neither has merged into `dev` yet, so this file
-still reads as if G3 were "next up" when checked out from `dev` directly.
-Merging both (in either order — they touch different files, `core/storage_mode.py`
-vs. `freecad_gitpdm/providers/`, `core/provider_config.py`) is the remaining
-step before G5 (needs G1 + G4) or G7 (needs G3) can start.
+build its container image pinned to `v0.5.0`. **G4 has merged into `dev`**
+(PR #7, `e5039de`, 2026-07-18), so G5 (needs G1 + G4) is now unblocked and can
+start any time. **G3 is implemented but still sits on its own branch**
+(`g3-storage-modes` off `dev` @ `db88ff9`) — merging it is the one remaining
+step before G7 (needs G3) can start. G3 and G4 touched disjoint files
+(`core/storage_mode.py` vs. `freecad_gitpdm/providers/`,
+`core/provider_config.py`), so merging G3 next should be a plain fast-forward
+or trivial merge, not a conflict-resolution job.
 
-**G4 as built** (`g4-provider-abstraction` branch off `dev`, 2026-07-17 — kept
+**G4 as built** (merged into `dev` via PR #7 @ `e5039de`, 2026-07-18 — kept
 for reference; the brief below is the original spec):
 
 - `github/` → `freecad_gitpdm/providers/github/`: moved as a subpackage

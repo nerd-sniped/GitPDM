@@ -33,12 +33,14 @@ repo root on the `dev` branch. Read the phase brief before implementing,
 and update the plan's **Status ledger** in the same PR as the work.
 Feature work happens on `dev`; CI runs on push/PR to both `main` and `dev`.
 
-Status: **G1 (headless credential engine) and G2 (release + CI) are
-implemented** on `dev`. **Next up is G3**: storage modes (delta vs. LFS,
-repo-scoped compression). G4 (provider abstraction) is unblocked by G1 and
-can start any time. The overriding constraint for every phase: desktop
-behavior must be a no-op or an improvement
-("the desktop user is sacred").
+Status: **G1 (headless credential engine), G2 (release + CI), and G4
+(provider abstraction) are implemented and merged** on `dev`. **G3** (storage
+modes: delta vs. LFS, repo-scoped compression) is implemented but still sits
+on its own branch (`g3-storage-modes` off `dev`) awaiting merge. **Next up:**
+merge G3, then either G5 (container ergonomics — needs G1 + G4, now unblocked)
+or G7 (docs sweep — needs G3). The overriding constraint for every phase:
+desktop behavior must be a no-op or an improvement ("the desktop user is
+sacred").
 
 ## Entry points / how FreeCAD loads this
 
@@ -54,7 +56,7 @@ when running tests or scripts outside the app.
 
 ## Module layout (`freecad_gitpdm/`)
 
-- `auth/` — GitHub OAuth device flow (`oauth_device_flow.py`), token storage
+- `auth/` — OAuth device flow (`oauth_device_flow.py`), token storage
   abstracted per-OS (`token_store_wincred.py` / `_macos.py` / `_linux.py` via
   `token_store_factory.py`), scope validation, token refresh. Headless
   credential resolution (`credential_chain.py`): `GITPDM_TOKEN_FILE` >
@@ -65,10 +67,29 @@ when running tests or scripts outside the app.
   FreeCAD installed. When env credential backends are active, `git/client.py`
   bridges the token into network git commands via an inline credential
   helper; on desktop (no env vars) that bridge must stay a no-op.
+  `auth/config.py`'s OAuth endpoint constants are re-exports of
+  `providers/github/provider.py`'s `GitHubProvider` — that class is the
+  actual owner (Phase G4); don't add a second source of truth for them.
 - `git/client.py` — subprocess wrapper around the `git` CLI; all Git
-  operations (commit/push/pull/fetch/branch) go through here.
-- `github/` — GitHub REST API client, rate limiting, repo creation, identity,
-  response caching.
+  operations (commit/push/pull/fetch/branch) go through here. Host-agnostic
+  by design (Phase G4's forcing test relies on this): no provider
+  conditionals belong in here.
+- `providers/` — git host abstraction (Phase G4; R5.1-R5.3). `base.py`
+  defines `ProviderCapabilities` (`supports_device_flow`,
+  `supports_repo_creation`, `supports_lfs_locking`, `supports_pull_requests`)
+  and `BaseProvider`; `GenericProvider` (plain git + PAT/SSH, zero host API
+  calls) is the base case, not a fallback. `github/` is a subpackage
+  (`GitHubProvider` in `provider.py`, plus the REST API client, rate
+  limiting, repo creation, identity, response caching it composes).
+  `gitlab.py` is a capability-flagged stub only (raises `NotImplementedError`
+  — do not flesh it out without a real GitLab user to build against, see
+  `GITPDM_DEV_PLAN.md`'s Deferred section). `providers/__init__.py`'s
+  `get_provider()`/`get_provider_class()` registry is the only place outside
+  `providers/` that should import a concrete provider class — UI and `core/`
+  code reads `capabilities` flags, never provider ids, to decide what to
+  offer. Per-repo provider selection lives in `core/provider_config.py`
+  (`.freecad-pdm/config.json`'s `provider` field, defaulting to `"github"`
+  for repos that predate it).
 - `export/` — preview/publish pipeline: mesh export (`stl_converter.py`,
   `model_export.py`), thumbnails (`thumbnail.py`, `view_helper.py`), manifest
   generation (`manifest.py`), and orchestration (`exporter.py`,
@@ -77,7 +98,8 @@ when running tests or scripts outside the app.
 - `core/` — cross-cutting utilities: logging to FreeCAD Report View
   (`log.py`, prefix `[GitPDM]`), background job handling (`jobs.py`), path
   resolution (`paths.py`), settings persistence via FreeCAD parameter store
-  (`settings.py`), input validation, diagnostics, scaffolding new repos.
+  (`settings.py`), input validation, diagnostics, scaffolding new repos,
+  per-repo provider selection (`provider_config.py`).
 - `ui/` — the dockable panel (`panel.py`, the largest file in the codebase)
   and its feature handlers: `branch_ops.py`, `commit_push.py`,
   `fetch_pull.py`, `file_browser.py`, `github_auth.py`, `repo_picker.py`,
@@ -153,3 +175,8 @@ and the architecture guard. All three must pass.
 - Platform-specific code (token storage) is split into per-OS files selected
   by a factory (`token_store_factory.py`) — follow that pattern rather than
   branching on `sys.platform` inline throughout the codebase.
+- Provider-specific behavior (GitHub vs. generic vs. GitLab) is gated on
+  `provider.capabilities.*` flags, not on provider id or `isinstance` checks
+  — UI should never offer an action the active provider can't perform. All
+  branching on concrete provider classes lives in `providers/`; `core/`,
+  `export/`, and `git/client.py` stay provider-agnostic.
