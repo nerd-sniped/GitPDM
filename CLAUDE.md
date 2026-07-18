@@ -78,25 +78,51 @@ when running tests or scripts outside the app.
   `GITPDM_PROVIDER` → `providers.get_provider_class()`) for its
   `credential_username` *property* — the same capability-delegation
   pattern used everywhere else (read a property, never branch on provider
-  id), needed because GitHub and GitLab disagree on the username to send
-  alongside a PAT over HTTPS. Don't "simplify" this back to a hardcoded
-  value.
-- `providers/` — git host abstraction (Phase G4; R5.1-R5.3). `base.py`
-  defines `ProviderCapabilities` (`supports_device_flow`,
-  `supports_repo_creation`, `supports_lfs_locking`, `supports_pull_requests`)
-  and `BaseProvider`; `GenericProvider` (plain git + PAT/SSH, zero host API
-  calls) is the base case, not a fallback. `github/` is a subpackage
-  (`GitHubProvider` in `provider.py`, plus the REST API client, rate
-  limiting, repo creation, identity, response caching it composes).
-  `gitlab.py` is a capability-flagged stub only (raises `NotImplementedError`
-  — do not flesh it out without a real GitLab user to build against, see
-  `GITPDM_DEV_PLAN.md`'s Deferred section). `providers/__init__.py`'s
-  `get_provider()`/`get_provider_class()` registry is the only place outside
-  `providers/` that should import a concrete provider class — UI and `core/`
-  code reads `capabilities` flags, never provider ids, to decide what to
-  offer. Per-repo provider selection lives in `core/provider_config.py`
-  (`.freecad-pdm/config.json`'s `provider` field, defaulting to `"github"`
-  for repos that predate it).
+  id), needed because hosts disagree on the username to send alongside a
+  PAT over HTTPS (e.g. GitLab requires `oauth2`, Bitbucket requires
+  `x-token-auth`). Don't "simplify" this back to a hardcoded value.
+- `providers/` — git host abstraction (Phase G4; R5.1-R5.3), extended to
+  five hosts in the multi-provider phase (see `GITPDM_DEV_PLAN.md`).
+  `base.py` defines `ProviderCapabilities` (`supports_device_flow`,
+  `supports_repo_creation`, `supports_lfs_locking`, `supports_pull_requests`,
+  plus `requires_manual_token`/`requires_host_url`/`requires_workspace` for
+  the PAT-paste hosts) and `BaseProvider`; `GenericProvider` (plain git +
+  PAT/SSH, zero host API calls) is the base case, not a fallback.
+  `github/` is a subpackage (`GitHubProvider` in `provider.py`, plus the
+  REST API client, rate limiting, repo creation, identity, response
+  caching it composes) — untouched by the multi-provider work, to keep
+  zero regression risk to the one host with real OAuth device-flow
+  support. `gitlab/`, `gitea/`, `bitbucket/`, `sourcehut/` are subpackages
+  following the same shape, all PAT-paste auth (no device flow: none of
+  these has a pre-registered OAuth app GitPDM can use — R5.2 calls PAT/SSH
+  "the universal floor" for exactly this reason). `shared/` holds the
+  genuinely host-agnostic parts extracted from `github/` for the new
+  providers to build on (`http_client.BaseApiClient`'s retry/circuit-
+  breaker skeleton, `errors.ProviderApiError`, `cache.ApiCache`,
+  `rate_limiter.RateLimiter`) — `github/cache.py` and `rate_limiter.py`
+  are now 3-line re-export shims pointing at `shared/`, kept for backward
+  compatibility. GitHub's own `GitHubApiError` is deliberately **not** a
+  subclass of `ProviderApiError` (avoids any risk to GitHub's working
+  error-handling code) — code that needs to catch "any provider's API
+  error" (e.g. `ui/new_repo_wizard.py`'s session-expiry handling) catches
+  `(GitHubApiError, ProviderApiError)` as an explicit tuple, not a shared
+  base class. SourceHut's schema was never live-verified (its GraphQL
+  endpoint requires auth even for introspection) — treat it as needing a
+  real-token acceptance pass before trusting it in production; the other
+  three were all verified against real live endpoints during development.
+  `providers/__init__.py`'s `get_provider()`/`get_provider_class()`
+  registry is the only place outside `providers/` that should import a
+  concrete provider class — UI and `core/` code reads `capabilities`
+  flags, never provider ids, to decide what to offer. Per-repo provider
+  selection lives in `core/provider_config.py` (`.freecad-pdm/config.json`'s
+  `provider` field, defaulting to `"github"` for repos that predate it).
+  Connection *credentials* are provider-namespaced too (`core/settings.py`'s
+  `save_provider_connected()`/`load_provider_host()` etc., keyed by
+  `provider_id`) so a GitHub connection and a GitLab connection coexist
+  without one clobbering the other's settings — `core/services.py`'s
+  `api_client_for(provider)` resolves host/account through these, not a
+  single hardcoded GitHub slot (that was a real bug, found and fixed
+  while wiring up the picker/wizard for the new providers).
 - `export/` — preview/publish pipeline: mesh export (`stl_converter.py`,
   `model_export.py`), thumbnails (`thumbnail.py`, `view_helper.py`), manifest
   generation (`manifest.py`), and orchestration (`exporter.py`,
@@ -109,8 +135,13 @@ when running tests or scripts outside the app.
   per-repo provider selection (`provider_config.py`).
 - `ui/` — the dockable panel (`panel.py`, the largest file in the codebase)
   and its feature handlers: `branch_ops.py`, `commit_push.py`,
-  `fetch_pull.py`, `file_browser.py`, `github_auth.py`, `repo_picker.py`,
-  `repo_validator.py`, `new_repo_wizard.py`, `dialogs.py`.
+  `fetch_pull.py`, `file_browser.py`, `github_auth.py` (GitHub's OAuth
+  device-flow connect/disconnect/verify), `pat_auth.py` (the equivalent
+  PAT-paste connect/disconnect/verify for GitLab/Bitbucket/Gitea-Forgejo/
+  SourceHut — meaningfully simpler, no device-code polling; every method
+  takes an explicit `provider_id` since more than one of these can be
+  connected at once), `repo_picker.py`, `repo_validator.py`,
+  `new_repo_wizard.py`, `dialogs.py`.
 
 ## Key behavioral constraint: branch switching safety
 

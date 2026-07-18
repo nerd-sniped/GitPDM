@@ -18,9 +18,9 @@ from typing import Callable, Protocol, runtime_checkable
 
 @runtime_checkable
 class _SettingsLike(Protocol):
-    def load_github_host(self) -> str: ...
+    def load_provider_host(self, provider_id: str, default_host: str = "") -> str: ...
 
-    def load_github_login(self) -> str | None: ...
+    def load_provider_login(self, provider_id: str) -> str | None: ...
 
 
 @runtime_checkable
@@ -86,10 +86,18 @@ class ServiceContainer:
     def api_client_for(self, provider):
         """Build `provider`'s host API client from the credential chain, or None.
 
-        Providers with no host API (GenericProvider, and the GitLab stub)
-        return None here via `BaseProvider.build_api_client`. Environment
-        credentials (GITPDM_TOKEN_FILE / GITPDM_TOKEN, Phase G1) take
-        precedence and require no configured host or stored token.
+        Providers with no host API (GenericProvider) return None here via
+        `BaseProvider.build_api_client`. Environment credentials
+        (GITPDM_TOKEN_FILE / GITPDM_TOKEN, Phase G1) take precedence and
+        require no configured host or stored token.
+
+        Host/account resolution is keyed by `provider.provider_id` (via
+        `settings.load_provider_host()`/`load_provider_login()`) rather than
+        the old hardcoded GitHub-only settings lookup, so this correctly
+        resolves credentials for GitLab/Bitbucket/Gitea/SourceHut too, not
+        just GitHub — each provider's connection state lives in its own
+        namespaced settings keys (core/settings.py) and doesn't collide
+        with another provider's.
         """
 
         from freecad_gitpdm.auth.credential_chain import resolve_env_credential
@@ -100,18 +108,23 @@ class ServiceContainer:
         if env_cred is not None:
             return provider.build_api_client(env_cred.token.access_token, ua)
 
-        host = (self.settings.load_github_host() or "").strip()
+        host = (
+            self.settings.load_provider_host(
+                provider.provider_id, default_host=provider.default_host
+            )
+            or ""
+        ).strip()
         if not host:
             return None
 
-        account = self.settings.load_github_login()
+        account = self.settings.load_provider_login(provider.provider_id)
 
         store = self.token_store()
         token_resp = store.load(host, account)
         if not token_resp:
             return None
 
-        return provider.build_api_client(token_resp.access_token, ua)
+        return provider.build_api_client(token_resp.access_token, ua, host=host)
 
     def github_api_client(self):
         """Create a GitHubApiClient from the credential chain, or None.

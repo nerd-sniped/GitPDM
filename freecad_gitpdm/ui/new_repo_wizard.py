@@ -4,13 +4,20 @@ GitPDM New Repository Wizard
 Sprint OAUTH-4: Dialog to create GitHub repo + local scaffold + push
 Sprint OAUTH-6: Error handling, token invalidation detection
 Phase G4: provider abstraction — GitHub (create via API) or a generic git
-remote (paste a URL you already created). Capability flags decide which
-path runs; UI never offers an action the active provider can't perform.
+remote (paste a URL you already created).
+Multi-provider support: GitLab, Bitbucket, Gitea/Forgejo, and SourceHut
+join GitHub as full create-via-API options, authenticating via a pasted
+Personal Access Token rather than GitHub's device flow (no pre-registered
+OAuth app exists for these hosts yet — see providers/base.py's
+`requires_manual_token` capability). Capability flags decide which fields
+show and which workflow branch runs; UI never offers an action the active
+provider can't perform.
 
 Guides user through:
-  1. Choosing a provider (GitHub, or another git remote)
+  1. Choosing a provider (GitHub, another named host, or another git remote)
   2. Selecting local folder
-  3. Entering repo name + visibility (GitHub) or remote URL (generic)
+  3. Entering repo name + visibility + (for PAT hosts) token/server-URL/
+     workspace, or a remote URL for the fully generic path
   4. Choosing scaffolding options
   5. Executing creation steps with progress
 """
@@ -34,7 +41,16 @@ from freecad_gitpdm.providers.base import BaseProvider, GenericProvider, RemoteR
 from freecad_gitpdm.providers.github.api_client import GitHubApiClient
 from freecad_gitpdm.providers.github.errors import GitHubApiError
 from freecad_gitpdm.providers.github.provider import GitHubProvider
+from freecad_gitpdm.providers import get_provider_class, list_provider_ids
+from freecad_gitpdm.providers.shared.errors import ProviderApiError
 from freecad_gitpdm.git import client as git_client_module
+
+# Provider errors the workflow treats as "session expired, please
+# reconnect" when code == "UNAUTHORIZED" — GitHubApiError predates the
+# shared ProviderApiError hierarchy and isn't a subclass of it (kept
+# separate deliberately, to avoid any risk to GitHub's working code), so
+# both are listed explicitly rather than relying on a common base class.
+_PROVIDER_API_ERRORS = (GitHubApiError, ProviderApiError)
 
 
 class NewRepoWizard(QtWidgets.QWizard):
@@ -108,10 +124,14 @@ class NewRepoWizard(QtWidgets.QWizard):
 class _ProviderPage(QtWidgets.QWizardPage):
     """Page 1: choose which provider owns the new repository.
 
-    GitHub can create the repo via its API; any other option is a
-    generic git remote the user already created elsewhere (browser,
-    another tool) and pastes the URL for on the next page. UI never
-    offers the GitHub option when there's no way to call its API.
+    GitHub authenticates via the already-connected device-flow token (the
+    panel's "Connect GitHub" flow, run before this wizard opens) — it's
+    disabled here if that hasn't happened. GitLab/Bitbucket/Gitea-Forgejo/
+    SourceHut authenticate via a pasted Personal Access Token entered on
+    the next page instead (`requires_manual_token` — no pre-connection
+    needed, so they're always selectable). "Another git remote" is the
+    generic fallback: any host at all, paste a URL you already created.
+    UI never offers an action the active provider can't perform.
     """
 
     def __init__(self, parent, initial_provider: BaseProvider, github_available: bool):
@@ -120,17 +140,33 @@ class _ProviderPage(QtWidgets.QWizardPage):
         self.setSubTitle("Where should this repository live?")
 
         self._github_available = github_available
+        self._radios: dict = {}
 
         layout = QtWidgets.QVBoxLayout()
         self.setLayout(layout)
 
-        self._github_radio = QtWidgets.QRadioButton(
-            "GitHub — create the repository automatically"
+        self._button_group = QtWidgets.QButtonGroup(self)
+
+        # GitHub first (per product decision), then every other named host
+        # in registry order, "generic" always last as the catch-all.
+        named_ids = sorted(
+            (pid for pid in list_provider_ids() if pid != "generic"),
+            key=lambda pid: (pid != "github", pid),
         )
+        for provider_id in named_ids:
+            provider_cls = get_provider_class(provider_id)
+            label = provider_cls.display_name or provider_id
+            radio = QtWidgets.QRadioButton(
+                f"{label} — create the repository automatically"
+            )
+            self._button_group.addButton(radio)
+            layout.addWidget(radio)
+            self._radios[provider_id] = radio
+
         self._generic_radio = QtWidgets.QRadioButton(
             "Another git remote — I'll paste a URL I already have"
         )
-        layout.addWidget(self._github_radio)
+        self._button_group.addButton(self._generic_radio)
         layout.addWidget(self._generic_radio)
 
         self._hint_label = QtWidgets.QLabel("")
@@ -139,22 +175,39 @@ class _ProviderPage(QtWidgets.QWizardPage):
         layout.addWidget(self._hint_label)
         layout.addStretch()
 
-        if github_available:
-            wants_github = initial_provider.capabilities.supports_repo_creation
-            self._github_radio.setChecked(wants_github)
-            self._generic_radio.setChecked(not wants_github)
+        github_radio = self._radios.get("github")
+        if github_radio is not None:
+            if github_available:
+                github_radio.setChecked(
+                    initial_provider.provider_id == "github"
+                    and initial_provider.capabilities.supports_repo_creation
+                )
+            else:
+                github_radio.setEnabled(False)
+                self._hint_label.setText(
+                    "Connect GitHub from the panel first to create a repository "
+                    "automatically here. Other hosts below authenticate with a "
+                    "pasted access token instead, or continue with another git "
+                    "remote."
+                )
+
+        # Default selection: the initial provider's own radio if it has
+        # one and is selectable, else GitHub if connected, else generic.
+        if initial_provider.provider_id in self._radios and (
+            initial_provider.provider_id != "github" or github_available
+        ):
+            self._radios[initial_provider.provider_id].setChecked(True)
+        elif github_available and "github" in self._radios:
+            self._radios["github"].setChecked(True)
         else:
-            self._github_radio.setEnabled(False)
             self._generic_radio.setChecked(True)
-            self._hint_label.setText(
-                "Connect GitHub from the panel first to create a repository "
-                "automatically here. You can still continue with another "
-                "git remote."
-            )
 
     def get_provider(self) -> BaseProvider:
-        if self._github_radio.isChecked() and self._github_available:
-            return GitHubProvider()
+        for provider_id, radio in self._radios.items():
+            if radio.isChecked():
+                if provider_id == "github" and not self._github_available:
+                    break
+                return get_provider_class(provider_id)()
         return GenericProvider()
 
 
@@ -210,6 +263,41 @@ class _InputPage(QtWidgets.QWizardPage):
         self._remote_url_row_label = QtWidgets.QLabel("Remote URL:")
         layout.addRow(self._remote_url_row_label, self._remote_url_edit)
 
+        # Server URL (Gitea/Forgejo only — requires_host_url: self-hosted,
+        # no fixed default_host GitPDM can assume).
+        self._host_url_edit = QtWidgets.QLineEdit()
+        self._host_url_edit.setPlaceholderText("e.g., https://gitea.example.com")
+        self._host_url_edit.textChanged.connect(self._on_field_changed)
+        self._host_url_row_label = QtWidgets.QLabel("Server URL:")
+        layout.addRow(self._host_url_row_label, self._host_url_edit)
+
+        # Workspace (Bitbucket only — requires_workspace: repos live under
+        # a workspace, not just "your account" like the other hosts).
+        self._workspace_edit = QtWidgets.QLineEdit()
+        self._workspace_edit.setPlaceholderText("e.g., myteam")
+        self._workspace_edit.textChanged.connect(self._on_field_changed)
+        self._workspace_row_label = QtWidgets.QLabel("Workspace:")
+        layout.addRow(self._workspace_row_label, self._workspace_edit)
+
+        # Personal Access Token (GitLab/Bitbucket/Gitea-Forgejo/SourceHut —
+        # requires_manual_token: no pre-registered OAuth app exists for
+        # these hosts yet, so auth is a pasted PAT rather than device flow).
+        self._pat_edit = QtWidgets.QLineEdit()
+        self._pat_edit.setEchoMode(QtWidgets.QLineEdit.Password)
+        self._pat_edit.setPlaceholderText("Paste a Personal Access Token")
+        self._pat_edit.textChanged.connect(self._on_field_changed)
+        self._pat_row_label = QtWidgets.QLabel("Access Token:")
+        layout.addRow(self._pat_row_label, self._pat_edit)
+
+        self._pat_hint_label = QtWidgets.QLabel(
+            "The token needs repository-creation permission for this host. "
+            "It's used once to create and verify the repo, then stored the "
+            "same way GitHub's connection is."
+        )
+        self._pat_hint_label.setWordWrap(True)
+        self._pat_hint_label.setStyleSheet("color: gray; font-size: 9pt;")
+        layout.addRow("", self._pat_hint_label)
+
         # Status label
         self._status_label = QtWidgets.QLabel("")
         self._status_label.setStyleSheet("color: red; font-weight: bold;")
@@ -220,6 +308,9 @@ class _InputPage(QtWidgets.QWizardPage):
         super().initializePage()
         provider = self._parent_wizard.selected_provider()
         can_create = provider.capabilities.supports_repo_creation
+        show_pat = provider.capabilities.requires_manual_token
+        show_host_url = provider.capabilities.requires_host_url
+        show_workspace = provider.capabilities.requires_workspace
 
         self._private_check.setVisible(can_create)
         self._private_row_label.setVisible(can_create)
@@ -228,6 +319,17 @@ class _InputPage(QtWidgets.QWizardPage):
 
         self._remote_url_edit.setVisible(not can_create)
         self._remote_url_row_label.setVisible(not can_create)
+
+        self._pat_edit.setVisible(show_pat)
+        self._pat_row_label.setVisible(show_pat)
+        self._pat_hint_label.setVisible(show_pat)
+
+        self._host_url_edit.setVisible(show_host_url)
+        self._host_url_row_label.setVisible(show_host_url)
+
+        self._workspace_edit.setVisible(show_workspace)
+        self._workspace_row_label.setVisible(show_workspace)
+
         self.completeChanged.emit()
 
     def _on_field_changed(self):
@@ -265,6 +367,9 @@ class _InputPage(QtWidgets.QWizardPage):
             "private": self._private_check.isChecked(),
             "description": self._desc_edit.text().strip() or None,
             "remote_url": self._remote_url_edit.text().strip() or None,
+            "pat": self._pat_edit.text().strip() or None,
+            "host_url": self._host_url_edit.text().strip() or None,
+            "workspace": self._workspace_edit.text().strip() or None,
         }
 
     def isComplete(self) -> bool:
@@ -307,6 +412,27 @@ class _InputPage(QtWidgets.QWizardPage):
             if not self._remote_url_edit.text().strip():
                 self._status_label.setText(
                     "Enter the URL of a git remote you already created."
+                )
+                return False
+
+        if provider.capabilities.requires_manual_token:
+            if not self._pat_edit.text().strip():
+                self._status_label.setText(
+                    f"Enter a Personal Access Token for {provider.display_name}."
+                )
+                return False
+
+        if provider.capabilities.requires_host_url:
+            if not self._host_url_edit.text().strip():
+                self._status_label.setText(
+                    f"Enter the {provider.display_name} server URL."
+                )
+                return False
+
+        if provider.capabilities.requires_workspace:
+            if not self._workspace_edit.text().strip():
+                self._status_label.setText(
+                    f"Enter the {provider.display_name} workspace."
                 )
                 return False
 
@@ -429,12 +555,22 @@ class _ProgressPage(QtWidgets.QWizardPage):
         super().initializePage()
         log.info("=== Progress page initialized ===")
         if not self._workflow_running:
-            # Get values from parent wizard
-            self._api_client = self._parent_wizard._api_client
             self._git_client = self._parent_wizard._git_client
             self._provider = self._parent_wizard.selected_provider()
             self._inputs = self._parent_wizard._input_page.get_inputs()
             self._options = self._parent_wizard._options_page.get_options()
+
+            if self._provider.capabilities.requires_manual_token:
+                # PAT-paste hosts build their client here, from the token
+                # just entered on the input page - unlike GitHub, there's
+                # no pre-connected client from before the wizard opened.
+                self._api_client = self._provider.build_api_client(
+                    self._inputs.get("pat") or "",
+                    "GitPDM/1.0",
+                    host=self._inputs.get("host_url"),
+                )
+            else:
+                self._api_client = self._parent_wizard._api_client
 
             log.info(f"Provider: {self._provider.provider_id}")
             log.info(f"API client available: {self._api_client is not None}")
@@ -479,17 +615,42 @@ class _ProgressPage(QtWidgets.QWizardPage):
         private = inputs["private"]
         description = inputs["description"]
         remote_url = inputs.get("remote_url")
+        workspace = inputs.get("workspace")
         enable_scaffold = options["enable_scaffold"]
         selected_storage_mode = options["storage_mode"]
 
         can_create_remotely = provider.capabilities.supports_repo_creation
+        requires_manual_token = provider.capabilities.requires_manual_token
 
         if can_create_remotely and not api_client:
-            self._add_step_error(-1, "API client not available")
+            msg = (
+                f"Couldn't build a client for {provider.display_name}. "
+                "Check the server URL/token and try again."
+                if requires_manual_token
+                else "API client not available"
+            )
+            self._add_step_error(-1, msg)
             return
         if not can_create_remotely and not remote_url:
             self._add_step_error(-1, "Remote URL not provided")
             return
+
+        # PAT-paste hosts: verify the token actually works before touching
+        # the filesystem or attempting repo creation, so a bad token fails
+        # fast with a clear message instead of surfacing mid-creation.
+        if can_create_remotely and requires_manual_token:
+            self._add_step(f"Verifying {provider.display_name} token…")
+            identity = provider.fetch_identity(api_client)
+            if not identity.ok:
+                log.error(f"Token verification failed: {identity.message}")
+                self._update_step_error(
+                    self._step_index, identity.message or "Token verification failed"
+                )
+                return
+            self._update_step_success(
+                self._step_index,
+                f"Connected as {identity.login}" if identity.login else "Verified",
+            )
 
         # Normalize the path to handle spaces and special characters
         folder_abs = os.path.normpath(os.path.abspath(folder))
@@ -577,13 +738,17 @@ class _ProgressPage(QtWidgets.QWizardPage):
                 log.info(f"Creating remote repo via {provider.provider_id}")
                 try:
                     repo_info = provider.create_remote_repo(
-                        api_client, name=name, private=private, description=description
+                        api_client,
+                        name=name,
+                        private=private,
+                        description=description,
+                        workspace=workspace,
                     )
                     log.info(f"Remote repo created: {repo_info.full_name}")
                     self._update_step_success(
                         self._step_index, f"Repository created: {repo_info.full_name}"
                     )
-                except GitHubApiError as e:
+                except _PROVIDER_API_ERRORS as e:
                     # Session expiry needs a distinct UX (reconnect prompt).
                     if getattr(e, "code", None) == "UNAUTHORIZED":
                         log.error(f"Provider session expired: {e}")
@@ -776,7 +941,7 @@ class _ProgressPage(QtWidgets.QWizardPage):
             self._parent_wizard.button(QtWidgets.QWizard.FinishButton).setEnabled(True)
             self._parent_wizard.button(QtWidgets.QWizard.BackButton).setEnabled(True)
 
-        except GitHubApiError as e:
+        except _PROVIDER_API_ERRORS as e:
             log.error(f"Provider API error: {e}")
             self._add_step_error(-1, str(e))
             self._parent_wizard.button(QtWidgets.QWizard.BackButton).setEnabled(True)

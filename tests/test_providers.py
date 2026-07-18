@@ -13,7 +13,10 @@ from freecad_gitpdm.providers import (
 )
 from freecad_gitpdm.providers.base import GenericProvider, ProviderCapabilities
 from freecad_gitpdm.providers.github.provider import GitHubProvider
-from freecad_gitpdm.providers.gitlab import GitLabProvider
+from freecad_gitpdm.providers.gitlab.provider import GitLabProvider
+from freecad_gitpdm.providers.gitea.provider import GiteaProvider
+from freecad_gitpdm.providers.bitbucket.provider import BitbucketProvider
+from freecad_gitpdm.providers.sourcehut.provider import SourceHutProvider
 
 
 class TestRegistry:
@@ -21,16 +24,21 @@ class TestRegistry:
         assert get_provider_class("github") is GitHubProvider
         assert get_provider_class("generic") is GenericProvider
         assert get_provider_class("gitlab") is GitLabProvider
+        assert get_provider_class("gitea") is GiteaProvider
+        assert get_provider_class("bitbucket") is BitbucketProvider
+        assert get_provider_class("sourcehut") is SourceHutProvider
 
     def test_unknown_id_falls_back_to_generic(self):
-        assert get_provider_class("bitbucket") is GenericProvider
+        assert get_provider_class("not-a-real-provider") is GenericProvider
         assert get_provider_class("") is GenericProvider
 
     def test_case_and_whitespace_insensitive(self):
         assert get_provider_class(" GitHub ") is GitHubProvider
 
     def test_list_provider_ids(self):
-        assert list_provider_ids() == sorted(["github", "generic", "gitlab"])
+        assert list_provider_ids() == sorted(
+            ["github", "generic", "gitlab", "gitea", "bitbucket", "sourcehut"]
+        )
 
     def test_default_provider_id_is_github(self):
         # Existing repos predate the provider field entirely; the default
@@ -98,32 +106,27 @@ class TestGitHubProviderCapabilities:
         assert isinstance(client, GitHubApiClient)
 
 
-class TestGitLabStub:
-    """G4: stub only. Proves the abstraction has a second consumer shape."""
+class TestGitLabProviderCapabilities:
+    """GitLab is a full PAT-auth provider now (see tests/test_gitlab_provider.py
+    for the detailed API-client/create-repo/list-repos/identity coverage).
+    This class only checks the registry-level capability contract."""
 
-    def test_capabilities_per_r5_2(self):
+    def test_capabilities(self):
         caps = GitLabProvider.capabilities
-        assert caps.supports_device_flow is True
-        assert caps.supports_repo_creation is False
+        assert caps.supports_device_flow is False
+        assert caps.supports_repo_creation is True
         assert caps.supports_lfs_locking is False
         assert caps.supports_pull_requests is False
+        assert caps.requires_manual_token is True
 
-    def test_all_operations_raise_not_implemented(self):
+    def test_no_device_flow_config(self):
+        # supports_device_flow=False -> base class defaults apply, matching
+        # GenericProvider's shape rather than raising NotImplementedError.
         provider = GitLabProvider()
-        with pytest.raises(NotImplementedError):
-            provider.get_client_id()
-        with pytest.raises(NotImplementedError):
-            _ = provider.device_code_url
-        with pytest.raises(NotImplementedError):
-            _ = provider.token_url
-        with pytest.raises(NotImplementedError):
-            _ = provider.default_scopes
-        with pytest.raises(NotImplementedError):
-            provider.create_remote_repo(None, name="foo", private=True)
-        with pytest.raises(NotImplementedError):
-            provider.fetch_identity(None)
-        with pytest.raises(NotImplementedError):
-            provider.build_api_client("tok")
+        assert provider.get_client_id() is None
+        assert provider.device_code_url is None
+        assert provider.token_url is None
+        assert provider.default_scopes == []
 
 
 class TestAuthConfigBackwardCompat:

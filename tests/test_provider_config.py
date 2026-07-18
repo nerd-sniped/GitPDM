@@ -25,7 +25,7 @@ class TestDefaults:
         config_dir = tmp_path / ".freecad-pdm"
         config_dir.mkdir()
         (config_dir / "config.json").write_text(
-            json.dumps({"provider": "bitbucket"}), encoding="utf-8"
+            json.dumps({"provider": "not-a-real-provider"}), encoding="utf-8"
         )
         assert provider_config.get_provider_id(str(tmp_path)) == "github"
 
@@ -66,7 +66,7 @@ class TestSetProviderConfig:
 
     def test_rejects_unknown_provider_id(self, tmp_path):
         with pytest.raises(ValueError):
-            provider_config.set_provider_config(str(tmp_path), "bitbucket")
+            provider_config.set_provider_config(str(tmp_path), "not-a-real-provider")
 
     def test_creates_config_dir_if_missing(self, tmp_path):
         provider_config.set_provider_config(str(tmp_path), "gitlab")

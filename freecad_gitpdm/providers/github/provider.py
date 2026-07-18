@@ -49,6 +49,7 @@ _CLIENT_ID = "Ov23li9bhJnBzf4o55fw"
 
 class GitHubProvider(BaseProvider):
     provider_id = "github"
+    display_name = "GitHub"
     capabilities = ProviderCapabilities(
         supports_device_flow=True,
         supports_repo_creation=True,
@@ -74,7 +75,9 @@ class GitHubProvider(BaseProvider):
     def default_scopes(self) -> List[str]:
         return list(DEFAULT_SCOPES)
 
-    def build_api_client(self, token: str, user_agent: str = "GitPDM/1.0"):
+    def build_api_client(
+        self, token: str, user_agent: str = "GitPDM/1.0", host: Optional[str] = None
+    ):
         from freecad_gitpdm.providers.github.api_client import GitHubApiClient
 
         return GitHubApiClient("api.github.com", token, user_agent)
@@ -85,6 +88,7 @@ class GitHubProvider(BaseProvider):
         name: str,
         private: bool,
         description: Optional[str] = None,
+        workspace: Optional[str] = None,
     ) -> RemoteRepoInfo:
         from freecad_gitpdm.providers.github.create_repo import (
             CreateRepoRequest,
@@ -109,4 +113,17 @@ class GitHubProvider(BaseProvider):
             login=result.login,
             message=result.message,
             error_code=result.error_code,
+        )
+
+    def list_repos(
+        self,
+        api_client,
+        workspace: Optional[str] = None,
+        use_cache: bool = True,
+        cache_key_user: str = "default",
+    ):
+        from freecad_gitpdm.providers.github.repos import list_repos
+
+        return list_repos(
+            api_client, use_cache=use_cache, cache_key_user=cache_key_user
         )

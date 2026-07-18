@@ -24,10 +24,20 @@ except ImportError:  # pragma: no cover
 
 from freecad_gitpdm.core import log, settings, jobs
 from freecad_gitpdm.git.client import GitClient, DEFAULT_SHALLOW_CLONE_DEPTH
-from freecad_gitpdm.providers.github.repos import RepoInfo, list_repos
+from freecad_gitpdm.providers.base import BaseProvider, RepoInfo
+from freecad_gitpdm.providers.github.provider import GitHubProvider
 from freecad_gitpdm.providers.github.api_client import GitHubApiClient
-from freecad_gitpdm.providers.github.errors import GitHubApiError, GitHubApiNetworkError
-from freecad_gitpdm.providers.github.cache import get_github_api_cache
+from freecad_gitpdm.providers.github.errors import GitHubApiError
+from freecad_gitpdm.providers.shared.errors import ProviderApiError
+from freecad_gitpdm.providers.shared.cache import get_api_cache
+
+# Same rationale as ui/new_repo_wizard.py: GitHubApiError predates the
+# shared ProviderApiError hierarchy and isn't a subclass of it, so both
+# are caught explicitly rather than relying on a common base class.
+# GitHubApiNetworkError/ProviderApiNetworkError are each already subclasses
+# of their respective base (GitHubApiError/ProviderApiError), so catching
+# the base pair alone covers network errors too - no separate branch needed.
+_PROVIDER_API_ERRORS = (GitHubApiError, ProviderApiError)
 
 
 def _headless_environment_detected() -> bool:
@@ -53,6 +63,7 @@ class RepoPickerDialog(QtWidgets.QDialog):
         client_factory: Optional[Callable[[], Optional[GitHubApiClient]]] = None,
         on_connect_requested: Optional[Callable[[], None]] = None,
         default_clone_dir: str = "",
+        provider: Optional[BaseProvider] = None,
     ):
         super().__init__(parent)
         self.setWindowTitle("Open / Clone Repository")
@@ -63,6 +74,11 @@ class RepoPickerDialog(QtWidgets.QDialog):
         self._git_client = git_client or GitClient()
         self._client_factory = client_factory
         self._on_connect_requested = on_connect_requested
+        # Which host's repos this dialog browses. Defaults to GitHub for
+        # full backward compatibility with existing callers that don't
+        # pass one yet (panel.py's "Join Team Project" button, pre-multi-
+        # provider) - see GITPDM_DEV_PLAN.md's multi-provider entry.
+        self._provider: BaseProvider = provider or GitHubProvider()
         self._repos: List[RepoInfo] = []
         self._visible_repos: List[RepoInfo] = []
         self._cloned_path: Optional[str] = None
@@ -91,21 +107,37 @@ class RepoPickerDialog(QtWidgets.QDialog):
         layout.setSpacing(8)
         self.setLayout(layout)
 
+        display_name = self._provider.display_name or self._provider.provider_id
+
         self._connect_message = QtWidgets.QLabel(
-            "Sign in to GitHub to list repositories."
+            f"Sign in to {display_name} to list repositories."
         )
         self._connect_message.setStyleSheet("color: gray; font-style: italic;")
         self._connect_message.hide()
         layout.addWidget(self._connect_message)
 
         self._session_expired_message = QtWidgets.QLabel(
-            "Your GitHub session has expired."
+            f"Your {display_name} session has expired."
         )
         self._session_expired_message.setStyleSheet(
             "color: #d32f2f; font-style: italic;"
         )
         self._session_expired_message.hide()
         layout.addWidget(self._session_expired_message)
+
+        # Workspace (Bitbucket only — requires_workspace: repos are listed
+        # under a workspace, not just "your account" like the other hosts).
+        self._workspace_row = QtWidgets.QWidget()
+        workspace_row_layout = QtWidgets.QHBoxLayout()
+        workspace_row_layout.setContentsMargins(0, 0, 0, 0)
+        self._workspace_row.setLayout(workspace_row_layout)
+        workspace_row_layout.addWidget(QtWidgets.QLabel("Workspace:"))
+        self.workspace_input = QtWidgets.QLineEdit()
+        self.workspace_input.setPlaceholderText("e.g., myteam")
+        self.workspace_input.textChanged.connect(self._on_workspace_changed)
+        workspace_row_layout.addWidget(self.workspace_input)
+        self._workspace_row.setVisible(self._provider.capabilities.requires_workspace)
+        layout.addWidget(self._workspace_row)
 
         # External URL input section (Phase G4: works for any git remote,
         # not just GitHub — this is the GenericProvider clone path)
@@ -128,12 +160,12 @@ class RepoPickerDialog(QtWidgets.QDialog):
 
         layout.addWidget(url_section)
 
-        self._connect_btn = QtWidgets.QPushButton("Connect GitHub")
+        self._connect_btn = QtWidgets.QPushButton(f"Connect {display_name}")
         self._connect_btn.clicked.connect(self._on_connect_clicked)
         self._connect_btn.hide()
         layout.addWidget(self._connect_btn)
 
-        self._reconnect_btn = QtWidgets.QPushButton("Reconnect GitHub")
+        self._reconnect_btn = QtWidgets.QPushButton(f"Reconnect {display_name}")
         self._reconnect_btn.clicked.connect(self._on_reconnect_clicked)
         self._reconnect_btn.hide()
         layout.addWidget(self._reconnect_btn)
@@ -215,10 +247,11 @@ class RepoPickerDialog(QtWidgets.QDialog):
             # After reconnect, try refreshing repos
             QtCore.QTimer.singleShot(500, self._refresh_repos)
         else:
+            display_name = self._provider.display_name or self._provider.provider_id
             QtWidgets.QMessageBox.information(
                 self,
-                "Reconnect GitHub",
-                "Use the GitHub Account section to sign in again, then click Refresh.",
+                f"Reconnect {display_name}",
+                f"Sign in to {display_name} again, then click Refresh.",
             )
 
     def _show_session_expired_prompt(self):
@@ -235,9 +268,25 @@ class RepoPickerDialog(QtWidgets.QDialog):
         self.search_box.setEnabled(False)
         self.refresh_btn.setEnabled(True)
 
+    def _on_workspace_changed(self):
+        """Bitbucket only: workspace changed, so any cached listing is for
+        a different scope now - refresh rather than show stale/wrong repos."""
+        if self._provider.capabilities.requires_workspace:
+            self._bypass_cache = True
+            self._refresh_repos()
+
     def _refresh_repos(self):
         if self._is_loading:
             return
+
+        if self._provider.capabilities.requires_workspace:
+            workspace = self.workspace_input.text().strip()
+            if not workspace:
+                self.status_label.setText("Enter a workspace to list repositories")
+                self.status_label.setStyleSheet("color: gray;")
+                return
+        else:
+            workspace = None
 
         client = self._ensure_client()
         if client is None:
@@ -248,7 +297,7 @@ class RepoPickerDialog(QtWidgets.QDialog):
         self._set_loading_state(True, "Loading…")
 
         # Set bypass flag for cache and reset it
-        cache = get_github_api_cache()
+        cache = get_api_cache()
         if self._bypass_cache:
             cache.set_bypass(True)
             self._bypass_cache = False
@@ -257,11 +306,10 @@ class RepoPickerDialog(QtWidgets.QDialog):
         username = settings.load_github_login() or "default"
 
         self._job_runner.run_callable(
-            "github_list_repos",
-            lambda: list_repos(
+            "provider_list_repos",
+            lambda: self._provider.list_repos(
                 client,
-                per_page=100,
-                max_pages=10,
+                workspace=workspace,
                 use_cache=True,
                 cache_key_user=username,
             ),
@@ -271,36 +319,26 @@ class RepoPickerDialog(QtWidgets.QDialog):
 
     def _on_repos_loaded(self, repo_list: List[RepoInfo]):
         # Reset cache bypass flag
-        cache = get_github_api_cache()
+        cache = get_api_cache()
         cache.set_bypass(False)
 
         self._repos = repo_list or []
         self._apply_filter()
         count = len(self._repos)
 
-        # Check cache age to show cache status
-        username = settings.load_github_login() or "default"
-        age = cache.age("api.github.com", username, "repos_list")
-        if age is not None:
-            age_s = int(age)
-            self.status_label.setText(
-                f"Loaded {count} repositories (cached {age_s}s ago)"
-            )
-        else:
-            self.status_label.setText(f"Loaded {count} repositories")
-
+        self.status_label.setText(f"Loaded {count} repositories")
         self.status_label.setStyleSheet("color: gray;")
         self._set_loading_state(False)
 
     def _on_repos_error(self, error: Exception):
         # Reset cache bypass flag
-        cache = get_github_api_cache()
+        cache = get_api_cache()
         cache.set_bypass(False)
 
         msg = "Failed to load repositories."
         color = "red;"
 
-        if isinstance(error, GitHubApiError):
+        if isinstance(error, _PROVIDER_API_ERRORS):
             # Structured error handling with code classification
             msg = str(error.message) if hasattr(error, "message") else str(error)
 
@@ -312,9 +350,6 @@ class RepoPickerDialog(QtWidgets.QDialog):
             # Rate limit message already in msg
             if hasattr(error, "retry_after_s") and error.retry_after_s:
                 msg = f"{msg} (retry in {error.retry_after_s}s)"
-
-        elif isinstance(error, GitHubApiNetworkError):
-            msg = "Network error. Check your connection and try again."
 
         log.warning(f"Repo picker load error: {msg}")
         self.status_label.setText(msg)
@@ -609,7 +644,9 @@ class RepoPickerDialog(QtWidgets.QDialog):
 
         if success:
             self._cloned_path = dest_path
-            self._save_cloned_provider(dest_path, repo.clone_url)
+            self._save_cloned_provider(
+                dest_path, repo.clone_url, provider_id=self._provider.provider_id
+            )
             self.status_label.setText(f"Cloned {repo.full_name} → {dest_path}")
             self.status_label.setStyleSheet("color: green;")
             self._set_loading_state(False)
@@ -634,24 +671,45 @@ class RepoPickerDialog(QtWidgets.QDialog):
 
     # --- Helpers ---
 
-    def _save_cloned_provider(self, repo_root: str, clone_url: str):
-        """Persist the repo's provider (Phase G4) based on the URL cloned.
+    # Known-host patterns for URL-sniffing the paste-URL clone path, where
+    # there's no "selected provider" to trust (the user can paste any
+    # host's URL regardless of which provider this dialog was opened for).
+    # Self-hosted Gitea/GitLab/Forgejo instances are unrecognizable from a
+    # bare URL and correctly fall through to "generic" — that's always
+    # been the intended classification for hosts GitPDM doesn't know.
+    _KNOWN_HOST_PATTERNS = (
+        (r"(^|[@/])github\.com([:/]|$)", "github"),
+        (r"(^|[@/])gitlab\.com([:/]|$)", "gitlab"),
+        (r"(^|[@/])bitbucket\.org([:/]|$)", "bitbucket"),
+        (r"(^|[@/])git\.sr\.ht([:/]|$)", "sourcehut"),
+    )
 
-        Only github.com URLs get the "github" provider; everything else
-        (GitLab, self-hosted, a bare local path) is "generic" — same
-        default GenericProvider makes zero host API calls against.
+    def _sniff_provider_id_from_url(self, clone_url: str) -> str:
+        for pattern, provider_id in self._KNOWN_HOST_PATTERNS:
+            if re.search(pattern, clone_url or "", re.IGNORECASE):
+                return provider_id
+        return "generic"
+
+    def _save_cloned_provider(
+        self, repo_root: str, clone_url: str, provider_id: Optional[str] = None
+    ):
+        """
+        Persist the repo's provider (Phase G4).
+
+        When `provider_id` is given (the table-clone path, where the repo
+        came from `self._provider.list_repos()` — we know for certain
+        which host it's on), use it directly. Otherwise (the paste-URL
+        path, where any host's URL is valid regardless of which provider
+        this dialog browses) fall back to sniffing known host patterns,
+        defaulting to "generic" for anything unrecognized — including
+        self-hosted Gitea/GitLab/Forgejo, which is the correct
+        classification for an unguessable arbitrary domain.
         """
         try:
             from freecad_gitpdm.core import provider_config
 
-            host_is_github = bool(
-                re.search(
-                    r"(^|[@/])github\.com([:/]|$)", clone_url or "", re.IGNORECASE
-                )
-            )
-            provider_config.set_provider_config(
-                repo_root, "github" if host_is_github else "generic"
-            )
+            resolved_id = provider_id or self._sniff_provider_id_from_url(clone_url)
+            provider_config.set_provider_config(repo_root, resolved_id)
         except (OSError, ValueError) as e:
             log.debug(f"Could not persist provider config for {repo_root}: {e}")
 
@@ -662,7 +720,8 @@ class RepoPickerDialog(QtWidgets.QDialog):
         self._reconnect_btn.hide()
         self.table.setRowCount(0)
         self.clone_btn.setEnabled(False)
-        self.status_label.setText("Connect to GitHub to list repos")
+        display_name = self._provider.display_name or self._provider.provider_id
+        self.status_label.setText(f"Connect to {display_name} to list repos")
         self.status_label.setStyleSheet("color: gray;")
         self._is_loading = False
         self.search_box.setEnabled(False)
@@ -679,10 +738,11 @@ class RepoPickerDialog(QtWidgets.QDialog):
         if self._on_connect_requested:
             self._on_connect_requested()
         else:
+            display_name = self._provider.display_name or self._provider.provider_id
             QtWidgets.QMessageBox.information(
                 self,
-                "Connect GitHub",
-                "Use the GitHub Account section to sign in, then click Refresh.",
+                f"Connect {display_name}",
+                f"Sign in to {display_name}, then click Refresh.",
             )
 
     def _set_loading_state(self, loading: bool, message: Optional[str] = None):

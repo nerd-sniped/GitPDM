@@ -28,6 +28,21 @@ class ProviderCapabilities:
     supports_lfs_locking: bool = False
     supports_pull_requests: bool = False
 
+    # Multi-provider support (PAT-paste hosts: GitLab, Bitbucket, Gitea/
+    # Forgejo, SourceHut). Independent of supports_device_flow, which stays
+    # about the *interactive* no-terminal auth UX and isn't the same thing
+    # as "can this provider create/list repos" — a host can support repo
+    # creation via a pasted PAT with no device flow at all, which is every
+    # new provider added here.
+    requires_manual_token: bool = False
+    # True only for self-hostable providers (Gitea/Forgejo) where GitPDM
+    # can't assume a fixed default_host and the UI must ask for the
+    # instance's base URL.
+    requires_host_url: bool = False
+    # True only for providers whose repos live under a workspace/org the
+    # user must specify (Bitbucket) rather than just "your account".
+    requires_workspace: bool = False
+
 
 @dataclass
 class RemoteRepoInfo:
@@ -49,6 +64,19 @@ class ViewerIdentity:
     error_code: Optional[str] = None
 
 
+@dataclass
+class RepoInfo:
+    """Provider-neutral listed-repo result (repo picker table rows)."""
+
+    owner: str
+    name: str
+    full_name: str
+    private: bool
+    default_branch: Optional[str]
+    clone_url: str
+    updated_at: Optional[str]
+
+
 class BaseProvider:
     """
     Contract every git host (or lack thereof) must implement.
@@ -60,6 +88,9 @@ class BaseProvider:
     provider_id: str = "base"
     capabilities: ProviderCapabilities = ProviderCapabilities()
     default_host: str = ""
+    # Human-readable name for UI copy that shouldn't hardcode "GitHub"
+    # (e.g. repo picker's "Sign in to {display_name} to list repositories").
+    display_name: str = ""
 
     # Username to send alongside a PAT/token over HTTPS git auth (the
     # `username=` line in a git credential helper response). Hosts differ:
@@ -99,8 +130,13 @@ class BaseProvider:
         name: str,
         private: bool,
         description: Optional[str] = None,
+        workspace: Optional[str] = None,
     ) -> RemoteRepoInfo:
-        """Create a repo on the host. Raises if capabilities.supports_repo_creation is False."""
+        """
+        Create a repo on the host. Raises if capabilities.supports_repo_creation
+        is False. `workspace` is only meaningful for `requires_workspace=True`
+        providers (Bitbucket) — other providers ignore it.
+        """
         raise NotImplementedError(
             f"{self.provider_id} does not support repository creation via API. "
             "Create the repository in your browser (or another tool), then "
@@ -113,8 +149,34 @@ class BaseProvider:
             f"{self.provider_id} has no host API to verify identity against."
         )
 
-    def build_api_client(self, token: str, user_agent: str = "GitPDM/1.0"):
-        """Construct a host API client for this provider, or None if it has no API."""
+    def list_repos(
+        self,
+        api_client,
+        workspace: Optional[str] = None,
+        use_cache: bool = True,
+        cache_key_user: str = "default",
+    ) -> List[RepoInfo]:
+        """
+        List repos the credential can access. Raises if no host API exists.
+        `workspace` is only meaningful for `requires_workspace=True`
+        providers (Bitbucket) — other providers ignore it. `cache_key_user`
+        isolates the response cache per logged-in account (e.g. so signing
+        out of one account and into another doesn't show stale results).
+        """
+        raise NotImplementedError(
+            f"{self.provider_id} has no host API to list repositories from."
+        )
+
+    def build_api_client(
+        self, token: str, user_agent: str = "GitPDM/1.0", host: Optional[str] = None
+    ):
+        """
+        Construct a host API client for this provider, or None if it has no
+        API. `host` is only meaningful for `requires_host_url=True`
+        providers (Gitea/Forgejo) — it's the user-entered server URL;
+        fixed-host providers (GitHub, GitLab) ignore it and use their own
+        `default_host`.
+        """
         return None
 
 

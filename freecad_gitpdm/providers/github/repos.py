@@ -7,24 +7,15 @@ Sprint OAUTH-6: Error handling, retries, caching integration.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import List, Optional
 
 from freecad_gitpdm.core import log
 from freecad_gitpdm.providers.github.api_client import GitHubApiClient
 from freecad_gitpdm.providers.github.errors import GitHubApiError, GitHubApiNetworkError
 from freecad_gitpdm.providers.github.cache import get_github_api_cache
+from freecad_gitpdm.providers.base import RepoInfo
 
-
-@dataclass
-class RepoInfo:
-    owner: str
-    name: str
-    full_name: str
-    private: bool
-    default_branch: Optional[str]
-    clone_url: str
-    updated_at: Optional[str]
+__all__ = ["RepoInfo", "list_repos"]
 
 
 def _extract_next_link(headers: dict) -> Optional[str]:

@@ -228,7 +228,7 @@ This promotes an existing roadmap item ("Support for additional hosting provider
 
 Note that **Git LFS locking is part of the LFS server specification**, not a GitHub API. GitHub, GitLab and Gitea all implement it. D1 (locking) therefore inherits host-agnosticism for free.
 
-### R5.1 — Generic provider is the base case, not the fallback *(priority: high)*
+### R5.1 — Generic provider is the base case, not the fallback *(priority: high)* ✅ IMPLEMENTED
 
 **Build the generic adapter first.** Make "plain git + PAT, no host API" the base class that GitHub *extends* — not a degraded path retrofitted after the fact. If GitHub is built first, its assumptions leak into `core/`, `ui/`, and `export/`, and excavating them later costs several times more than doing it in the right order now.
 
@@ -251,6 +251,20 @@ class Provider:
 
 UI hides what the active provider can't do. It never offers an action that will fail.
 
+**As built** (see `GITPDM_DEV_PLAN.md`'s "Multi-provider hosts as built"
+for the full writeup): `providers/` restructure done in Phase G4
+(`base.py` + `github/`); GitLab, Bitbucket, Gitea/Forgejo, and SourceHut
+(additive beyond this requirement's original four) added as full
+subpackages on `multi-provider-hosts` off `dev`, 2026-07-18, all real
+create/list/clone workflows via PAT-paste auth, not stubs. GitLab,
+Bitbucket, and Gitea were verified against real live API endpoints during
+development; SourceHut's GraphQL schema could not be (its endpoint
+requires auth even for introspection) and needs a real-token acceptance
+pass before being fully trusted. `ProviderCapabilities` gained three more
+flags beyond this requirement's original four
+(`requires_manual_token`/`requires_host_url`/`requires_workspace`) to
+express the PAT-paste hosts' auth/input needs.
+
 ### R5.2 — Device flow support matrix *(priority: medium)*
 
 Verified as of July 2026:
@@ -270,6 +284,16 @@ Verified as of July 2026:
 - **Self-hoster (technical):** any forge, PAT or SSH key via `.env`. Registering an OAuth app on their own Gitea would be *more* work than pasting a PAT, not less.
 
 **PAT/SSH is the universal floor.** Every git host supports one.
+
+**As built:** this is no longer just the theoretical fallback — GitLab,
+Bitbucket, Gitea/Forgejo, and SourceHut all ship real PAT-paste
+create/list/clone workflows (`requires_manual_token=True`), not merely
+"paste a URL for a repo you made elsewhere." Device flow itself remains
+unbuilt for all four (no pre-registered OAuth app exists for any of
+them yet, consistent with the structural limit above) — `GitLabProvider`
+no longer claims `supports_device_flow=True` the way an earlier stub did;
+it's `False` until a real implementation exists, so the capability flag
+doesn't overstate what's actually working.
 
 ### R5.3 — Provider config is repo-scoped *(priority: medium)*
 
