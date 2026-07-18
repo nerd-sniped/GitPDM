@@ -16,6 +16,7 @@ from freecad_gitpdm.providers.github.provider import GitHubProvider
 from freecad_gitpdm.providers.gitlab.provider import GitLabProvider
 from freecad_gitpdm.providers.gitea.provider import GiteaProvider
 from freecad_gitpdm.providers.bitbucket.provider import BitbucketProvider
+from freecad_gitpdm.providers.sourcehut.provider import SourceHutProvider
 
 
 class TestRegistry:
@@ -25,6 +26,7 @@ class TestRegistry:
         assert get_provider_class("gitlab") is GitLabProvider
         assert get_provider_class("gitea") is GiteaProvider
         assert get_provider_class("bitbucket") is BitbucketProvider
+        assert get_provider_class("sourcehut") is SourceHutProvider
 
     def test_unknown_id_falls_back_to_generic(self):
         assert get_provider_class("not-a-real-provider") is GenericProvider
@@ -35,7 +37,7 @@ class TestRegistry:
 
     def test_list_provider_ids(self):
         assert list_provider_ids() == sorted(
-            ["github", "generic", "gitlab", "gitea", "bitbucket"]
+            ["github", "generic", "gitlab", "gitea", "bitbucket", "sourcehut"]
         )
 
     def test_default_provider_id_is_github(self):

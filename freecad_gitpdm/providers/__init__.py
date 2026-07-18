@@ -26,6 +26,7 @@ def _populate_registry() -> Dict[str, Type[BaseProvider]]:
     from freecad_gitpdm.providers.gitlab import GitLabProvider
     from freecad_gitpdm.providers.gitea import GiteaProvider
     from freecad_gitpdm.providers.bitbucket import BitbucketProvider
+    from freecad_gitpdm.providers.sourcehut import SourceHutProvider
 
     return {
         "generic": GenericProvider,
@@ -33,6 +34,7 @@ def _populate_registry() -> Dict[str, Type[BaseProvider]]:
         "gitlab": GitLabProvider,
         "gitea": GiteaProvider,
         "bitbucket": BitbucketProvider,
+        "sourcehut": SourceHutProvider,
     }
 
 

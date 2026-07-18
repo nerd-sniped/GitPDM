@@ -31,7 +31,7 @@ CONFIG_FILE = "config.json"
 
 DEFAULT_PROVIDER_ID = "github"
 
-_KNOWN_PROVIDER_IDS = {"github", "generic", "gitlab", "gitea", "bitbucket"}
+_KNOWN_PROVIDER_IDS = {"github", "generic", "gitlab", "gitea", "bitbucket", "sourcehut"}
 
 
 def _config_path(repo_root: str) -> str:
