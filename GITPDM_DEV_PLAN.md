@@ -27,6 +27,7 @@ Keep this table current — update it in the same PR as the work it describes.
 | G3 storage modes | ✅ Implemented & merged | `dev`, 2026-07-18 |
 | G4 provider abstraction | ✅ Implemented & merged | `dev` @ `e5039de` (PR #7), 2026-07-18 |
 | G5 container ergonomics | ✅ Implemented & merged | `dev`, 2026-07-18 |
+| Multi-provider hosts (GitLab/Bitbucket/Gitea/SourceHut) | ✅ Implemented (not yet merged to `dev`) | `multi-provider-hosts` branch off `dev`, 2026-07-18 |
 | G6–G8 | Not started | — |
 
 Also landed on `dev` (2026-07-17), outside any phase:
@@ -53,6 +54,38 @@ locally from `g3-storage-modes` and `g5-container-ergonomics` on
 2026-07-18 so all three could be tested together in one FreeCAD session).
 **G6** (checkpointing, needs G5) and **G7** (docs sweep, needs G3) are both
 now unblocked.
+
+**Multi-provider hosts** (GitLab, Bitbucket, Gitea/Forgejo, SourceHut —
+implemented on `multi-provider-hosts` off `dev`, 2026-07-18, not yet
+merged): built ahead of G6/G7 per an explicit user request to extend R5.1's
+"works with any git host" from GitHub-only to five hosts with real radio-
+button workflows, not just the generic paste-a-URL fallback. Doesn't map
+onto a G-numbered phase — see the "Multi-provider hosts as built" section
+below (placed near Phase G4, which it extends) for the full writeup. In
+short: GitLab/Bitbucket/Gitea/SourceHut all authenticate via a pasted PAT
+(no device flow — none has a pre-registered OAuth app GitPDM can use;
+R5.2 already calls PAT/SSH "the universal floor" for this reason), wired
+into the New Repo wizard, the repo picker, and a new panel "Other Git
+Hosts" connect section. Found and fixed a real latent bug along the way:
+`core/services.py`'s `api_client_for(provider)` accepted a provider
+argument but always read GitHub's global settings regardless — connecting
+a second provider would have resolved credentials against GitHub's slot.
+GitHub's own code (`providers/github/`) was deliberately left untouched
+throughout to keep zero regression risk to the one host with real
+device-flow support; the genuinely host-agnostic parts of its
+implementation (retry/circuit-breaker HTTP client, response cache, rate
+limiter) were extracted to `providers/shared/` for the new providers to
+build on, with `providers/github/cache.py`/`rate_limiter.py` becoming
+backward-compatible re-export shims. GitLab, Bitbucket, and Gitea were all
+verified live against real endpoints during development (gitlab.com,
+api.bitbucket.org, and Codeberg as a public Forgejo stand-in); **SourceHut
+was not** — its GraphQL endpoint requires auth even for schema
+introspection, so its mutation/query field names are built from public
+API docs only and need a real-token acceptance pass before being trusted
+in production (see the "Multi-provider hosts as built" section and
+`providers/sourcehut/__init__.py`'s docstring). A lightweight live
+smoke-check for the other three (no token needed) lives at
+`tools/provider_endpoint_smoke.py`.
 
 **G4 as built** (merged into `dev` via PR #7 @ `e5039de`, 2026-07-18 — kept
 for reference; the brief below is the original spec):
@@ -124,6 +157,156 @@ for reference; the brief below is the original spec):
   compatibility) and `tests/test_provider_config.py` (defaults, malformed
   JSON, unknown ids, key preservation). 190 tests pass; ruff, format check,
   and the architecture guard are all clean.
+
+---
+
+**Multi-provider hosts as built** (`multi-provider-hosts` branch off `dev`,
+2026-07-18 — GitLab, Bitbucket, Gitea/Forgejo, SourceHut join GitHub with
+real radio-button workflows, per explicit user request; extends G4's
+provider abstraction rather than being its own numbered phase):
+
+- **`providers/shared/`** (new): `http_client.BaseApiClient` — the retry/
+  backoff/circuit-breaker skeleton generalized from `GitHubApiClient`,
+  with one bug fixed rather than replicated (GitHub's client took a `host`
+  constructor arg but hardcoded `api.github.com` in its URL resolution
+  instead of using it; this one actually uses `self._base_url`, which
+  matters once it varies per host). `errors.ProviderApiError` — same
+  6-field shape as `GitHubApiError` (code/message/status/retry_after_s/
+  rate_limit_reset_utc/details), deliberately **not** a shared base class
+  with it (avoids any risk to GitHub's working error handling — callers
+  that need to catch "any provider's error" list both explicitly as a
+  tuple). `cache.ApiCache`/`rate_limiter.RateLimiter` — relocated verbatim
+  from `providers/github/`, since neither ever contained GitHub-specific
+  logic; `providers/github/cache.py`/`rate_limiter.py` are now 3-line
+  re-export shims so existing imports keep working, singleton identity
+  confirmed unchanged across both import paths.
+- **`providers/base.py`** gains `display_name`, a provider-neutral
+  `RepoInfo` (moved from `providers/github/repos.py`, which re-exports
+  it), `list_repos()` on the `BaseProvider` contract, and three new
+  `ProviderCapabilities` flags: `requires_manual_token` (PAT-paste auth,
+  independent of `supports_device_flow`), `requires_host_url` (Gitea/
+  Forgejo only — self-hosted, no fixed `default_host`), `requires_workspace`
+  (Bitbucket only — repos live under a workspace, not "your account").
+  `build_api_client()`/`create_remote_repo()`/`list_repos()` all gained
+  optional `host=`/`workspace=`/`cache_key_user=` parameters threaded
+  through every provider's glue method (including GitHub's, one-line
+  additive changes) for a uniform call shape the wizard/picker rely on.
+- **`providers/gitlab/`, `providers/gitea/`, `providers/bitbucket/`,
+  `providers/sourcehut/`** — each a full subpackage mirroring
+  `providers/github/`'s shape (`provider.py`, `api_client.py`,
+  `create_repo.py`, `repos.py`, `errors.py`, plus `identity.py` where
+  relevant), built on `providers/shared/`. Host-specific facts, all
+  verified live except SourceHut's (see below): GitLab uses
+  `PRIVATE-TOKEN` auth + `X-Next-Page` pagination + unprefixed
+  `ratelimit-*` headers; Bitbucket uses `Authorization: Bearer` +
+  workspace-scoped URLs (`/repositories/{workspace}/{slug}`) + nested
+  `links.clone[]`/body-embedded `next`-URL pagination; Gitea/Forgejo uses
+  `Authorization: token` + a user-supplied server URL + GitHub-compatible
+  field names and Link-header pagination (closest to GitHub's shape by
+  design — Gitea's API deliberately mirrors GitHub's); SourceHut is
+  GraphQL (`POST https://git.sr.ht/query`, one endpoint, cursor
+  pagination) rather than REST — structurally different enough that its
+  client overrides `_resolve_url()` to always return the single endpoint
+  and adds a `graphql()` wrapper surfacing query-level `errors` arrays.
+  `providers/gitlab.py`'s old capability-flagged stub file was deleted and
+  replaced by the `providers/gitlab/` subpackage (`supports_device_flow`
+  changed `True`→`False` on the way — the old stub's flag was
+  forward-looking for GitLab 17.9+'s real device-flow support, but GitPDM
+  has no registered OAuth app for GitLab, so claiming the capability
+  without a working implementation would have been misleading;
+  `requires_manual_token=True` reflects what's actually built).
+- **SourceHut's schema is unverified against the live API** — its GraphQL
+  endpoint requires `Authorization: Bearer` even for schema introspection
+  (confirmed live: a fully unauthenticated introspection query still
+  returns "Authorization header is required"), so the mutation/query field
+  names (`createRepository`, `me.repositories(cursor)`, the `Visibility`
+  enum, `canonicalName`) are built from SourceHut's public GraphQL API
+  documentation only. Flagged prominently in
+  `providers/sourcehut/__init__.py`'s module docstring and every
+  submodule's docstring. **Outstanding, tracked here explicitly** (mirrors
+  G1's docker-acceptance-run precedent): needs a real-token pass — create
+  a repo, list repos, verify identity against a real git.sr.ht account —
+  before being trusted in production.
+- **`ui/new_repo_wizard.py`**: `_ProviderPage`'s two hardcoded GitHub/
+  Generic radios became a data-driven loop over
+  `providers.list_provider_ids()` in a `QButtonGroup` (GitHub first, then
+  every other named host, generic last as the catch-all). `_InputPage`
+  gained conditionally-shown PAT/server-URL/workspace fields alongside the
+  existing name/visibility/description and remote-URL fields.
+  `_ProgressPage` now builds the API client *inside* the wizard for
+  PAT-paste hosts (from the token/URL just entered) instead of always
+  reusing a pre-built client, and added an explicit "Verifying token…"
+  step (via `provider.fetch_identity()`) before any filesystem/repo work,
+  so a bad token fails fast with a clear message.
+- **`ui/repo_picker.py`**: `RepoPickerDialog` gained a `provider=`
+  parameter (defaults to `GitHubProvider()` for backward compatibility);
+  repo listing dispatches through `provider.list_repos(...)` instead of a
+  direct GitHub import; a conditional workspace field for Bitbucket.
+  `_save_cloned_provider()` now takes an explicit `provider_id` for the
+  table-clone path (the provider is known for certain there) and only
+  falls back to URL-sniffing — extended to recognize gitlab.com/
+  bitbucket.org/git.sr.ht — for the paste-URL path, where any host is
+  valid regardless of which provider the dialog was opened for. The
+  "cached Ns ago" status suffix was removed rather than reproduced
+  per-provider: the underlying cache-key host strings aren't uniform
+  across providers, and reproducing that mapping in the UI layer would
+  mean branching on `provider_id` there, which this codebase's own
+  convention says never to do.
+- **`core/settings.py` / `core/services.py`** (the correctness fix
+  underneath all of the above): `core/services.py`'s
+  `api_client_for(provider)` accepted a `provider` argument but always
+  read GitHub's global `load_github_host()`/`load_github_login()`
+  regardless — connecting a second provider would have resolved
+  credentials against GitHub's slot instead of its own. Fixed by
+  `core/settings.py` gaining provider-namespaced connection-state
+  functions (`save_provider_connected(provider_id, ...)` etc., keyed by an
+  explicit prefix map so GitHub keeps its exact original parameter-store
+  keys — zero migration for existing users, verified in
+  `tests/test_provider_settings.py`'s backward-compat test class) and
+  `api_client_for()` resolving through those instead. Caught by a new
+  test (`tests/test_services.py`) asserting two different providers
+  resolve to two different tokens via two different lookups — this test
+  would have failed against the pre-fix code.
+- **`ui/pat_auth.py`** (new): `PatAuthHandler`, the PAT-paste equivalent of
+  `ui/github_auth.py`'s `GitHubAuthHandler` — meaningfully simpler (no
+  device code, no polling, no browser handoff). Every method takes an
+  explicit `provider_id` since more than one of these hosts can be
+  connected at once. `ui/panel.py` gained one consolidated "Other Git
+  Hosts" section (host dropdown + conditional server-URL/PAT fields +
+  Connect/Disconnect/Browse Repos buttons) rather than four more
+  GitHub-style sections, which would have kept growing the already-largest
+  file in the codebase further. Deliberately did **not** touch the
+  existing "Start New Project" button/flow — the wizard is already fully
+  self-sufficient for all five providers (PAT entry happens inline), so
+  this section's real value is enabling the repo *picker* (browsing
+  *existing* repos), which does need a persisted, reusable connection.
+- **Deferred, not done**: `auth/keys.py`'s `credential_target_name()`
+  doesn't add an explicit provider-id segment to the OS-credential-store
+  key (two different self-hosted forges sharing an exact hostname is
+  vanishingly unlikely in practice — that would require the same DNS
+  name). Fixing it properly means extending the `TokenStore` ABC and all
+  four per-OS backends with real backward-compat handling for
+  already-stored GitHub tokens — real scope, not load-bearing for this
+  feature to work correctly, noted rather than silently dropped.
+- No new dependencies (confirmed via `pyproject.toml` and a full read of
+  `providers/github/*`): every new provider follows the existing
+  stdlib-only `urllib.request` pattern, no `requests`.
+- `tools/architecture_baseline.json`: `panel.py` bumped 2650 → 2850 (this
+  file keeps growing with every phase; a real split-up pass is overdue
+  rather than another repeated limit bump, not done here).
+- `tools/provider_endpoint_smoke.py` (new): a cheap, no-token-needed live
+  check that GitLab/Bitbucket/Gitea(via Codeberg)/SourceHut's endpoints
+  are still reachable and return the expected error shape — catches host
+  API drift early, doesn't prove full correctness (see SourceHut caveat
+  above).
+- 377 tests pass (85 new across this work); ruff, format check, and the
+  architecture guard are all clean. No Qt-widget-layer tests were added
+  for `new_repo_wizard.py`/`repo_picker.py`/`panel.py`/`pat_auth.py`
+  changes — this codebase has zero existing precedent for testing Qt
+  widget classes directly (confirmed: no PySide6/PySide2 installed in the
+  development environment either), so UI changes need manual verification
+  in a real FreeCAD environment before merge — not yet done, tracked as
+  outstanding alongside the SourceHut real-token pass.
 
 ---
 
