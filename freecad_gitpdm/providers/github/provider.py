@@ -49,6 +49,7 @@ _CLIENT_ID = "Ov23li9bhJnBzf4o55fw"
 
 class GitHubProvider(BaseProvider):
     provider_id = "github"
+    display_name = "GitHub"
     capabilities = ProviderCapabilities(
         supports_device_flow=True,
         supports_repo_creation=True,
@@ -110,3 +111,8 @@ class GitHubProvider(BaseProvider):
             message=result.message,
             error_code=result.error_code,
         )
+
+    def list_repos(self, api_client):
+        from freecad_gitpdm.providers.github.repos import list_repos
+
+        return list_repos(api_client)
