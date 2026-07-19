@@ -34,16 +34,21 @@ and update the plan's **Status ledger** in the same PR as the work.
 Feature work happens on `dev`; CI runs on push/PR to both `main` and `dev`.
 
 Status: **G1 (credential engine), G2 (release + CI), G3 (storage modes), G4
-(provider abstraction), G5 (container ergonomics), and G6 (continuous
-checkpointing) are all implemented and merged** on `dev`, plus two unnumbered
-efforts built on top per explicit user request: **multi-provider hosts**
-(GitLab/Bitbucket/Gitea-Forgejo/SourceHut join GitHub with real PAT-paste
-workflows) and a **bottom-dock UI simplification** (panel collapsed into a
-short bottom dock, credentials/rare actions moved to a "Git PDM" menu, native
-FreeCAD thumbnails for preview). **Next up:** G7 (docs sweep — needs G3, now
-unblocked); G8's spike can run any time. Three items are flagged as needing a
-real-environment verification pass before being fully trusted: SourceHut's
-GraphQL schema (unverified live), the embedded-thumbnail zip path/casing
+(provider abstraction), G5 (container ergonomics), G6 (continuous
+checkpointing), and G7 (docs sweep) are all implemented and merged** on
+`dev`, plus two unnumbered efforts built on top per explicit user request:
+**multi-provider hosts** (GitLab/Bitbucket/Gitea-Forgejo/SourceHut join
+GitHub with real PAT-paste workflows) and a **bottom-dock UI simplification**
+(panel collapsed into a short bottom dock, credentials/rare actions moved to
+a "Git PDM" menu, native FreeCAD thumbnails for preview). **Next up:** G8's
+spike (HistoryWorkbench interop) — needs a real FreeCAD install with both
+addons present, so it can't run in this environment; otherwise the only
+outstanding item is actually submitting to the FreeCAD Addon Manager index
+(R3.3) — `package.xml` is prepared but the submission itself (a GitHub issue
+against `FreeCAD/Addons`) needs a maintainer's real contact email and an
+icon GitPDM has never had, both flagged in `package.xml`. Three items are
+flagged as needing a real-environment verification pass before being fully
+trusted: SourceHut's GraphQL schema (unverified live), the embedded-thumbnail zip path/casing
 (unverified against a live FreeCAD save), and G6's FreeCAD busy/dirty API
 surface (`Document.HasPendingTransaction`, `FreeCADGui.Control.activeDialog()`,
 `Document.isTouched()` — unverified against a live FreeCAD session) — see

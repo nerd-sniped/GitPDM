@@ -50,10 +50,12 @@ GitPDM is a FreeCAD workbench addon that brings Git version control and GitHub c
 
 ### 2) Create a repository
 
-1. In the Git PDM toolbar, click **Toggle GitPDM Panel**.
-2. In the panel, click **Browse for Folder**.
+1. In the Git PDM toolbar, click **Toggle GitPDM Panel**. The panel docks at
+   the bottom of the window (tabbed with Report view/Python console).
+2. In the panel's Repository column, click **Browse…**.
 3. Create/select an empty folder for your project (example: `Documents/FreeCAD Projects/MyFirstProject`).
-4. Click **Create Repo**.
+4. Once GitPDM notices the folder isn't a Git repository yet, a **Create Repo**
+   button appears — click it and confirm.
 
 ### 3) Create and save a simple part
 
@@ -68,12 +70,16 @@ GitPDM is a FreeCAD workbench addon that brings Git version control and GitHub c
 ### 4) Commit v1
 
 1. Switch back to **Git PDM** workbench.
-2. In the panel, confirm `simple-box.FCStd` shows up under Changes.
-3. Enter commit message:
+2. In the panel, confirm `simple-box.FCStd` shows up under the pending-changes
+   chip.
+3. There's no GitHub connection yet, so click the small **▼** beside the big
+   Actions button and choose **Save Only (don't share yet)** — the button
+   label changes to **Commit**.
+4. Enter commit message:
    ```
    Add simple box part for testing
    ```
-4. Click **Commit**.
+5. Click **Commit**.
 
 ### 5) Make a change and commit v2
 
@@ -85,7 +91,7 @@ GitPDM is a FreeCAD workbench addon that brings Git version control and GitHub c
    ```
    Increase box height to 20mm
    ```
-6. Click **Commit**.
+6. Click **Commit** (still in "Save Only" mode from step 4).
 
 You now have a local commit history you can always return to.
 
@@ -93,24 +99,46 @@ You now have a local commit history you can always return to.
 
 ## Tutorial 2: Connect to GitHub and Push for Backup
 
-**Goal:** Authenticate to GitHub and push your local commits.
+**Goal:** Authenticate to GitHub, connect this repo to a GitHub remote, and
+push your local commits.
 
 **Prerequisites:**
 - Completed Tutorial 1
 - A GitHub account
 
-### 1) Connect GitHub (device flow)
+> GitHub is the convenience default, not a requirement — GitPDM also works
+> with GitLab, Bitbucket, Gitea/Forgejo, SourceHut, or a bare/self-hosted git
+> remote. See [How to Connect a Non-GitHub Host](#how-to-connect-a-non-github-host)
+> if you're using one of those instead.
 
-1. In the GitPDM panel, click **Connect GitHub**.
-2. A dialog appears with a short code.
-3. Click the dialog button to open GitHub (or visit https://github.com/login/device).
-4. Log in, enter the code, and click **Authorize**.
-5. Return to FreeCAD and confirm it shows “Connected”.
+### 1) Connect your GitHub account (device flow)
 
-### 2) Push
+1. Open the **Git PDM** menu (top menu bar) → **Connections…**.
+2. In the **GitHub Account** section, click **Connect GitHub**.
+3. A dialog appears with a short code (and a **Copy Link** button for the
+   verification URL).
+4. Open the link (or visit https://github.com/login/device), log in, enter
+   the code, and click **Authorize**.
+5. Return to FreeCAD; the Connections dialog shows "Connected". Close the
+   dialog.
 
-1. In the GitPDM panel, click **Push**.
-2. If prompted to set up the remote repository, follow the instructions shown.
+### 2) Connect this repository to a GitHub remote
+
+Tutorial 1 created a local-only repository, so it has no remote yet:
+
+1. Create a new, empty repository on github.com (no README/license, so it
+   has nothing to conflict with your local history) and copy its URL.
+2. Back in the GitPDM panel, click **Connect Remote** (it appears once
+   GitPDM notices the repo has no remote configured).
+3. Paste the URL and confirm.
+
+### 3) Push
+
+1. Click the small **▼** beside the big Actions button and choose
+   **Share Only (already saved)** — the button label changes to **Push**
+   (your v1/v2 commits from Tutorial 1 are already saved locally; this just
+   sends them).
+2. Click **Push**.
 3. After success, verify your repo on GitHub at:
    - `https://github.com/YOUR_USERNAME/YOUR_REPO_NAME`
 
@@ -136,10 +164,14 @@ Goal-oriented recipes for specific problems.
 
 **Goal:** Push successfully when the remote moved ahead.
 
-1. Click **Fetch**.
-2. Click **Pull**.
-3. If Pull succeeds, try **Push** again.
+1. Click **Check for Updates** (fetch).
+2. Click **Get Updates** (pull, fast-forward only).
+3. If that succeeds, try pushing again (**▼ → Share Only**, then **Push**,
+   or **Save & Share** if you also have new local changes).
 4. If you hit conflicts, you'll need to resolve them manually (until a dedicated UI exists).
+5. If your local clone is shallow (history-truncated), a banner offers a
+   **Deepen** button — see [Shallow Clone](#shallow-clone) in the Technical
+   Reference if pull/push behaves unexpectedly on a shallow clone.
 
 ---
 
@@ -242,13 +274,51 @@ the repo's `cad/` folder and saves directly — once saved this way, later
 
 ---
 
+## How to Connect a Non-GitHub Host
+
+**Goal:** Use GitPDM with GitLab, Bitbucket, Gitea/Forgejo, SourceHut, or
+another git host, instead of (or alongside) GitHub.
+
+GitHub is the only host with an OAuth "click a button, no typing" device-flow
+connection, because it's the only one GitPDM has a pre-registered OAuth app
+for. The others authenticate via a pasted Personal Access Token (PAT) — a
+credential you generate on that host's own website — which is a one-time
+setup, not an ongoing inconvenience:
+
+1. Open the **Git PDM** menu → **Connections…**.
+2. In the **Other Git Hosts** section, pick a host from the **Host** dropdown
+   (GitLab, Bitbucket, Gitea/Forgejo, or SourceHut).
+3. For Gitea/Forgejo (self-hosted, no fixed address), a **Server URL** field
+   appears — fill in your instance's URL.
+4. On that host's website, generate a Personal Access Token with
+   repository-creation/read/write scope, then paste it into the **Token**
+   field here.
+5. Click **Connect**.
+6. Click **Browse Repos…** to list and clone existing repositories from that
+   host, the same way **Join Team…** works for GitHub.
+
+To create a **new** project on a non-GitHub host, use the panel's
+**New Project…** button — the wizard's first page lets you choose any
+connected host (or "Generic," for any git remote at all, no host API
+involved) before asking for repository details.
+
+Every host has different feature support (repo creation via API, PR
+integration, LFS locking) — GitPDM only offers actions the selected host can
+actually do; it won't show a button that would just fail. Two hosts have
+extra requirements: Bitbucket repos live under a **workspace** (not just
+"your account"), and Gitea/Forgejo needs the **Server URL** above since it's
+self-hosted with no single fixed address GitPDM can assume.
+
+---
+
 ## How to Fix GitHub Authentication Failures
 
 **Goal:** Successfully connect GitPDM to GitHub.
 
 1. Confirm GitHub is reachable in a browser: https://github.com/
 2. Confirm your system clock is correct (OAuth is time-sensitive).
-3. Retry **Connect GitHub** and complete the device flow.
+3. Open **Git PDM → Connections…** and retry **Connect GitHub** to complete
+   the device flow.
 4. If you see “Session expired” / “Token invalid”, disconnect and connect again.
 5. Check FreeCAD Report View for detailed `[GitPDM]` errors.
 
@@ -298,7 +368,19 @@ Accurate lookup documentation. Minimal narrative.
 ## What GitPDM Does (Current Feature Summary)
 
 - Version control of files inside a Git repository (commit/push/pull/fetch)
-- Optional GitHub integration via OAuth device flow
+- Any git host: GitHub (OAuth device flow, no typing) plus GitLab, Bitbucket,
+  Gitea/Forgejo, and SourceHut (paste a Personal Access Token) — or any bare
+  git remote at all, with zero host API involved (the "Generic" option)
+- A per-repository **storage mode** choice (delta vs. LFS) so history size
+  and team file-locking are a deliberate tradeoff, not a silent default —
+  see [Storage Modes](#storage-modes)
+- Continuous background checkpointing to a recovery branch, so an idle or
+  crashed session loses at most a few minutes of work — see
+  [Continuous Checkpointing](#continuous-checkpointing)
+- An advisory session lock so two GitPDM instances don't silently fight over
+  the same working tree
+- Shallow-clone support with a "history truncated" banner and one-click
+  deepen, for fast cold starts
 - Preview export and publishing pipeline (thumbnail PNG, JSON metadata, STL)
 - Auto-generated "Part Glossary" section in `README.md` from exported previews
 - "Save Into Repo" command so new documents reliably save inside the repo
@@ -319,13 +401,158 @@ Branch switching is currently limited because FreeCAD `.FCStd` files are ZIP arc
 | Git | 2.20+ | Install from https://git-scm.com/ |
 | Python | 3.8+ | Bundled with FreeCAD |
 | PySide2 or PySide6 | Any | Bundled with FreeCAD |
-| GitHub account | N/A | Optional, for cloud features |
+| Git host account | N/A | Optional, for cloud features — GitHub, GitLab, Bitbucket, Gitea/Forgejo, SourceHut, or any other git remote |
+
+---
+
+## Storage Modes
+
+Every repository has one storage mode, recorded in
+`.freecad-pdm/config.json`'s `storageMode` field (`"delta"` or `"lfs"`) and
+enforced in `.gitattributes` — the two modes are mutually exclusive **by
+design**, not just by convention (GitPDM won't let a repo end up in both at
+once):
+
+| | **Delta mode (default)** | **LFS mode (opt-in)** |
+|---|---|---|
+| `.FCStd` compression | 0 (store, no deflate) — scoped to the moment of each save, restored right after | Normal (restored to your prior FreeCAD preference) |
+| Git history | Plain git objects, delta-compressible across saves | Git LFS pointers; each version stored in full |
+| Cost | Free, unmetered on GitHub | GitHub's free LFS allowance: ~1 GiB storage, ~1 GiB/month bandwidth |
+| File locking | Not available | Available (prevents two people editing the same `.FCStd` at once) |
+
+**These are opposites on purpose** (R1.1/R4.2): compression=0 makes each
+saved file bigger on disk but keeps unchanged bytes identical across saves,
+which is what lets Git (or LFS) delta-compress or dedupe between versions.
+Turning LFS on without also restoring normal compression would store every
+uncompressed version in full, multiplying storage and bandwidth for no
+benefit — so GitPDM restores normal compression automatically in LFS mode,
+and the combination "compression 0 + LFS" is unreachable through the UI.
+
+Change a repo's mode via **Git PDM → Change Storage Mode…** (or the panel's
+Storage Mode row); switching always shows a confirmation explaining the
+consequence, in either direction — never a silent flip. See also
+[Why GitPDM Sets FreeCAD's Compression Level to 0](#why-gitpdm-sets-freecads-compression-level-to-0-in-delta-mode)
+for exactly when and how the compression change happens.
+
+### Benchmark
+
+`tools/storage_mode_benchmark.py` saves a synthetic document 10× per mode
+and reports git's packed size after `git gc`. **Read this caveat before the
+numbers**: FreeCAD isn't pip-installable, so the script can't drive real
+`App.Document.save()` calls — it zips a synthetic ~160 KB XML-like payload
+instead of real BREP geometry, using `ZIP_STORED`/`ZIP_DEFLATED` to stand in
+for compression 0/3. A real run (2026-07-19, this synthetic proxy):
+
+```
+=== Summary (packed size after git gc) ===
+delta: 59.78 KiB
+lfs: 5.45 KiB
+```
+
+**LFS mode "wins" here** — which is the opposite of what delta mode is
+supposed to demonstrate, and is the script's own documented caveat playing
+out for real: at this small, synthetic scale, generic zlib deflate over
+repetitive text-like content already lets git's own delta compression find
+cross-version similarity just as well as (better than, in this run) storing
+it uncompressed. Real `.FCStd` files differ in exactly the ways that matter
+here — genuine BREP binary data, topological-naming churn on parametric
+edits, and file sizes far larger than this toy example — which is expected
+to make delta mode's advantage real in practice even though it doesn't show
+up in this small synthetic test. Treat these numbers as a worked example of
+the *measurement technique*, not proof of which mode is smaller for your
+project; run the same script's technique through FreeCAD's own CLI
+(`freecadcmd`) against a real project for a trustworthy verdict.
+
+---
+
+## Credential Chain & Environment Variables
+
+GitPDM resolves git-host credentials through an ordered chain, so the same
+codebase runs unmodified from a desktop session (interactive OAuth/keyring)
+or a headless container (environment variables only, no keyring daemon):
+
+1. `GITPDM_TOKEN_FILE` — path to a file containing the token (read fresh
+   each time; never logged)
+2. `GITPDM_TOKEN` — the token value directly
+3. The OS keyring (Windows Credential Manager / macOS Keychain / Linux
+   Secret Service) — the desktop path, via **Connect GitHub** / **Connect**
+   in the Connections dialog
+4. Interactive device flow or a pasted PAT prompt (UI layer only)
+
+| Variable | Purpose |
+|---|---|
+| `GITPDM_TOKEN_FILE` | Path to a file holding the access token. Highest precedence. |
+| `GITPDM_TOKEN` | The access token value directly (e.g. set by a container orchestrator as a secret). |
+| `GITPDM_PROVIDER` | Which host the token is for (`github`, `gitlab`, `gitea`, `bitbucket`, `sourcehut`, or `generic`). Defaults to `github` if unset — matters because hosts disagree on the username to pair with a token over HTTPS (e.g. GitLab requires `oauth2`, Bitbucket requires `x-token-auth`). |
+| `GITPDM_ALLOW_FILE_TOKENS` | Set to `1` to allow an opt-in on-disk token file store (`~/.config/GitPDM/credentials.json`, `chmod 0600`) as a keyring-less fallback. Unset by default — this file-store backend is unreachable without it, a deliberate desktop-security invariant. |
+
+Once resolved, a token is bridged into network git operations (`clone`,
+`fetch`, `pull`, `push`) via an inline git credential helper that references
+the environment variable **by name only** — the token value never appears on
+a command line or in a process listing. On desktop (no env vars set) this
+bridge is a complete no-op; your normal git credential helper is untouched.
+
+Headless check (no FreeCAD required, e.g. as a container smoke test):
+
+```bash
+GITPDM_TOKEN=<pat> python -m freecad_gitpdm.auth.check
+# OK — source=env provider=github host=github.com login=<your-username>
+```
+
+---
+
+## Shallow Clone
+
+Cloning with limited history (`git clone --depth N`) is much faster for a
+cold start — useful in a container, or just a very large repo. GitPDM's
+**Join Team…** clone dialog offers a "Shallow clone" checkbox (default depth
+20), pre-checked automatically when headless credential backends are active
+(the same signal `GITPDM_TOKEN`/`GITPDM_TOKEN_FILE` give the credential
+chain above — a strong hint you're in a container, not an interactive
+desktop session).
+
+When the active repo is a shallow clone, the panel shows a persistent
+**"History truncated (shallow clone)"** banner with a **Deepen** button
+(`git fetch --deepen` under the hood, or a full unshallow if no depth is
+given). Commit, push, and pull all work normally against a shallow clone
+without deepening first — the banner is informational, not a blocker.
+
+---
+
+## Continuous Checkpointing
+
+While a document is dirty, GitPDM saves it and snapshots the working tree
+onto a `gitpdm/recovery` git branch once either **45 seconds of idle time**
+have passed since your last edit, or **3 minutes** have passed since the
+last checkpoint (10 minutes in `lfs` storage mode) — whichever comes first,
+so continuous active editing still gets checkpointed periodically instead of
+never going idle. This is via git plumbing only, so it never touches your
+real commit history, moves `HEAD`, or does anything porcelain-level that
+could corrupt an open `.FCStd` file. It's a safety net, not a replacement
+for real commits: "walk away anytime, lose at most a few minutes of work"
+if FreeCAD or your machine crashes.
+
+- **Restore:** on opening a repo, if a checkpoint newer than your current
+  history exists (and no document is currently open), GitPDM offers to
+  restore it into your working files.
+- **Push policy:** the recovery branch auto-pushes when headless credential
+  backends are active (a container has no one to click "push" for it), and
+  stays local-only on desktop by default. Override this in
+  **Git PDM → Connections… → Checkpointing**.
+- **Cleanup:** once a real commit supersedes a checkpoint, GitPDM offers to
+  clear it (or do it anytime via **Git PDM → Clear Recovery Checkpoint**).
+- In `lfs` storage mode, checkpoints are spaced further apart by default —
+  each one is a full stored LFS object, so frequent checkpoints are more
+  expensive there than in `delta` mode.
 
 ---
 
 ## Platform Token Storage
 
 GitHub tokens are stored using the host platform’s secure credential store.
+Tokens for other hosts (pasted PATs) are stored the same way, under a
+separate namespaced entry per host, so connecting a second host never
+overwrites GitHub's credentials.
 
 - **Windows**: Windows Credential Manager
 - **macOS**: Keychain
@@ -396,12 +623,24 @@ Access via: **Tools → Edit parameters...**
 
 High-level modules:
 
-- `auth/` — GitHub OAuth device flow and token storage
-- `git/` — Git subprocess wrapper
-- `github/` — GitHub API client
-- `export/` — preview generation pipeline
-- `core/` — shared utilities (logging, jobs, paths, settings)
-- `ui/` — panel and handlers
+- `auth/` — OAuth device flow (GitHub), token storage, the headless
+  credential chain, token refresh
+- `git/` — Git subprocess wrapper; all git operations go through here,
+  host-agnostic by design
+- `providers/` — git host abstraction: `base.py` (capability flags,
+  `GenericProvider` as the zero-API base case), `github/`, `gitlab/`,
+  `gitea/`, `bitbucket/`, `sourcehut/` (each a subpackage), `shared/`
+  (the host-agnostic HTTP client/cache/rate-limiter parts)
+- `export/` — preview generation pipeline (thumbnails, mesh export, manifest)
+- `core/` — shared utilities: logging, jobs, paths, settings, storage mode,
+  session lock, continuous checkpointing, per-repo provider selection
+- `ui/` — the dockable panel and its feature handlers, plus the standalone
+  Connections dialog for credential management
+
+For the full, current module-by-module breakdown (including internal
+conventions and the reasoning behind non-obvious design choices), see
+`CLAUDE.md` at the repo root — it's written for both human contributors and
+coding agents working on GitPDM.
 
 ---
 
@@ -412,9 +651,12 @@ High-level modules:
 - Branch switching requires care (close documents first)
 - Merge conflict resolution is currently manual
 - Very large repositories can be slow to scan
+- No in-panel commit-log/history browser yet — checkpoint restore and
+  storage-mode changes act on "the current state" rather than letting you
+  browse and pick a specific point in time
 
 ### Near-term focus
-- GitApp integration to reduce reach of app (I realize it's currently a-lot)
+- Docs sweep and FreeCAD Addon Manager submission (this phase)
 - Enhanced branch/worktree UX
 - Conflict resolution UI
 - Git history viewer inside FreeCAD
@@ -423,9 +665,17 @@ High-level modules:
 ### Long-term ideas
 
 - Pull request integration
-- Support for additional hosting providers (GitLab/Bitbucket/self-hosted)
+- HistoryWorkbench integration for visual 3D diffs (spike planned)
 - Advanced Git operations for power users (rebase/cherry-pick/stash)
 
+### Recently shipped
+
+- Support for GitLab, Bitbucket, Gitea/Forgejo, and SourceHut, alongside
+  GitHub — see [How to Connect a Non-GitHub Host](#how-to-connect-a-non-github-host)
+- Repo-scoped storage modes (delta vs. LFS) — see [Storage Modes](#storage-modes)
+- Continuous background checkpointing — see [Continuous Checkpointing](#continuous-checkpointing)
+- Headless/container operation via environment-variable credentials — see
+  [Credential Chain & Environment Variables](#credential-chain--environment-variables)
 
 ---
 
@@ -470,21 +720,52 @@ That’s why GitPDM takes a safety-first approach and requires closing documents
 
 ---
 
-## Git LFS (Why It’s Recommended for CAD)
+## Storage Modes (Delta vs. LFS)
 
-Git is optimized for many small text changes. CAD files are larger binaries.
+**Delta mode (default, free).** GitPDM saves `.FCStd` files uncompressed so
+that git can store only what actually changed between versions, rather than
+a fresh copy each commit. Repos stay small, and plain git on GitHub is free
+and unmetered. Individual files on disk are larger; this is intentional and
+is what makes the history small.
 
-**Git LFS (Large File Storage)** stores large binaries outside the normal Git object store and keeps lightweight pointers in history. Practically, this keeps repositories more manageable as the project grows.
+**LFS mode (opt-in, for teams).** Git LFS adds file locking — the ability to
+reserve a file so a teammate cannot edit it simultaneously. Because `.FCStd`
+files cannot be merged, locking is the only real answer to concurrent edits.
+The cost: LFS stores every version in full, with no delta compression, and
+GitHub's free LFS allowance is ~1 GiB of storage and ~1 GiB/month of
+bandwidth. GitPDM restores normal compression in this mode to keep those
+numbers down.
+
+**Which do I want?** Working alone: delta mode. You do not have a
+concurrency problem, and delta mode is free. Sharing write access with
+others: LFS mode, and budget for a data pack.
+
+See [Storage Modes](#storage-modes) in the Technical Reference for the exact
+mechanics (the `.gitattributes`/`.freecad-pdm/config.json` fields) and real
+benchmark numbers, and the compression explanation below for exactly when
+GitPDM touches FreeCAD's global preference.
 
 ---
 
-## Why GitPDM Sets FreeCAD's Compression Level to 0
+## Why GitPDM Sets FreeCAD's Compression Level to 0 (in Delta Mode)
 
-`.FCStd` files are ZIP archives, and FreeCAD compresses (deflates) the entries inside by default. Deflate output is sensitive to small input changes — editing one feature can rewrite most of the archive's compressed bytes even though the underlying model barely changed, which leaves Git (and LFS) nothing meaningful to diff or delta-compress between saves.
+`.FCStd` files are ZIP archives, and FreeCAD compresses (deflates) the entries inside by default. Deflate output is sensitive to small input changes — editing one feature can rewrite most of the archive's compressed bytes even though the underlying model barely changed, which leaves Git nothing meaningful to diff or delta-compress between saves.
 
-When GitPDM validates a repository (opening an existing one, or right after creating a new one through the wizard), it sets FreeCAD's own **Compression level** preference (`Edit → Preferences → General → Save`) to **0** (store, no deflate). With entries stored uncompressed, unchanged internal files stay byte-identical across saves, so Git's own pack compression and LFS can actually do their job without any extra tooling.
+Earlier versions of GitPDM set FreeCAD's global **Compression level**
+preference to 0 whenever a repository was opened, and left it there — which
+silently affected every `.FCStd` file you saved afterward, in any project,
+until you noticed and changed it back. That behavior is gone. GitPDM now
+scopes the change to the moment of an actual save: right before a save
+starts (and only for a document inside a `delta`-mode repo), it records your
+current compression preference, sets it to **0** for that one save, and
+restores your prior value immediately after — every time, even if you're
+also saving unrelated documents in other projects at the same time. In `lfs`
+mode this never happens at all; LFS mode keeps your normal compression
+preference throughout.
 
-This is a FreeCAD-wide preference, not a per-repository setting — FreeCAD doesn't support saving it per project — so it affects every `.FCStd` file you save afterward, not only ones tracked by GitPDM. GitPDM only changes it (and logs when it does, in the Report View) if it isn't already set to 0; it won't repeatedly overwrite a value you set yourself. If you'd rather manage this manually, set it back in FreeCAD's preferences — GitPDM won't fight you on it until the next repo you open triggers the check again.
+If FreeCAD or GitPDM crashes mid-save, the next time GitPDM starts it
+detects a scope left active from the interrupted save and restores your
+preference immediately, rather than leaving it pinned at 0 indefinitely.
 
 ---
 
@@ -513,7 +794,7 @@ If you’re new to version control, it helps to separate the *local* and *remote
 On performance:
 
 - Git operations are intended not to freeze the UI, but very large repositories can be slower to scan.
-- `.gitignore` and Git LFS are common ways to keep CAD repositories manageable.
+- `.gitignore` and choosing the right [storage mode](#storage-modes-delta-vs-lfs) are the two main ways to keep CAD repositories manageable.
 
 ---
 

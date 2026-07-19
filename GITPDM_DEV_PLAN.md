@@ -30,7 +30,8 @@ Keep this table current — update it in the same PR as the work it describes.
 | Multi-provider hosts (GitLab/Bitbucket/Gitea/SourceHut) | ✅ Implemented & merged | `dev`, 2026-07-18 |
 | Bottom-dock UI simplification (panel layout + GitPDM menu + native thumbnails) | ✅ Implemented & committed | `dev`, 2026-07-18 |
 | G6 continuous checkpointing | ✅ Implemented | `dev`, 2026-07-18 |
-| G7–G8 | Not started | — |
+| G7 docs sweep | ✅ Implemented | `dev`, 2026-07-19 |
+| G8 | Not started | — |
 
 Also landed on `dev` (2026-07-17), outside any phase:
 
@@ -54,8 +55,11 @@ build its container image pinned to `v0.5.0`. **G3, G4, and G5 have all
 merged into `dev`** (G4 via PR #7 @ `e5039de`, 2026-07-18; G3 and G5 merged
 locally from `g3-storage-modes` and `g5-container-ergonomics` on
 2026-07-18 so all three could be tested together in one FreeCAD session).
-**G6** (checkpointing, needs G5) is now implemented (see "G6 as built" below);
-**G7** (docs sweep, needs G3) is unblocked and next.
+**G6** (checkpointing, needs G5) and **G7** (docs sweep, needs G3) are both
+now implemented (see their "as built" sections below). **G8**'s spike
+(HistoryWorkbench interop) is the only phase left, and needs a real FreeCAD
+install with both addons present to run — not something this environment
+can do.
 
 **Multi-provider hosts** (GitLab, Bitbucket, Gitea/Forgejo, SourceHut —
 implemented on `multi-provider-hosts` off `dev`, 2026-07-18, not yet
@@ -740,9 +744,83 @@ multi-provider hosts work above which it follows directly):
 
 ---
 
-## Phase G7 — Docs sweep *(gates public launch, not code)*
+## Phase G7 — Docs sweep *(gates public launch, not code)* ✅ IMPLEMENTED
 
 **Implements:** R4.1, R4.2, R3.3. **Depends on:** G3 (modes must exist as described).
+
+**As built** (`dev`, 2026-07-19 — kept for reference; the brief below is the original spec):
+
+- `docs/README.md`'s "Git LFS (Why It's Recommended for CAD)" section is
+  replaced by "Storage Modes (Delta vs. LFS)" using R4.1's draft verbatim
+  (Explanations layer) plus a new "Storage Modes" Technical Reference
+  section (the delta/LFS mechanics table, `.gitattributes`/
+  `.freecad-pdm/config.json` fields, and the real benchmark run below) —
+  R4.2's "state the opposition plainly" landed in both places.
+- Found and fixed a real doc/code contradiction while doing this: "Why
+  GitPDM Sets FreeCAD's Compression Level to 0" still described the
+  pre-G3 behavior (global flip on every repo *open*, left in place) that
+  G3 explicitly replaced with a save-scoped flip/restore. Rewritten to
+  describe what's actually shipped — this was the acceptance criterion
+  ("no doc contradicts shipped behaviour") catching a real regression in
+  the docs themselves, not just missing content.
+- New Technical Reference sections: "Credential Chain & Environment
+  Variables" (all four `GITPDM_*` vars, verified against
+  `auth/credential_chain.py`/`token_store_file.py`/`git/client.py` source
+  rather than written from memory — table content, file paths, and
+  precedence order are grep-confirmed), "Shallow Clone" (G5), and
+  "Continuous Checkpointing" (G6, with the actual 45s/3min/10min-in-lfs
+  numbers from `core/checkpoint.py`, not rounded-off prose).
+- New How-To: "How to Connect a Non-GitHub Host" — the multi-provider hosts
+  work (GitLab/Bitbucket/Gitea-Forgejo/SourceHut) had **zero** end-user
+  documentation before this; the panel's "Other Git Hosts" section and PAT
+  flow were fully shipped but undiscoverable from the README.
+  `Tutorial 2` gained a pointer to it, and both tutorials were corrected
+  against the actual shipped UI (see below).
+- **Tutorials 1 and 2 corrected against the real UI**, verified by reading
+  `ui/panel.py`/`ui/connections_dialog.py` source (exact button labels,
+  visibility conditions) rather than assuming the tutorial's original prose
+  still matched the bottom-dock UI simplification's redesigned panel:
+  "Browse for Folder" → "Browse…"; "Connect GitHub" is no longer inline in
+  the panel, it's `Git PDM → Connections…`; there is no standalone
+  "Commit" or "Push" button anymore, only a combined workflow-mode button
+  (default "Commit and Push", switchable via a **▼** dropdown to
+  "Save Only (don't share yet)" / "Share Only (already saved)") — Tutorial
+  1 now explicitly switches to "Save Only" since it has no remote yet, and
+  Tutorial 2 gained a "connect this existing local repo to a GitHub remote"
+  step (paste a URL into **Connect Remote**) that was previously skipped
+  over silently.
+- `tools/storage_mode_benchmark.py` run for real, numbers included with
+  the script's own caveat: on this run, LFS mode's packed size (5.45 KiB)
+  came in *smaller* than delta mode's (59.78 KiB) — the opposite of the
+  naive expectation, and exactly the outcome the script's module docstring
+  already warned was possible at small synthetic scale. Reported honestly
+  rather than cherry-picked or omitted, with the existing explanation for
+  why real `.FCStd`/BREP data is expected to behave differently.
+- `Developer-Facing Architecture Overview` and `Roadmap` sections updated
+  for accuracy: `github/` → `providers/` (with its subpackages),
+  `core/checkpoint.py`/`storage_mode.py`/`session_lock.py` added, "Support
+  for additional hosting providers" moved from Long-term ideas to a new
+  "Recently shipped" list alongside storage modes and checkpointing.
+- **R3.3 (Addon Manager submission) — prep done, actual submission not
+  done here:** researched the *current* submission process live (the
+  wiki's `Package_metadata` page is bot-walled; used
+  `github.com/FreeCAD/Addon-Template`'s real `package.xml` and a real
+  published workbench's (`FreeCAD_FastenersWB`) `package.xml` as verified
+  schema references instead of writing from memory). Added `package.xml`
+  at the repo root (legacy layout: `classname=GitPDMWorkbench`,
+  `subdirectory=./`). Two things block a real submission and are flagged
+  in the file: a maintainer contact email (placeholder only — invented one
+  would be actively wrong) and an icon (GitPDM has never had one,
+  `InitGui.py`'s `Icon = ""` since Sprint 0). Also discovered **GitPDM had
+  no LICENSE file at all**, which would have blocked submission outright
+  (Addon Manager requires a clear OSI license) — asked the user, who chose
+  MIT; added `LICENSE` and `pyproject.toml`'s `license` field. The actual
+  submission (a GitHub issue against `FreeCAD/Addons` using the
+  "Addon - Addition" template, per `Addon-Academy`'s current docs — not a
+  PR, as the phase brief assumed) is an external, identity-bound action
+  for a maintainer to take, not something done autonomously from here.
+- 405 tests still pass (docs-only + one metadata file change, no source
+  touched); ruff, format check, and the architecture guard all clean.
 
 1. Replace the "Git LFS (Why It's Recommended for CAD)" section with the storage-modes explainer drafted in R4.1.
 2. Reference section: state the delta/LFS opposition plainly (R4.2); document the credential chain and every `GITPDM_*` env var (from G1); shallow-clone behaviour (from G5).

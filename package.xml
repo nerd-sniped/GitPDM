@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<!--
+  FreeCAD Addon Manager metadata (Phase G7 / R3.3). Schema verified against
+  FreeCAD's own official template (github.com/FreeCAD/Addon-Template) and a
+  real published workbench's package.xml (FreeCAD_FastenersWB) as of
+  2026-07-19 -- not validated against FreeCAD's actual Addon Manager
+  metadata parser/schema validator, since that requires a running FreeCAD
+  installation this environment doesn't have. GitPDM uses the "legacy"
+  layout (Init.py/InitGui.py/freecad_gitpdm/ at repo root, not the newer
+  freecad/<Name>/ namespaced layout) -- both are accepted per FreeCAD's
+  Addon-Academy docs.
+
+  TWO PLACEHOLDERS BELOW STILL NEED REAL VALUES BEFORE SUBMITTING:
+    - maintainer email (a real, monitored contact address)
+    - <icon> -- GitPDM has no icon asset yet (InitGui.py's workbench class
+      still has Icon = "", unchanged since Sprint 0); the tag is omitted
+      here rather than pointing at a file that doesn't exist. An addon
+      without an icon can still be listed, but a real SVG/PNG should be
+      added and this tag restored before submitting for best results.
+
+  Submission itself (per https://freecad.github.io/Addon-Academy/Guides/Publishing/Indexed)
+  is not a PR to this repo or to the index repo directly -- it's a GitHub
+  issue against github.com/FreeCAD/Addons using the "Addon - Addition"
+  issue type (or the Codeberg mirror, or a forum post). That's an external,
+  identity-bound action for a maintainer to take, not something done from
+  here.
+-->
+<package format="1" xmlns="https://wiki.freecad.org/Package_Metadata">
+
+    <name>GitPDM</name>
+    <description>Git version control and multi-host (GitHub/GitLab/Bitbucket/Gitea-Forgejo/SourceHut) collaboration for FreeCAD documents, with CAD-aware storage modes, previews, and continuous checkpointing.</description>
+    <version>0.5.0</version>
+    <date>2026-07-19</date>
+
+    <freecadmin>1.0</freecadmin>
+    <pythonmin>3.10</pythonmin>
+
+    <tag>version-control</tag>
+    <tag>git</tag>
+    <tag>pdm</tag>
+    <tag>collaboration</tag>
+
+    <maintainer email="REPLACE-WITH-REAL-MAINTAINER-EMAIL@example.invalid">GitPDM Contributors</maintainer>
+
+    <license file="LICENSE">MIT</license>
+
+    <url type="repository" branch="main">https://github.com/nerd-sniped/GitPDM</url>
+    <url type="bugtracker">https://github.com/nerd-sniped/GitPDM/issues</url>
+    <url type="readme">https://github.com/nerd-sniped/GitPDM/blob/main/docs/README.md</url>
+
+    <content>
+        <workbench>
+            <classname>GitPDMWorkbench</classname>
+            <subdirectory>./</subdirectory>
+            <tag>git-pdm</tag>
+        </workbench>
+    </content>
+
+</package>

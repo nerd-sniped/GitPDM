@@ -3,6 +3,7 @@ name = "freecad-gitpdm"
 version = "0.5.0"
 description = "Git-based Product Data Management for FreeCAD"
 requires-python = ">=3.10"
+license = { file = "LICENSE" }
 dependencies = [
   "secretstorage>=3.3.0; sys_platform == 'linux'",
   "keyring>=24.0.0; sys_platform == 'darwin'",
