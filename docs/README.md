@@ -177,20 +177,14 @@ Goal-oriented recipes for specific problems.
 
 ## How to Customize Preview Exports
 
-**Goal:** Configure thumbnail/mesh settings.
+**Goal:** Configure mesh/stats settings for the exported preview bundle
+(PNG thumbnail + JSON metadata + GLB/STL model).
 
 1. Create `.freecad-pdm/preset.json` in your repository.
 2. Add a preset (example):
    ```json
    {
      "presetVersion": 1,
-     "thumbnail": {
-       "size": [1024, 1024],
-       "projection": "perspective",
-       "view": "isometric",
-       "background": "#2C3E50",
-       "showEdges": true
-     },
      "mesh": {
        "linearDeflection": 0.05,
        "angularDeflectionDeg": 20.0,
@@ -202,7 +196,17 @@ Goal-oriented recipes for specific problems.
    }
    ```
 3. Commit the preset.
-4. Run **Publish Branch** and confirm the outputs changed.
+4. Save your document (previews auto-generate after every save), or click
+   **Generate Previews** in the panel to regenerate on demand.
+
+> The preview thumbnail is FreeCAD's own save-time embedded image (the same
+> one Windows/macOS/Linux file browsers show), not a custom render GitPDM
+> generates — so a `thumbnail` block in `preset.json` (size/projection/
+> view/background/showEdges) is accepted for backward compatibility but no
+> longer affects anything. To control what the thumbnail looks like, frame
+> the model the way you want in FreeCAD's own 3D view before saving, and
+> make sure **Edit → Preferences → General → Document → "Create new
+> thumbnail when saving the document"** is enabled (it is by default).
 
 ---
 

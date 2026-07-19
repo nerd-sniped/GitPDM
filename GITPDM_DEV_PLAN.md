@@ -379,6 +379,49 @@ multi-provider hosts work above which it follows directly):
   (same caveat class as SourceHut's schema, flagged the same way): needs a
   real FreeCAD save with the thumbnail preference on to confirm the exact
   embedded zip path/casing before this is trusted end-to-end.
+  **Superseded 2026-07-19** (see below): the "manual-export PNG" path this
+  bullet describes as a separate consumer was itself found to be the
+  problem — deprecated in favor of embedded thumbnails everywhere. The zip
+  path/casing question above is still open, unrelated to the `package.xml`
+  XML bug the user hit in the same real-FreeCAD session (that was purely
+  an Addon Manager metadata parse error, not evidence either way about
+  whether `read_embedded_thumbnail()`'s zip-path assumptions hold against
+  a real save) — still needs an explicit check that the rendered preview
+  image looks right end-to-end.
+- **`export/exporter.py` (2026-07-19, found and fixed per explicit user
+  report from a real FreeCAD session):** `export_active_document()`'s
+  thumbnail step used to be a custom render — deterministic camera/
+  projection/draw-style setup (`set_view_for_thumbnail`) then a viewport
+  screenshot with a pixel-by-pixel transparent-background pass
+  (`save_thumbnail`) — run synchronously on FreeCAD's main thread via
+  `ui/panel.py`'s `_schedule_auto_preview_generation()` after **every**
+  save. Two problems, both raised by the user directly: it blocked the UI
+  (no progress feedback, unlike the explicit "Generate Previews" button's
+  modal dialog — the user just froze), and it duplicated a snapshot
+  FreeCAD already takes itself at save time (the same embedded thumbnail
+  `read_embedded_thumbnail()` above already reads for the local
+  file-browser preview). Fixed by having `export_active_document()`'s
+  thumbnail step call `read_embedded_thumbnail()` and write those bytes
+  straight to the committed `preview.png`, for both the automatic
+  on-save trigger and the manual "Generate Previews" button (both share
+  this one function) — not just the auto-trigger, since the user's framing
+  was "deprecate the snapshot we implemented," not "only fix the blocking
+  case." `set_view_for_thumbnail`/`save_thumbnail` deleted outright (zero
+  other callers, zero existing test coverage). New
+  `tests/test_thumbnail.py` covers `read_embedded_thumbnail()` directly
+  (case-insensitive matching, backslash paths, missing/malformed zip) —
+  `export_active_document()` itself still has no test coverage (FreeCAD-
+  GUI-dependent, pre-existing gap, not introduced by this fix).
+  **Consequence, documented in `docs/README.md`:** `preset.json`'s
+  `thumbnail` sub-block (size/projection/view/background/showEdges) is
+  still accepted (harmless, not removed from `preset.py`'s schema or
+  `core/scaffold.py`'s default template — out of scope for this fix) but
+  no longer affects anything; thumbnail framing is now whatever the user's
+  FreeCAD viewport looked like at their own last save, not a
+  preset-controlled deterministic shot. This trades per-part visual
+  consistency in the GitHub-facing Part Glossary for removing the
+  duplicated, blocking render — a real tradeoff, not a strict improvement,
+  but the one the user explicitly chose.
 - **`commands.py` + `InitGui.py`:** the panel now docks at
   `BottomDockWidgetArea`, tabbed with "Report view"/"Python console" when
   present (falls back to a plain dock add otherwise — same fallback shape

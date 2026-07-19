@@ -202,13 +202,17 @@ when running tests or scripts outside the app.
   Deepen History, Open Repo Browser) are `commands.py` entries reachable
   only from the "Git PDM" top menu-bar dropdown now, not the panel or the
   toolbar — see `commands.py`'s `_find_or_create_dock()`/`_show_dock()`.
-  `file_browser.py`'s click-to-preview tries `export/thumbnail.py`'s
+  `file_browser.py`'s click-to-preview reads `export/thumbnail.py`'s
   `read_embedded_thumbnail()` (FreeCAD's own save-time thumbnail, read
-  straight out of the `.FCStd` zip) first, falling back to the deterministic
-  manually-exported preview PNG only when no embedded thumbnail exists —
-  the exact embedded-thumbnail zip path/casing hasn't been verified against
-  a live FreeCAD save yet, flagged in that function's docstring the same
-  way SourceHut's unverified schema is flagged above (`providers/` bullet).
+  straight out of the `.FCStd` zip). `export/exporter.py`'s committed,
+  GitHub-facing `preview.png` reads the same function now too (2026-07-19:
+  the custom viewport-render pipeline that used to generate it,
+  `set_view_for_thumbnail`/`save_thumbnail`, ran synchronously on every
+  save and blocked the UI while duplicating a snapshot FreeCAD already
+  takes itself — deleted outright per explicit user report from a real
+  FreeCAD session; see `GITPDM_DEV_PLAN.md`'s bottom-dock-UI "as built"
+  section for the fix and its tradeoff). `preset.json`'s `thumbnail`
+  sub-block is still accepted but no longer consulted by anything.
 
 ## Key behavioral constraint: branch switching safety
 

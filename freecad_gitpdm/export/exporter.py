@@ -21,7 +21,7 @@ from freecad_gitpdm.export.preset import load_preset
 from freecad_gitpdm.export.mapper import to_preview_dir_rel, stl_root_path_rel
 from freecad_gitpdm.export.view_helper import doc_and_view
 from freecad_gitpdm.export.manifest import freecad_version_string, sha256_file
-from freecad_gitpdm.export.thumbnail import set_view_for_thumbnail, save_thumbnail
+from freecad_gitpdm.export.thumbnail import read_embedded_thumbnail
 from freecad_gitpdm.export.model_export import export_glb, compute_bbox_mm
 from freecad_gitpdm.export.backup_manager import move_fcbak_to_previews
 from freecad_gitpdm.export import glossary
@@ -49,7 +49,7 @@ def export_active_document(repo_root: str) -> ExportResult:
     Returns ExportResult with file paths and any thumbnail error.
     """
     try:
-        doc, view = doc_and_view()
+        doc, _view = doc_and_view()
         if not doc:
             return ExportResult(
                 ok=False,
@@ -151,37 +151,27 @@ def export_active_document(repo_root: str) -> ExportResult:
 
         warnings = []
 
-        # Thumbnail (capture and restore original camera/view)
+        # Thumbnail: reuse FreeCAD's own save-time embedded thumbnail
+        # instead of rendering our own (zoom-to-fit + viewport screenshot,
+        # run synchronously on the main thread on every save). That custom
+        # render blocked the UI and duplicated a snapshot FreeCAD already
+        # takes -- deprecated in favor of just reading it. Needs "Create
+        # new thumbnail when saving the document" enabled in FreeCAD's
+        # preferences (General > Document, on by default); doesn't require
+        # FreeCADGui/a 3D view to be present at all, unlike the old path.
         thumb_err = None
-        if view is not None:
-            orig_cam = None
-            orig_style = None
+        thumb_bytes = read_embedded_thumbnail(Path(file_name))
+        if thumb_bytes:
             try:
-                orig_cam = view.getCamera()
-            except Exception:
-                orig_cam = None
-            try:
-                # getDrawStyle may not exist everywhere
-                orig_style = getattr(view, "getDrawStyle", lambda: None)()
-            except Exception:
-                orig_style = None
-            try:
-                # Always apply deterministic view before capture
-                set_view_for_thumbnail(view, preset)
-                thumb_err = save_thumbnail(view, preset, png_path)
-            finally:
-                try:
-                    if orig_cam:
-                        view.setCamera(orig_cam)
-                except Exception:
-                    pass
-                try:
-                    if orig_style:
-                        view.setDrawStyle(orig_style)
-                except Exception:
-                    pass
+                png_path.write_bytes(thumb_bytes)
+            except OSError as e:
+                thumb_err = f"Failed to write embedded thumbnail: {e}"
         else:
-            thumb_err = "Thumbnail requires FreeCAD GUI"
+            thumb_err = (
+                "No embedded thumbnail found in the saved document -- "
+                "enable 'Create new thumbnail when saving the document' "
+                "in FreeCAD's preferences (General > Document) to get one"
+            )
 
         # GLB Export (Sprint 7)
         glb_err, mesh_stats = export_glb(doc, glb_path, preset, part_name)
