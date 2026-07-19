@@ -3,23 +3,23 @@
   FreeCAD Addon Manager metadata (Phase G7 / R3.3). Schema verified against
   FreeCAD's own official template (github.com/FreeCAD/Addon-Template) and a
   real published workbench's package.xml (FreeCAD_FastenersWB) as of
-  2026-07-19 -- not validated against FreeCAD's actual Addon Manager
+  2026-07-19, though not validated against FreeCAD's actual Addon Manager
   metadata parser/schema validator, since that requires a running FreeCAD
   installation this environment doesn't have. GitPDM uses the "legacy"
   layout (Init.py/InitGui.py/freecad_gitpdm/ at repo root, not the newer
-  freecad/<Name>/ namespaced layout) -- both are accepted per FreeCAD's
+  freecad/<Name>/ namespaced layout); both are accepted per FreeCAD's
   Addon-Academy docs.
 
   TWO PLACEHOLDERS BELOW STILL NEED REAL VALUES BEFORE SUBMITTING:
     - maintainer email (a real, monitored contact address)
-    - <icon> -- GitPDM has no icon asset yet (InitGui.py's workbench class
-      still has Icon = "", unchanged since Sprint 0); the tag is omitted
+    - <icon>: GitPDM has no icon asset yet (InitGui.py's workbench class
+      still has Icon = "", unchanged since Sprint 0), so the tag is omitted
       here rather than pointing at a file that doesn't exist. An addon
       without an icon can still be listed, but a real SVG/PNG should be
       added and this tag restored before submitting for best results.
 
   Submission itself (per https://freecad.github.io/Addon-Academy/Guides/Publishing/Indexed)
-  is not a PR to this repo or to the index repo directly -- it's a GitHub
+  is not a PR to this repo or to the index repo directly; it's a GitHub
   issue against github.com/FreeCAD/Addons using the "Addon - Addition"
   issue type (or the Codeberg mirror, or a forum post). That's an external,
   identity-bound action for a maintainer to take, not something done from
