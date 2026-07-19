@@ -22,14 +22,29 @@ class GitPDMWorkbench(FreeCADGui.Workbench):
         """
         from freecad_gitpdm import commands
 
-        # List of command names to register
-        self._commands = ["GitPDM_TogglePanel", "GitPDM_SaveIntoRepo"]
+        # Toolbar: just the two genuinely one-click, frequent desktop
+        # actions. Everything else lives only in the "Git PDM" menu below --
+        # this *is* the "top toolbar GitPDM dropdown" (every active
+        # workbench gets a top-level menu-bar entry, distinct from its
+        # toolbar), the intended home for dense/rarely-touched actions.
+        self._toolbar_commands = ["GitPDM_TogglePanel", "GitPDM_SaveIntoRepo"]
+        self.appendToolbar("Git PDM", self._toolbar_commands)
 
-        # Create toolbar
-        self.appendToolbar("Git PDM", self._commands)
-
-        # Create menu
-        self.appendMenu("Git PDM", self._commands)
+        self._menu_commands = [
+            "GitPDM_TogglePanel",
+            "GitPDM_SaveIntoRepo",
+            "Separator",
+            "GitPDM_Connections",
+            "Separator",
+            "GitPDM_GeneratePreviews",
+            "GitPDM_OpenPreviewFolder",
+            "GitPDM_ToggleStagePreviews",
+            "Separator",
+            "GitPDM_ChangeStorageMode",
+            "GitPDM_DeepenHistory",
+            "GitPDM_OpenRepoBrowser",
+        ]
+        self.appendMenu("Git PDM", self._menu_commands)
 
     def Activated(self):
         """
@@ -52,35 +67,20 @@ class GitPDMWorkbench(FreeCADGui.Workbench):
         """Open panel after brief delay to keep UI responsive."""
         try:
             import FreeCADGui
-            from freecad_gitpdm.ui import panel
-            from freecad_gitpdm.core.services import get_services
+            from freecad_gitpdm import commands
 
             try:
-                from PySide6 import QtCore, QtWidgets
+                from PySide6 import QtWidgets
             except ImportError:
-                from PySide2 import QtCore, QtWidgets
+                from PySide2 import QtWidgets
 
             mw = FreeCADGui.getMainWindow()
-            dock = mw.findChild(QtWidgets.QDockWidget, "GitPDM_DockWidget")
 
-            if dock is None:
-                dock = panel.GitPDMDockWidget(services=get_services())
-
-                # Try to tab with the Task panel for better integration
-                task_panel = mw.findChild(QtWidgets.QDockWidget, "Tasks")
-                if task_panel:
-                    mw.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
-                    mw.tabifyDockWidget(task_panel, dock)
-                else:
-                    # Fallback: just add to right area
-                    mw.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
-
-            # Show and bring to front
-            if not dock.isVisible():
-                dock.show()
-
-            # Bring GitPDM to front of its tab group
-            dock.raise_()
+            # Bottom-docked, tabbed with Report view/Python console when
+            # present (same fallback shape as commands._find_or_create_dock,
+            # reused here so the two entry points never disagree on layout).
+            dock = commands._find_or_create_dock()
+            commands._show_dock(dock)
 
             # Also bring repository browser to front if it exists
             repo_browser = mw.findChild(QtWidgets.QDockWidget, "GitPDM_RepoBrowserDock")

@@ -23,13 +23,13 @@ import subprocess
 from freecad_gitpdm.core import log, session_lock, settings, jobs, storage_mode
 from freecad_gitpdm.git import client
 from freecad_gitpdm.ui import dialogs
-from freecad_gitpdm.ui.github_auth import GitHubAuthHandler
-from freecad_gitpdm.ui.pat_auth import PatAuthHandler
 from freecad_gitpdm.ui.file_browser import FileBrowserHandler
 from freecad_gitpdm.ui.fetch_pull import FetchPullHandler
 from freecad_gitpdm.ui.commit_push import CommitPushHandler
 from freecad_gitpdm.ui.repo_validator import RepoValidationHandler
 from freecad_gitpdm.ui.branch_ops import BranchOperationsHandler
+from freecad_gitpdm.ui.connections_dialog import ConnectionsDialog
+from freecad_gitpdm.ui import label_style
 from freecad_gitpdm.export import exporter, mapper
 from freecad_gitpdm.core import paths as core_paths
 from freecad_gitpdm.core import publish
@@ -169,7 +169,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         super().__init__()
         self.setObjectName("GitPDM_DockWidget")
         self.setWindowTitle("Git PDM")
-        self.setMinimumWidth(300)
+        # Bottom-docked strip, not a sidebar: no minimum width constraint,
+        # just enough height for the three compact rows.
+        self.setMinimumHeight(120)
 
         # Service container (Sprint 3)
         if services is None:
@@ -184,8 +186,11 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._job_runner.job_finished.connect(self._on_job_finished)
 
         # Initialize handlers (Sprint 4)
-        self._github_auth = GitHubAuthHandler(self, self._services)
-        self._pat_auth = PatAuthHandler(self, self._services)
+        # GitHub/other-host connection UI + its handlers now live in the
+        # standalone ConnectionsDialog (reachable from the GitPDM menu),
+        # constructed eagerly below so startup connection checks still run
+        # against real widgets regardless of dialog visibility.
+        self._connections_dialog = ConnectionsDialog(self, self._services)
         self._file_browser = FileBrowserHandler(
             self, self._git_client, self._job_runner
         )
@@ -232,11 +237,8 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._group_repo_selector = None
         self._group_status = None
         self._group_branch = None
-        self._group_changes = None
         self._group_actions = None
         self._actions_extra_container = None
-        self._repo_browser_container = None
-        self._is_compact = False
         self._branch_combo_updating = False  # Prevent recursive combo change events
 
         # Font sizes for labels
@@ -250,23 +252,25 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         main_layout.setSpacing(6)
         content_widget.setLayout(main_layout)
 
-        # Build UI sections
-        self._build_view_toggle(main_layout)
+        # Hidden/dormant sections (System check, Branch) don't participate
+        # in the visible layout either way.
         self._build_git_check_section(main_layout)
-        self._build_repo_selector(main_layout)
-        self._build_github_account_section(main_layout)
-        self._build_other_hosts_section(main_layout)
-        self._build_status_section(main_layout)
         self._build_branch_section(main_layout)
+
+        # Repository / Status / Actions share a single row of columns
+        # instead of stacking as full-width blocks, so the panel stays
+        # short when docked at the bottom.
+        columns_row = QtWidgets.QHBoxLayout()
+        columns_row.setSpacing(8)
+        self._build_repo_selector(columns_row)
+        self._build_status_section(columns_row)
         self._build_changes_section(main_layout)
-        self._build_buttons_section(main_layout)
-        self._build_repo_browser_section(main_layout)
-
-        # Compact-mode commit mini section (hidden by default)
-        self._build_compact_commit_section(main_layout)
-
-        # Default to expanded view
-        self._set_compact_mode(False)
+        self._wire_changes_popup()
+        self._build_buttons_section(columns_row)
+        columns_row.setStretchFactor(self._group_repo_selector, 3)
+        columns_row.setStretchFactor(self._group_status, 2)
+        columns_row.setStretchFactor(self._group_actions, 4)
+        main_layout.addLayout(columns_row)
 
         # Add stretch at bottom to push everything up
         main_layout.addStretch()
@@ -290,93 +294,11 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         log.info("GitPDM dock panel created")
 
-    def _build_compact_commit_section(self, layout):
-        """Build a minimal commit UI shown only in collapsed mode."""
-        container = QtWidgets.QWidget()
-        row = QtWidgets.QHBoxLayout()
-        row.setContentsMargins(6, 4, 6, 0)
-        row.setSpacing(6)
-        container.setLayout(row)
-
-        msg_label = QtWidgets.QLabel("What changed:")
-        self._set_meta_label(msg_label, "gray")
-        row.addWidget(msg_label)
-
-        self.compact_commit_message = QtWidgets.QLineEdit()
-        self.compact_commit_message.setPlaceholderText(
-            "Example: Updated wheel design, Fixed bracket"
-        )
-        self.compact_commit_message.setToolTip(
-            "Describe what you changed to help you remember later\n"
-            "(Git term: 'commit message')"
-        )
-        self.compact_commit_message.textChanged.connect(self._on_commit_message_changed)
-        row.addWidget(self.compact_commit_message, 1)
-
-        self.compact_commit_btn = QtWidgets.QPushButton("Save Version")
-        self.compact_commit_btn.setEnabled(False)
-        self.compact_commit_btn.setToolTip(
-            "Save a checkpoint of your current work\n"
-            "(Git term: 'commit' - creates a saved snapshot)"
-        )
-        self.compact_commit_btn.clicked.connect(self._commit_push.commit_clicked)
-        row.addWidget(self.compact_commit_btn)
-
-        container.setVisible(False)
-        layout.addWidget(container)
-        self._compact_commit_container = container
-
     def _set_meta_label(self, label, color="gray"):
-        label.setStyleSheet(f"color: {color}; font-size: {self._meta_font_size}px;")
+        label_style.set_meta_label(label, color, self._meta_font_size)
 
     def _set_strong_label(self, label, color="black"):
-        label.setStyleSheet(
-            f"font-weight: bold; font-size: {self._strong_font_size}px; color: {color};"
-        )
-
-    def _build_view_toggle(self, layout):
-        """Add a compact/expanded toggle to shrink the dock UI."""
-        row = QtWidgets.QHBoxLayout()
-        row.setContentsMargins(6, 4, 6, 0)
-        row.setSpacing(6)
-
-        label = QtWidgets.QLabel("View")
-        self._set_meta_label(label, "gray")
-        row.addWidget(label)
-
-        self.compact_toggle_btn = QtWidgets.QPushButton("Collapse")
-        self.compact_toggle_btn.setFlat(True)
-        self.compact_toggle_btn.setMaximumWidth(80)
-        self.compact_toggle_btn.clicked.connect(self._on_compact_clicked)
-        row.addWidget(self.compact_toggle_btn)
-
-        row.addStretch()
-        layout.addLayout(row)
-
-    def _on_compact_clicked(self):
-        """Toggle between compact and expanded mode."""
-        self._set_compact_mode(not self._is_compact)
-
-    def _set_compact_mode(self, compact):
-        self._is_compact = bool(compact)
-        if hasattr(self, "compact_toggle_btn"):
-            self.compact_toggle_btn.setText("Expand" if compact else "Collapse")
-        show_full = not compact
-        # Only toggle visibility for sections meant to be user-toggleable.
-        # System and Branch sections are permanently hidden per current UX.
-        for w in [
-            getattr(self, "_group_repo_selector", None),
-            getattr(self, "_group_github_account", None),
-            getattr(self, "_group_status", None),
-            getattr(self, "_group_changes", None),
-            getattr(self, "_actions_extra_container", None),
-            getattr(self, "_repo_browser_container", None),
-        ]:
-            if w is not None:
-                w.setVisible(show_full)
-        # Show compact commit mini section only when collapsed
-        if hasattr(self, "_compact_commit_container"):
-            self._compact_commit_container.setVisible(compact)
+        label_style.set_strong_label(label, color, self._strong_font_size)
 
     def _deferred_initialization(self):
         """Run heavy initialization after panel is shown (Sprint PERF-2: fully async)."""
@@ -395,9 +317,13 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self._register_document_observer()
 
             # Load GitHub connection status (Sprint OAUTH-1) - slightly delayed
-            QtCore.QTimer.singleShot(50, self._github_auth.refresh_connection_status)
+            QtCore.QTimer.singleShot(
+                50, self._connections_dialog._github_auth.refresh_connection_status
+            )
             # Sprint OAUTH-2: Auto-verify identity in background with cooldown
-            QtCore.QTimer.singleShot(100, self._github_auth.maybe_auto_verify_identity)
+            QtCore.QTimer.singleShot(
+                100, self._connections_dialog._github_auth.maybe_auto_verify_identity
+            )
 
             # Check if user is editing from wrong folder (worktree mismatch) - low priority
             QtCore.QTimer.singleShot(500, self._check_for_wrong_folder_editing)
@@ -452,6 +378,12 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 log.debug(f"Failed to release session lock on close: {e}")
 
         super().closeEvent(event)
+
+    def open_connections_dialog(self):
+        """Show the GitHub/other-host connections dialog (GitPDM menu entry)."""
+        self._connections_dialog.show()
+        self._connections_dialog.raise_()
+        self._connections_dialog.activateWindow()
 
     def _on_lock_refresh_tick(self):
         """Heartbeat: keep our session lock's timestamp fresh (R2.3)."""
@@ -605,45 +537,59 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._first_run_hint.setVisible(False)
         group_layout.addWidget(self._first_run_hint)
 
-        # Repo path row
-        path_layout = QtWidgets.QHBoxLayout()
-        path_layout.setSpacing(4)
+        # Repo name (bold header) on its own line.
+        self.repo_name_label = QtWidgets.QLabel("No repository selected")
+        self._set_strong_label(self.repo_name_label, "black")
+        self.repo_name_label.setWordWrap(True)
+        group_layout.addWidget(self.repo_name_label)
+
+        # Path field on its own line -- still the real, editable field
+        # (programmatic .setText()/.text() used throughout the codebase),
+        # just visually de-emphasized under the bold name above.
         self.repo_path_field = QtWidgets.QLineEdit()
         self.repo_path_field.setPlaceholderText("Select your project folder...")
         self.repo_path_field.setToolTip(
             "The folder where your FreeCAD project files are stored\n"
             "(Git term: 'repository' or 'repo' - the project folder tracked by Git)"
         )
+        self.repo_path_field.setStyleSheet("color: gray;")
         self.repo_path_field.editingFinished.connect(
             self._on_repo_path_editing_finished
         )
-        path_layout.addWidget(self.repo_path_field)
+        self.repo_path_field.textChanged.connect(self._on_repo_path_text_changed)
+        group_layout.addWidget(self.repo_path_field)
 
-        browse_btn = QtWidgets.QPushButton("Browse...")
+        # Browse / Join / Start New: three separate, always-visible buttons
+        # (not nested behind a dropdown) since switching/starting projects
+        # is something people reach for often.
+        switch_row = QtWidgets.QHBoxLayout()
+        switch_row.setSpacing(4)
+
+        browse_btn = QtWidgets.QPushButton("Browse…")
         browse_btn.setToolTip(
             "Select an existing project folder on your computer\n"
             "(Git term: open a local 'repository')"
         )
         browse_btn.clicked.connect(self._on_browse_clicked)
-        path_layout.addWidget(browse_btn)
+        switch_row.addWidget(browse_btn)
 
-        clone_btn = QtWidgets.QPushButton("Join Team Project…")
+        clone_btn = QtWidgets.QPushButton("Join Team…")
         clone_btn.setToolTip(
             "Download a project from GitHub to work on with your team\n"
             "(Git term: 'clone' - makes a local copy of a remote repository)"
         )
         clone_btn.clicked.connect(self._on_open_clone_repo_clicked)
-        path_layout.addWidget(clone_btn)
+        switch_row.addWidget(clone_btn)
 
-        new_repo_btn = QtWidgets.QPushButton("Start New Project…")
+        new_repo_btn = QtWidgets.QPushButton("New Project…")
         new_repo_btn.setToolTip(
             "Create a brand new project and store it on GitHub\n"
             "(Git term: 'init' + create remote 'repository')"
         )
         new_repo_btn.clicked.connect(self._on_new_repo_clicked)
-        path_layout.addWidget(new_repo_btn)
+        switch_row.addWidget(new_repo_btn)
 
-        group_layout.addLayout(path_layout)
+        group_layout.addLayout(switch_row)
 
         # Shallow-clone banner (Phase G5 / R2.4) - hidden unless the active
         # repo is a shallow clone, so history-truncated state is visible
@@ -749,208 +695,18 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         layout.addWidget(group)
         self._group_repo_selector = group
 
-    def _build_github_account_section(self, layout):
-        """
-        Build the GitHub Account section (Sprint OAUTH-1)
-        Shows connection status and connect/disconnect buttons.
-        Implements OAuth Device Flow workflow.
-
-        Args:
-            layout: Parent layout to add widgets to
-        """
-        group = QtWidgets.QGroupBox("GitHub Account")
-        group_layout = QtWidgets.QVBoxLayout()
-        group_layout.setContentsMargins(6, 4, 6, 4)
-        group_layout.setSpacing(4)
-        group.setLayout(group_layout)
-
-        # Connection status label
-        self.github_status_label = QtWidgets.QLabel("GitHub: Not connected")
-        self._set_strong_label(self.github_status_label, "gray")
-        group_layout.addWidget(self.github_status_label)
-
-        # Check if OAuth is configured
-        try:
-            from freecad_gitpdm.auth import config as auth_config
-
-            client_id = auth_config.get_client_id()
-            oauth_configured = client_id is not None
-        except Exception:
-            oauth_configured = False
-
-        # Config hint (shown if OAuth not configured)
-        if not oauth_configured:
-            hint_label = QtWidgets.QLabel("GitHub OAuth not configured. See docs.")
-            hint_label.setWordWrap(True)
-            hint_label.setStyleSheet(
-                "color: orange; font-style: italic; font-size: 9px;"
-            )
-            group_layout.addWidget(hint_label)
-
-        # Buttons row
-        buttons_layout = QtWidgets.QHBoxLayout()
-        buttons_layout.setSpacing(4)
-
-        self.github_connect_btn = QtWidgets.QPushButton("Connect GitHub")
-        self.github_connect_btn.setEnabled(oauth_configured)
-        self.github_connect_btn.setToolTip(
-            "Connect to GitHub using OAuth Device Flow"
-            if oauth_configured
-            else "OAuth not configured"
-        )
-        self.github_connect_btn.clicked.connect(self._on_github_connect_clicked)
-        buttons_layout.addWidget(self.github_connect_btn)
-
-        self.github_disconnect_btn = QtWidgets.QPushButton("Disconnect")
-        self.github_disconnect_btn.setEnabled(False)
-        self.github_disconnect_btn.setToolTip("Disconnect GitHub account")
-        self.github_disconnect_btn.clicked.connect(self._on_github_disconnect_clicked)
-        buttons_layout.addWidget(self.github_disconnect_btn)
-
-        self.github_refresh_btn = QtWidgets.QPushButton("Verify / Refresh Account")
-        self.github_refresh_btn.setEnabled(oauth_configured)
-        self.github_refresh_btn.setToolTip("Verify GitHub account and refresh session")
-        self.github_refresh_btn.clicked.connect(self._on_github_verify_clicked)
-        buttons_layout.addWidget(self.github_refresh_btn)
-
-        group_layout.addLayout(buttons_layout)
-
-        layout.addWidget(group)
-        self._group_github_account = group
-
-    def _build_other_hosts_section(self, layout):
-        """
-        Build the "Other Git Hosts" section: one consolidated PAT-connect
-        UI for GitLab/Bitbucket/Gitea-Forgejo/SourceHut, rather than four
-        more GitHub-style sections (device-flow specific, would balloon
-        this file). GitHub keeps its own dedicated section above - it
-        authenticates differently (OAuth device flow) and predates this.
-
-        Args:
-            layout: Parent layout to add widgets to
-        """
-        group = QtWidgets.QGroupBox("Other Git Hosts")
-        group_layout = QtWidgets.QVBoxLayout()
-        group_layout.setContentsMargins(6, 4, 6, 4)
-        group_layout.setSpacing(4)
-        group.setLayout(group_layout)
-
-        from freecad_gitpdm.providers import list_provider_ids, get_provider_class
-
-        self._other_host_ids = sorted(
-            pid for pid in list_provider_ids() if pid not in ("github", "generic")
-        )
-
-        picker_row = QtWidgets.QHBoxLayout()
-        picker_row.setSpacing(4)
-        picker_row.addWidget(QtWidgets.QLabel("Host:"))
-        self.other_hosts_combo = QtWidgets.QComboBox()
-        for provider_id in self._other_host_ids:
-            provider_cls = get_provider_class(provider_id)
-            self.other_hosts_combo.addItem(
-                provider_cls.display_name or provider_id, provider_id
-            )
-        self.other_hosts_combo.currentIndexChanged.connect(
-            self._on_other_hosts_provider_changed
-        )
-        picker_row.addWidget(self.other_hosts_combo, 1)
-        group_layout.addLayout(picker_row)
-
-        self.other_hosts_status_label = QtWidgets.QLabel("")
-        self._set_strong_label(self.other_hosts_status_label, "gray")
-        group_layout.addWidget(self.other_hosts_status_label)
-
-        self._other_hosts_host_url_row = QtWidgets.QWidget()
-        host_url_row_layout = QtWidgets.QHBoxLayout()
-        host_url_row_layout.setContentsMargins(0, 0, 0, 0)
-        self._other_hosts_host_url_row.setLayout(host_url_row_layout)
-        host_url_row_layout.addWidget(QtWidgets.QLabel("Server URL:"))
-        self.other_hosts_host_url_edit = QtWidgets.QLineEdit()
-        self.other_hosts_host_url_edit.setPlaceholderText(
-            "e.g., https://gitea.example.com"
-        )
-        host_url_row_layout.addWidget(self.other_hosts_host_url_edit)
-        group_layout.addWidget(self._other_hosts_host_url_row)
-
-        pat_row = QtWidgets.QHBoxLayout()
-        pat_row.setSpacing(4)
-        self.other_hosts_pat_edit = QtWidgets.QLineEdit()
-        self.other_hosts_pat_edit.setEchoMode(QtWidgets.QLineEdit.Password)
-        self.other_hosts_pat_edit.setPlaceholderText("Paste a Personal Access Token")
-        pat_row.addWidget(self.other_hosts_pat_edit, 1)
-        group_layout.addLayout(pat_row)
-
-        buttons_layout = QtWidgets.QHBoxLayout()
-        buttons_layout.setSpacing(4)
-
-        self.other_hosts_connect_btn = QtWidgets.QPushButton("Connect")
-        self.other_hosts_connect_btn.clicked.connect(
-            self._on_other_hosts_connect_clicked
-        )
-        buttons_layout.addWidget(self.other_hosts_connect_btn)
-
-        self.other_hosts_disconnect_btn = QtWidgets.QPushButton("Disconnect")
-        self.other_hosts_disconnect_btn.clicked.connect(
-            self._on_other_hosts_disconnect_clicked
-        )
-        buttons_layout.addWidget(self.other_hosts_disconnect_btn)
-
-        self.other_hosts_browse_btn = QtWidgets.QPushButton("Browse Repos…")
-        self.other_hosts_browse_btn.setToolTip(
-            "List and clone repositories from the selected, connected host"
-        )
-        self.other_hosts_browse_btn.clicked.connect(self._on_other_hosts_browse_clicked)
-        buttons_layout.addWidget(self.other_hosts_browse_btn)
-
-        group_layout.addLayout(buttons_layout)
-
-        layout.addWidget(group)
-        self._group_other_hosts = group
-
-        if self._other_host_ids:
-            self._on_other_hosts_provider_changed(0)
-
-    def _current_other_host_id(self) -> str:
-        idx = self.other_hosts_combo.currentIndex()
-        if 0 <= idx < len(self._other_host_ids):
-            return self._other_host_ids[idx]
-        return self._other_host_ids[0] if self._other_host_ids else "generic"
-
-    def _on_other_hosts_provider_changed(self, _index):
-        provider_id = self._current_other_host_id()
-        from freecad_gitpdm.providers import get_provider
-
-        provider = get_provider(provider_id)
-        self._other_hosts_host_url_row.setVisible(
-            provider.capabilities.requires_host_url
-        )
-        self.other_hosts_pat_edit.clear()
-        self._pat_auth.update_status_for(provider_id)
-        self._update_other_hosts_buttons()
-
-    def _update_other_hosts_buttons(self):
-        provider_id = self._current_other_host_id()
-        is_connected = settings.load_provider_connected(provider_id)
-        self.other_hosts_connect_btn.setEnabled(not is_connected)
-        self.other_hosts_disconnect_btn.setEnabled(is_connected)
-
-    def _on_other_hosts_connect_clicked(self):
-        provider_id = self._current_other_host_id()
-        self._pat_auth.connect_clicked(
-            provider_id,
-            self.other_hosts_pat_edit.text(),
-            host_url=self.other_hosts_host_url_edit.text(),
-        )
-
-    def _on_other_hosts_disconnect_clicked(self):
-        self._pat_auth.disconnect_clicked(self._current_other_host_id())
-
     def _build_status_section(self, layout):
         """
-        Build the status information section
+        Build the simple status row: pending changes + sync status only.
 
-        Args:
-            layout: Parent layout to add widgets to
+        Everything denser (branch, upstream ref, last-checked time, storage
+        mode) still gets built and kept live-updated by the exact same code
+        paths as before (repo_validator.py / fetch_pull.py / branch_ops.py /
+        commit_push.py all still call .setText() on these widgets by name),
+        it's just not laid out on screen any more -- it surfaces as tooltip
+        text on the two visible chips instead (see
+        _refresh_status_chip_tooltips), consistent with "simple status bar
+        that only shows pending changes and sync status".
         """
         group = QtWidgets.QGroupBox("Status")
         group_layout = QtWidgets.QVBoxLayout()
@@ -958,87 +714,51 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         group_layout.setSpacing(4)
         group.setLayout(group_layout)
 
-        # Operation status header (shows Pulling… / Fetching… / Synced)
-        header_layout = QtWidgets.QHBoxLayout()
-        header_layout.setSpacing(4)
-        header_layout.addWidget(QtWidgets.QLabel("Operation:"))
-        self.operation_status_label = QtWidgets.QLabel("Ready")
-        self.operation_status_label.setStyleSheet("color: gray; font-size: 9px;")
-        self.operation_status_label.setAlignment(QtCore.Qt.AlignRight)
-        header_layout.addWidget(self.operation_status_label, 1)
-        group_layout.addLayout(header_layout)
+        # Compact row: pending-changes chip (clickable, pops the changes
+        # list -- see _wire_changes_popup) + sync-status chip + operation
+        # status, right-aligned.
+        chip_row = QtWidgets.QHBoxLayout()
+        chip_row.setSpacing(8)
 
-        # Grid-style fields in 3 columns
-        grid_layout = QtWidgets.QGridLayout()
-        grid_layout.setContentsMargins(0, 0, 0, 0)
-        grid_layout.setHorizontalSpacing(8)
-        grid_layout.setVerticalSpacing(2)
-
-        def add_field(row, col, title, value_label):
-            caption = QtWidgets.QLabel(title)
-            self._set_meta_label(caption, "gray")
-            grid_layout.addWidget(caption, row * 2, col)
-            grid_layout.addWidget(value_label, row * 2 + 1, col)
-
-        # Value labels
-        self.working_tree_label = QtWidgets.QLabel("—")
-        self.working_tree_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        self.working_tree_label.setToolTip(
-            "Files you've modified but haven't saved as a version yet\n"
-            "(Git term: 'working tree status' or 'dirty/clean state')"
-        )
+        self.working_tree_label = QtWidgets.QToolButton()
+        self.working_tree_label.setText("—")
+        self.working_tree_label.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
+        self.working_tree_label.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        self.working_tree_label.setAutoRaise(True)
         self._set_strong_label(self.working_tree_label, "black")
+        chip_row.addWidget(self.working_tree_label)
 
         self.ahead_behind_label = QtWidgets.QLabel("—")
         self.ahead_behind_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        self.ahead_behind_label.setToolTip(
-            "How many changes you need to share or get from your team\n"
-            "(Git term: 'ahead/behind' - commits to push/pull)"
-        )
         self._set_strong_label(self.ahead_behind_label, "black")
+        chip_row.addWidget(self.ahead_behind_label)
+
+        chip_row.addStretch()
+
+        self.operation_status_label = QtWidgets.QLabel("Ready")
+        self.operation_status_label.setStyleSheet("color: gray; font-size: 9px;")
+        self.operation_status_label.setAlignment(QtCore.Qt.AlignRight)
+        chip_row.addWidget(self.operation_status_label)
+
+        group_layout.addLayout(chip_row)
+
+        # Dense fields (branch/upstream/last-checked/storage mode): built
+        # exactly as before, wrapped in a hidden container instead of a
+        # visible grid. Their update call sites elsewhere in the codebase
+        # are untouched.
+        dense_container = QtWidgets.QWidget()
+        dense_layout = QtWidgets.QGridLayout()
+        dense_layout.setContentsMargins(0, 0, 0, 0)
+        dense_container.setLayout(dense_layout)
 
         self.branch_label = QtWidgets.QLabel("—")
-        self.branch_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        self.branch_label.setToolTip(
-            "The work version you're currently using\n"
-            "(Git term: 'current branch' - active line of development)"
-        )
-        self._set_meta_label(self.branch_label, "gray")
-
         self.upstream_label = QtWidgets.QLabel("—")
-        self.upstream_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        self.upstream_label.setToolTip(
-            "The GitHub version your work is synced with\n"
-            "(Git term: 'upstream' or 'tracking branch' - remote reference)"
-        )
-        self._set_meta_label(self.upstream_label, "gray")
-
         self.last_fetch_label = QtWidgets.QLabel("—")
-        self.last_fetch_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        self.last_fetch_label.setToolTip(
-            "When you last checked for updates from your team\n"
-            "(Git term: 'last fetch time')"
-        )
-        self._set_meta_label(self.last_fetch_label, "gray")
-
-        add_field(0, 0, "Your Changes", self.working_tree_label)
-        add_field(0, 1, "Sync Status", self.ahead_behind_label)
-        add_field(0, 2, "Work Version", self.branch_label)
-        add_field(1, 0, "GitHub Version", self.upstream_label)
-        add_field(1, 1, "Last checked", self.last_fetch_label)
-
-        group_layout.addLayout(grid_layout)
-
-        # G3: storage mode row (delta vs. lfs)
-        storage_row = QtWidgets.QHBoxLayout()
-        storage_row.setSpacing(6)
-        storage_caption = QtWidgets.QLabel("Storage Mode:")
-        self._set_meta_label(storage_caption, "gray")
-        storage_row.addWidget(storage_caption)
         self.storage_mode_label = QtWidgets.QLabel("—")
-        self._set_strong_label(self.storage_mode_label, "black")
-        storage_row.addWidget(self.storage_mode_label)
-        storage_row.addStretch()
+        dense_layout.addWidget(self.branch_label, 0, 0)
+        dense_layout.addWidget(self.upstream_label, 0, 1)
+        dense_layout.addWidget(self.last_fetch_label, 0, 2)
+        dense_layout.addWidget(self.storage_mode_label, 0, 3)
         self.storage_mode_change_btn = QtWidgets.QPushButton("Change…")
         self.storage_mode_change_btn.setEnabled(False)
         self.storage_mode_change_btn.setToolTip(
@@ -1048,8 +768,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.storage_mode_change_btn.clicked.connect(
             self._repo_validator.change_storage_mode_clicked
         )
-        storage_row.addWidget(self.storage_mode_change_btn)
-        group_layout.addLayout(storage_row)
+        dense_layout.addWidget(self.storage_mode_change_btn, 0, 4)
+        dense_container.setVisible(False)
+        group_layout.addWidget(dense_container)
 
         # Error/message area (Sprint 2)
         self.status_message_label = QtWidgets.QLabel("")
@@ -1060,6 +781,25 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         layout.addWidget(group)
         self._group_status = group
+
+    def _refresh_status_chip_tooltips(self):
+        """Compose the dense branch/upstream/storage info (no longer laid
+        out visibly) into tooltips on the two status chips."""
+        changes_tip = (
+            "Files you've modified but haven't saved as a version yet\n"
+            "(Git term: 'working tree status' or 'dirty/clean state')\n\n"
+            f"Work version: {self.branch_label.text()}\n"
+            f"Storage mode: {self.storage_mode_label.text()}"
+        )
+        self.working_tree_label.setToolTip(changes_tip)
+
+        sync_tip = (
+            "How many changes you need to share or get from your team\n"
+            "(Git term: 'ahead/behind' - commits to push/pull)\n\n"
+            f"GitHub version: {self.upstream_label.text()}\n"
+            f"Last checked: {self.last_fetch_label.text()}"
+        )
+        self.ahead_behind_label.setToolTip(sync_tip)
 
     def _build_branch_section(self, layout):
         """
@@ -1144,50 +884,41 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
     def _build_changes_section(self, layout):
         """
-        Build the changes list section
+        Build the changed-files list as popup content for the pending-changes
+        chip in the status row, rather than an always-visible group -- see
+        _wire_changes_popup, called right after this in __init__ once
+        working_tree_label (the chip) exists too.
 
         Args:
-            layout: Parent layout to add widgets to
+            layout: Parent layout of the main panel (unused; kept for
+                symmetry with the other _build_* methods and because this
+                content is still logically part of the same build pass).
         """
-        group = QtWidgets.QGroupBox("Changes")
-        group_layout = QtWidgets.QVBoxLayout()
-        group_layout.setContentsMargins(6, 4, 6, 4)
-        group_layout.setSpacing(4)
-        group.setLayout(group_layout)
+        content = QtWidgets.QWidget()
+        content_layout = QtWidgets.QVBoxLayout()
+        content_layout.setContentsMargins(8, 8, 8, 8)
+        content_layout.setSpacing(4)
+        content.setLayout(content_layout)
 
-        info_label = QtWidgets.QLabel(
-            "These files have been modified since your last save checkpoint."
-        )
+        info_label = QtWidgets.QLabel("Files modified since your last save checkpoint.")
         info_label.setWordWrap(True)
         info_label.setStyleSheet("color: gray; font-style: italic;")
-        info_label.setToolTip(
-            "Files that you've changed and haven't saved as a version yet\n"
-            "(Git term: 'working tree' or 'unstaged changes' - modified but not committed)"
-        )
-        group_layout.addWidget(info_label)
+        content_layout.addWidget(info_label)
 
         self.changes_list = QtWidgets.QListWidget()
-        # Reduce the size of the changes list
-        self.changes_list.setMaximumHeight(50)
+        self.changes_list.setMinimumSize(260, 140)
         self.changes_list.setEnabled(False)
-        group_layout.addWidget(self.changes_list)
+        content_layout.addWidget(self.changes_list)
 
-        stage_layout = QtWidgets.QHBoxLayout()
-        stage_layout.setSpacing(4)
-        self.stage_all_checkbox = QtWidgets.QCheckBox("Include all changed files")
-        self.stage_all_checkbox.setChecked(True)
-        self.stage_all_checkbox.setEnabled(False)
-        self.stage_all_checkbox.setToolTip(
-            "When saving, include all files you've modified (recommended)\n"
-            "(Git term: 'stage' or 'add' - marks files to include in the next commit)"
-        )
-        self.stage_all_checkbox.stateChanged.connect(self._update_button_states)
-        stage_layout.addWidget(self.stage_all_checkbox)
-        stage_layout.addStretch()
-        group_layout.addLayout(stage_layout)
+        self._changes_popup_content = content
 
-        layout.addWidget(group)
-        self._group_changes = group
+    def _wire_changes_popup(self):
+        """Attach the changes-list popup content to the pending-changes chip."""
+        menu = QtWidgets.QMenu(self.working_tree_label)
+        action = QtWidgets.QWidgetAction(menu)
+        action.setDefaultWidget(self._changes_popup_content)
+        menu.addAction(action)
+        self.working_tree_label.setMenu(menu)
 
     def _build_buttons_section(self, layout):
         """
@@ -1222,6 +953,29 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.pull_btn.clicked.connect(self._fetch_pull.pull_clicked)
         row1_layout.addWidget(self.pull_btn)
 
+        row1_layout.addStretch()
+
+        self.stage_all_checkbox = QtWidgets.QCheckBox("Include all changed files")
+        self.stage_all_checkbox.setChecked(True)
+        self.stage_all_checkbox.setEnabled(False)
+        self.stage_all_checkbox.setToolTip(
+            "When saving, include all files you've modified (recommended)\n"
+            "(Git term: 'stage' or 'add' - marks files to include in the next commit)"
+        )
+        self.stage_all_checkbox.stateChanged.connect(self._update_button_states)
+        row1_layout.addWidget(self.stage_all_checkbox)
+
+        row1_layout.addStretch()
+
+        self._file_browser.ensure_browser_host()
+        self.browser_window_btn = QtWidgets.QPushButton("Open Browser")
+        self.browser_window_btn.setEnabled(False)
+        self.browser_window_btn.setToolTip(
+            "Browse tracked FCStd files and preview them"
+        )
+        self.browser_window_btn.clicked.connect(self._file_browser.open_browser)
+        row1_layout.addWidget(self.browser_window_btn)
+
         group_layout.addLayout(row1_layout)
 
         # Extra actions are grouped for easy hide/show in compact mode
@@ -1243,7 +997,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.commit_message.setPlaceholderText(
             "Example: Updated wheel design, Fixed mounting bracket dimensions, Added new parts..."
         )
-        self.commit_message.setMaximumHeight(70)
+        self.commit_message.setMaximumHeight(40)
         self.commit_message.setToolTip(
             "Describe what you changed in this version. Be specific so you can find this version later!\n"
             "(This creates a 'commit' - a saved checkpoint in your project's history)"
@@ -1367,29 +1121,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         layout.addWidget(group)
         self._group_actions = group
 
-    def _build_repo_browser_section(self, layout):
-        """Build launcher row for the dockable repository browser."""
-        self._file_browser.ensure_browser_host()
-
-        container = QtWidgets.QWidget()
-        row = QtWidgets.QHBoxLayout()
-        row.setContentsMargins(6, 4, 6, 4)
-        row.setSpacing(4)
-        container.setLayout(row)
-
-        label = QtWidgets.QLabel("Repository Browser")
-        self._set_meta_label(label, "gray")
-        row.addWidget(label)
-        row.addStretch()
-
-        self.browser_window_btn = QtWidgets.QPushButton("Open Browser")
-        self.browser_window_btn.setEnabled(False)
-        self.browser_window_btn.clicked.connect(self._file_browser.open_browser)
-        row.addWidget(self.browser_window_btn)
-
-        layout.addWidget(container)
-        self._repo_browser_container = container
-
     def _on_browse_clicked(self):
         """
         Handle Browse button click - open folder dialog
@@ -1460,52 +1191,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 "Failed to open repo picker. See logs for details.",
             )
 
-    def _on_other_hosts_browse_clicked(self):
-        """Open repo picker dialog for whichever host is selected in the
-        "Other Git Hosts" section - the payoff of connecting there."""
-        provider_id = self._current_other_host_id()
-        if not settings.load_provider_connected(provider_id):
-            QtWidgets.QMessageBox.information(
-                self,
-                "Not Connected",
-                "Connect to this host first (paste a token and click Connect), "
-                "then Browse Repos.",
-            )
-            return
-
-        try:
-            from freecad_gitpdm.ui.repo_picker import RepoPickerDialog
-            from freecad_gitpdm.providers import get_provider
-
-            provider = get_provider(provider_id)
-
-            def _client_factory():
-                try:
-                    return self._services.api_client_for(provider)
-                except Exception as e:
-                    log.debug(f"Failed to create {provider_id} client: {e}")
-                    return None
-
-            dlg = RepoPickerDialog(
-                parent=self,
-                job_runner=self._job_runner,
-                git_client=self._git_client,
-                client_factory=_client_factory,
-                on_connect_requested=self._on_other_hosts_connect_clicked,
-                default_clone_dir=settings.load_default_clone_dir(),
-                provider=provider,
-            )
-
-            if dlg.exec():
-                self._handle_repo_picker_result(dlg)
-        except Exception as e:
-            log.error(f"Browse {provider_id} repos flow failed: {e}")
-            QtWidgets.QMessageBox.warning(
-                self,
-                "Browse Repos",
-                "Failed to open repo picker. See logs for details.",
-            )
-
     def _on_new_repo_clicked(self):
         """Open New Repo wizard to create a repo (GitHub, or any other git
         remote) + local scaffold. GitHub connection is optional (Phase G4):
@@ -1565,6 +1250,12 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         text = self.repo_path_field.text()
         if text:
             self._validate_repo_path(text)
+
+    def _on_repo_path_text_changed(self, text):
+        """Keep the bold repo-name header row 1 chip in sync with the path
+        field, whichever way its text changed (typed or set programmatically)."""
+        name = os.path.basename(os.path.normpath(text)) if text else ""
+        self.repo_name_label.setText(name or "No repository selected")
 
     def _on_root_toggle(self, checked):
         """Show or hide the resolved repo root row."""
@@ -1703,6 +1394,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 self.ahead_behind_label.setText("(unknown)")
                 self._set_strong_label(self.ahead_behind_label, "gray")
                 self._upstream_ref = None
+                self._refresh_status_chip_tooltips()
                 self._update_button_states()
                 return
 
@@ -1742,6 +1434,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 if ab_result["error"]:
                     log.debug(f"Ahead/behind error: {ab_result['error']}")
 
+            self._refresh_status_chip_tooltips()
             self._update_button_states()
             log.debug("Upstream update complete")
         except Exception as e:
@@ -1754,6 +1447,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         log.warning(f"Upstream update error: {error}")
         self.ahead_behind_label.setText("(error)")
         self._set_strong_label(self.ahead_behind_label, "red")
+        self._refresh_status_chip_tooltips()
         self._update_button_states()
 
     # ========== Fetch/Pull Operations (Sprint 4: Delegated to FetchPullHandler) ==========
@@ -1787,9 +1481,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         if hasattr(self, "commit_message"):
             commit_msg_ok = bool(self.commit_message.toPlainText().strip())
-        # Also consider compact commit message when present
-        if hasattr(self, "compact_commit_message") and not commit_msg_ok:
-            commit_msg_ok = bool(self.compact_commit_message.text().strip())
 
         fetch_enabled = git_ok and repo_ok and self._cached_has_remote and not busy
         self.fetch_btn.setEnabled(fetch_enabled)
@@ -1806,11 +1497,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         commit_enabled = (
             git_ok and repo_ok and changes_present and commit_msg_ok and not busy
         )
-        # Enable compact commit button in collapsed mode
-        if hasattr(self, "compact_commit_btn"):
-            self.compact_commit_btn.setEnabled(
-                git_ok and repo_ok and changes_present and commit_msg_ok and not busy
-            )
 
         commit_push_enabled = (
             git_ok
@@ -2270,6 +1956,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 self._file_statuses = file_statuses
                 self._populate_changes_list()
 
+            self._refresh_status_chip_tooltips()
             self._update_button_states()
             log.debug("Status refresh complete")
         except Exception as e:
@@ -2375,6 +2062,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         else:
             self.storage_mode_label.setText("—")
         self.storage_mode_change_btn.setEnabled(has_repo)
+        self._refresh_status_chip_tooltips()
 
     def _on_refresh_clicked(self):
         """Handle Refresh Status button click."""
@@ -2747,6 +2435,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self.repo_path_field.blockSignals(True)
             self.repo_path_field.setText(saved_path)
             self.repo_path_field.blockSignals(False)
+            self._on_repo_path_text_changed(saved_path)
             # Auto-validate on load
             self._validate_repo_path(saved_path)
             log.info(f"Restored repo path from settings: {saved_path}")
@@ -2762,29 +2451,18 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             self.repo_path_field.blockSignals(True)
             self.repo_path_field.setText(saved_path)
             self.repo_path_field.blockSignals(False)
+            self._on_repo_path_text_changed(saved_path)
             log.info(f"Restored repo path from settings: {saved_path}")
             # Validate in background (non-blocking)
             self._validate_repo_path(saved_path)
         # Initialize preview status area
         self._update_preview_status_labels()
 
-    # ========== GitHub OAuth/Auth (Sprint 4: Delegated to GitHubAuthHandler) ==========
-
-    def _on_github_connect_clicked(self):
-        """Handle Connect GitHub button click."""
-        self._github_auth.connect_clicked()
-
-    def _on_github_disconnect_clicked(self):
-        """Handle Disconnect GitHub button click."""
-        self._github_auth.disconnect_clicked()
-
-    def _on_github_refresh_clicked(self):
-        """Legacy refresh handler: route to verify."""
-        self._github_auth.verify_clicked()
-
-    def _on_github_verify_clicked(self):
-        """Handle Verify / Refresh Account button click."""
-        self._github_auth.verify_clicked()
+    # ========== GitHub client factory (used by repo-picker/new-repo-wizard) =====
+    # Connect/disconnect/verify UI now lives in ConnectionsDialog
+    # (freecad_gitpdm/ui/connections_dialog.py); this factory stays here since
+    # it's consumed by this panel's own Join Team Project / Start New Project
+    # flows.
 
     def _create_github_client(self):
         """Construct a GitHubApiClient using stored token; returns None if not connected."""

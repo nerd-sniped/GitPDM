@@ -22,7 +22,7 @@ import json
 from pathlib import Path
 
 from freecad_gitpdm.core import log, paths as core_paths
-from freecad_gitpdm.export import mapper
+from freecad_gitpdm.export import mapper, thumbnail
 
 
 class FileBrowserHandler:
@@ -312,7 +312,11 @@ class FileBrowserHandler:
         )
 
     def show_preview(self, rel):
-        """Load and display preview PNG for the given repo-relative file."""
+        """Load and display a preview for the given repo-relative FCStd
+        file: prefer FreeCAD's own embedded save-time thumbnail (instant,
+        no export step), falling back to a manually-generated preview PNG
+        (from GitPDM menu -> Generate Previews) if no embedded thumbnail
+        exists."""
         try:
             if not hasattr(self._parent, "repo_preview_label"):
                 return
@@ -324,21 +328,18 @@ class FileBrowserHandler:
                 self.clear_preview()
                 return
 
-            preview_dir = mapper.to_preview_dir_rel(rel)
-            # Extract part name from source path for consistent naming
-            from pathlib import Path
+            pix = self._load_embedded_thumbnail_pixmap(rel)
+            if pix is None:
+                pix = self._load_manual_preview_pixmap(rel)
 
-            part_name = Path(rel).stem
-            png_rel = preview_dir + f"{part_name}.png"
-            abs_png = core_paths.safe_join_repo(
-                self._parent._current_repo_root, png_rel
-            )
-            if not abs_png or not abs_png.exists():
-                self._parent.repo_preview_label.setText("No preview found")
+            if pix is None:
+                self._parent.repo_preview_label.setText(
+                    "No preview found\n(enable 'Create thumbnail when saving' "
+                    "in FreeCAD Preferences, or use GitPDM → Generate Previews)"
+                )
                 self._parent.repo_preview_label.setPixmap(QtGui.QPixmap())
                 return
 
-            pix = QtGui.QPixmap(str(abs_png))
             if pix.isNull():
                 self._parent.repo_preview_label.setText("Preview could not be loaded")
                 self._parent.repo_preview_label.setPixmap(QtGui.QPixmap())
@@ -357,6 +358,30 @@ class FileBrowserHandler:
             log.warning(f"Failed to load preview: {e}")
             self._parent.repo_preview_label.setText("Preview error")
             self._parent.repo_preview_label.setPixmap(QtGui.QPixmap())
+
+    def _load_embedded_thumbnail_pixmap(self, rel):
+        """Return a QPixmap built from the FCStd's own embedded save-time
+        thumbnail, or None if the file has none (or isn't found)."""
+        abs_fcstd = core_paths.safe_join_repo(self._parent._current_repo_root, rel)
+        if not abs_fcstd or not abs_fcstd.exists():
+            return None
+        data = thumbnail.read_embedded_thumbnail(abs_fcstd)
+        if not data:
+            return None
+        pix = QtGui.QPixmap()
+        pix.loadFromData(data, "PNG")
+        return pix
+
+    def _load_manual_preview_pixmap(self, rel):
+        """Fall back to the deterministic manually-exported preview PNG
+        (GitPDM menu -> Generate Previews), unchanged from before."""
+        preview_dir = mapper.to_preview_dir_rel(rel)
+        part_name = Path(rel).stem
+        png_rel = preview_dir + f"{part_name}.png"
+        abs_png = core_paths.safe_join_repo(self._parent._current_repo_root, png_rel)
+        if not abs_png or not abs_png.exists():
+            return None
+        return QtGui.QPixmap(str(abs_png))
 
     def clear_preview(self):
         """Clear the preview image."""

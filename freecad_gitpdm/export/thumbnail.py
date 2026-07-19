@@ -6,6 +6,7 @@ Handles capturing PNG thumbnails from FreeCAD 3D views with configurable
 camera settings, projections, and background colors.
 """
 
+import zipfile
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -200,3 +201,34 @@ def save_thumbnail(view, preset: Dict[str, Any], out_path: Path) -> Optional[str
             return None
         except Exception as e2:
             return f"Thumbnail export failed: {e2}"
+
+
+def read_embedded_thumbnail(fcstd_path: Path) -> Optional[bytes]:
+    """
+    Read the thumbnail FreeCAD embeds in a .FCStd file at save time (when
+    "Create new thumbnail when saving the document" is enabled in FreeCAD's
+    preferences -- the default).
+
+    .FCStd files are plain zip archives; the embedded thumbnail lives as a
+    PNG under a "thumbnails/" folder inside. Matched case-insensitively by
+    folder+extension rather than one hardcoded path, since exact casing has
+    varied across FreeCAD versions and this needs to keep working without a
+    matching release-by-release update.
+
+    Returns the PNG bytes, or None if the file isn't a valid zip or has no
+    embedded thumbnail (e.g. the preference was off when it was last saved).
+    """
+    try:
+        with zipfile.ZipFile(fcstd_path) as zf:
+            for name in zf.namelist():
+                parts = name.replace("\\", "/").split("/")
+                if len(parts) < 2:
+                    continue
+                if parts[-2].lower() != "thumbnails":
+                    continue
+                if not parts[-1].lower().endswith(".png"):
+                    continue
+                return zf.read(name)
+    except (zipfile.BadZipFile, OSError, KeyError):
+        return None
+    return None
