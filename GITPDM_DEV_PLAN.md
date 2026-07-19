@@ -662,11 +662,23 @@ multi-provider hosts work above which it follows directly):
   `save_checkpoint_auto_push_override()`/`load_checkpoint_auto_push_override()`
   pair (string-backed `""`/`"true"`/`"false"`, so "never touched" is
   distinguishable from an explicit "off") — `should_auto_push_recovery()`
-  checks the override first, else follows `headless_backends_active()` (G1's
-  existing container-detection signal). Exposed as a 3-option combo box
-  ("Automatic (follow environment)" / "Always" / "Never") in
-  `ui/connections_dialog.py`'s new "Checkpointing" section — the natural home
-  per that dialog's own stated purpose (settings you don't touch often).
+  checks the override first, else falls back to a default. Exposed as a
+  3-option combo box in `ui/connections_dialog.py`'s new "Checkpointing"
+  section — the natural home per that dialog's own stated purpose (settings
+  you don't touch often).
+  **Revised 2026-07-19, per explicit user decision (see R2.5's amendment
+  note in `GITPDM_REQUIREMENTS.md`):** the no-override default changed from
+  "follow `headless_backends_active()`" (push only when G1's env-var
+  backends are active) to unconditionally `True` — auto-push is now the
+  default on desktop too, not just headless, so a checkpoint is a real
+  off-machine record as soon as it's made rather than sitting local-only
+  until the next real commit. The combo box's first option was relabeled
+  "Automatic (recommended — pushes by default)" from "Automatic (follow
+  environment)" to match; `headless_backends_active()` is no longer
+  referenced by this function at all. Tests updated
+  (`tests/test_checkpoint.py::TestShouldAutoPushRecovery`) to assert the
+  new default explicitly, including on a plain desktop session with no env
+  vars set.
 - `ui/panel.py`: `_checkpoint_state` (a `CheckpointState`) + a 10s
   `QTimer` polling `should_checkpoint()`/`run_checkpoint()` — the 10s tick is
   just scheduling granularity, not the checkpoint cadence itself, which

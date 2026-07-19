@@ -168,8 +168,10 @@ when running tests or scripts outside the app.
   pytest): `should_checkpoint()` (idle-debounce + max-interval backstop, the
   backstop measured from the last checkpoint, not the last edit, so
   continuous active editing still gets checkpointed periodically),
-  `should_auto_push_recovery()` (settings override, else follows G1's
-  `headless_backends_active()`), and `run_checkpoint()`/
+  `should_auto_push_recovery()` (settings override, else defaults to `True`
+  everywhere — desktop and headless alike, revised 2026-07-19 per explicit
+  user decision; see R2.5's amendment note in `GITPDM_REQUIREMENTS.md`), and
+  `run_checkpoint()`/
   `run_shutdown_checkpoint()`, which take FreeCAD-only concerns
   (`is_busy`/`save_if_dirty`) as injected callables rather than importing
   FreeCAD themselves — `ui/panel.py` supplies the real ones. The git

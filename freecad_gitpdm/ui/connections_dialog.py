@@ -237,10 +237,11 @@ class ConnectionsDialog(QtWidgets.QDialog):
 
     def _build_checkpointing_section(self, layout):
         """
-        Recovery-branch push policy: auto-push defaults to ON when headless
-        credential backends are active (a container has no one to click
-        "push" for it) and OFF on desktop by default. This lets either kind
-        of user override that default explicitly.
+        Recovery-branch push policy: auto-push defaults to ON everywhere
+        (desktop and headless alike), so a checkpoint is a real off-machine
+        record right away rather than sitting local-only until the next real
+        commit. Explicit "Always"/"Never" here just make that default (or
+        its opposite) permanent regardless of environment.
         """
         group = QtWidgets.QGroupBox("Checkpointing")
         group_layout = QtWidgets.QHBoxLayout()
@@ -250,9 +251,11 @@ class ConnectionsDialog(QtWidgets.QDialog):
 
         group_layout.addWidget(QtWidgets.QLabel("Push recovery checkpoints:"))
         self.checkpoint_push_combo = QtWidgets.QComboBox()
-        self.checkpoint_push_combo.addItem("Automatic (follow environment)", None)
+        self.checkpoint_push_combo.addItem(
+            "Automatic (recommended — pushes by default)", None
+        )
         self.checkpoint_push_combo.addItem("Always", True)
-        self.checkpoint_push_combo.addItem("Never", False)
+        self.checkpoint_push_combo.addItem("Never (local only)", False)
         current = settings.load_checkpoint_auto_push_override()
         self.checkpoint_push_combo.setCurrentIndex(
             {None: 0, True: 1, False: 2}.get(current, 0)

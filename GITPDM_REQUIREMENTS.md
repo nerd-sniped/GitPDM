@@ -145,6 +145,17 @@ The deployment clones on boot with no volume; clone time is cold-start time. Add
 
 ### R2.5 — Continuous checkpointing *(priority: high; default ON)*
 
+**Push policy revised 2026-07-19, per explicit user decision (supersedes the
+"Push policy split" bullet below):** auto-push of the recovery branch
+defaults **ON everywhere** — desktop and headless alike — not just in
+headless/container environments as originally specified. The user
+prioritized "a checkpoint is a real off-machine record as soon as it's
+made" over the original concern about surprise background pushes on
+desktop; that concern is still addressable (an explicit "Never" override
+exists in settings), it's just no longer the default. The original
+requirement text below is kept for historical record; treat this note as
+authoritative for current behavior.
+
 **Goal:** the Onshape *guarantee* — walk away at any moment, from any device, and lose at most ~a minute of work — without the Onshape *mechanism*. Onshape persists every action because it has no files: each UI action is a transaction against a cloud feature-graph database. FreeCAD's save is a blocking, whole-file serialization of a monolithic `.FCStd` on the Qt main thread. Per-action persistence is therefore prohibitive here (UI freezes, mid-transaction corruption risk); a debounced checkpoint policy is not.
 
 **Requirement — checkpoint policy, default ON:**

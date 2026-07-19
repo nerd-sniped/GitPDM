@@ -532,13 +532,17 @@ could corrupt an open `.FCStd` file. It's a safety net, not a replacement
 for real commits: "walk away anytime, lose at most a few minutes of work"
 if FreeCAD or your machine crashes.
 
+- **Push policy:** checkpoints **push to your remote by default** —
+  desktop and headless/container sessions alike — so a checkpoint is a real
+  off-machine record as soon as it's made, not something stranded on one
+  machine until your next real commit. Turn this off (or force it back on
+  explicitly) in **Git PDM → Connections… → Checkpointing** — useful if
+  you're on limited bandwidth or would rather keep in-progress work local
+  until you choose to share it. A checkpoint with no remote configured yet
+  simply stays local; there's nothing to push to.
 - **Restore:** on opening a repo, if a checkpoint newer than your current
   history exists (and no document is currently open), GitPDM offers to
   restore it into your working files.
-- **Push policy:** the recovery branch auto-pushes when headless credential
-  backends are active (a container has no one to click "push" for it), and
-  stays local-only on desktop by default. Override this in
-  **Git PDM → Connections… → Checkpointing**.
 - **Cleanup:** once a real commit supersedes a checkpoint, GitPDM offers to
   clear it (or do it anytime via **Git PDM → Clear Recovery Checkpoint**).
 - In `lfs` storage mode, checkpoints are spaced further apart by default —

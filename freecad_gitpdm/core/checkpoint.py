@@ -118,17 +118,21 @@ def should_checkpoint(
 
 def should_auto_push_recovery() -> bool:
     """
-    Push policy (R2.5): ON when headless credential backends are active (a
-    container has no one to click "push" for it), OFF on desktop by default.
-    An explicit user override in settings always wins.
+    Push policy (R2.5, revised 2026-07-19 per explicit user decision): ON by
+    default everywhere, desktop and headless alike, so a checkpoint is a
+    real off-machine record as soon as it's made rather than sitting local
+    -only until the next real commit -- work shouldn't stay tied to one
+    machine for long. (Originally OFF-on-desktop-by-default, to avoid
+    surprise background pushes for an interactive user; that concern is
+    still addressable via an explicit override below, just no longer the
+    default.) An explicit user override in settings always wins -- e.g.
+    "Never" for a bandwidth- or privacy-constrained desktop session.
     """
     override = settings.load_checkpoint_auto_push_override()
     if override is not None:
         return override
 
-    from freecad_gitpdm.auth.credential_chain import headless_backends_active
-
-    return headless_backends_active()
+    return True
 
 
 def _checkpoint_message() -> str:

@@ -341,16 +341,19 @@ class TestMaxIntervalForRepo:
 
 
 class TestShouldAutoPushRecovery:
-    def test_desktop_default_is_no_push(self, monkeypatch):
+    def test_default_is_push_on_desktop(self, monkeypatch):
+        """Revised 2026-07-19: push-by-default applies on a plain desktop
+        session too, not just when headless env-var backends are active --
+        a checkpoint should be an off-machine record right away."""
         monkeypatch.delenv("GITPDM_TOKEN", raising=False)
         monkeypatch.delenv("GITPDM_TOKEN_FILE", raising=False)
         monkeypatch.setattr(
             settings, "load_checkpoint_auto_push_override", lambda: None
         )
 
-        assert checkpoint.should_auto_push_recovery() is False
+        assert checkpoint.should_auto_push_recovery() is True
 
-    def test_headless_backend_active_defaults_to_push(self, monkeypatch):
+    def test_default_is_push_when_headless_too(self, monkeypatch):
         monkeypatch.setenv("GITPDM_TOKEN", "fake-token")
         monkeypatch.setattr(
             settings, "load_checkpoint_auto_push_override", lambda: None
@@ -358,15 +361,14 @@ class TestShouldAutoPushRecovery:
 
         assert checkpoint.should_auto_push_recovery() is True
 
-    def test_explicit_override_wins_over_headless_default(self, monkeypatch):
-        monkeypatch.setenv("GITPDM_TOKEN", "fake-token")
+    def test_explicit_override_can_disable_push(self, monkeypatch):
         monkeypatch.setattr(
             settings, "load_checkpoint_auto_push_override", lambda: False
         )
 
         assert checkpoint.should_auto_push_recovery() is False
 
-        monkeypatch.delenv("GITPDM_TOKEN", raising=False)
+    def test_explicit_override_can_force_push(self, monkeypatch):
         monkeypatch.setattr(
             settings, "load_checkpoint_auto_push_override", lambda: True
         )
