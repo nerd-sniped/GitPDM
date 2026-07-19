@@ -46,13 +46,19 @@ addons present, so it can't run in this environment; otherwise the only
 outstanding item is actually submitting to the FreeCAD Addon Manager index
 (R3.3) — `package.xml` is prepared but the submission itself (a GitHub issue
 against `FreeCAD/Addons`) needs a maintainer's real contact email and an
-icon GitPDM has never had, both flagged in `package.xml`. Three items are
-flagged as needing a real-environment verification pass before being fully
-trusted: SourceHut's GraphQL schema (unverified live), the embedded-thumbnail zip path/casing
-(unverified against a live FreeCAD save), and G6's FreeCAD busy/dirty API
-surface (`Document.HasPendingTransaction`, `FreeCADGui.Control.activeDialog()`,
-`Document.isTouched()` — unverified against a live FreeCAD session) — see
-`GITPDM_DEV_PLAN.md`'s status ledger for details. The overriding constraint
+icon GitPDM has never had, both flagged in `package.xml`. G6's FreeCAD
+busy/dirty API surface was live-verified 2026-07-19 in a real user session
+— `slotChangedObject`/`Document.isTouched()` both work as designed, and a
+real bug was found and fixed: `FreeCADGui.Control.activeDialog()` returns a
+**bool**, not the dialog object or `None`, so checking it with `is not
+None` made `_is_freecad_busy()` permanently report "busy" and silently
+block every checkpoint (fixed: check truthiness directly). Two items
+remain flagged as needing a real-environment verification pass: SourceHut's
+GraphQL schema (unverified live) and the embedded-thumbnail zip path/casing
+(unverified against a live FreeCAD save — the checkpoint fix above at least
+confirms `read_embedded_thumbnail()`'s consumer code runs against real
+saves without crashing, but not yet that the rendered image content is
+correct) — see `GITPDM_DEV_PLAN.md`'s status ledger for details. The overriding constraint
 for every phase: desktop behavior must be a no-op or an improvement ("the
 desktop user is sacred").
 

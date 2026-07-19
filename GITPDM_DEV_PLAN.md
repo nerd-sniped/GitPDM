@@ -734,11 +734,27 @@ multi-provider hosts work above which it follows directly):
   since a wrongly-skipped checkpoint just runs late, while a mid-edit save
   risks real corruption. `_save_active_document_if_dirty()` uses
   `Document.isTouched()` to skip the blocking whole-file save when there's
-  nothing new to capture. **Not live-verified** (same caveat class as
-  `export/thumbnail.py`'s embedded-thumbnail path, flagged the same way):
-  the exact FreeCAD API surface here (`HasPendingTransaction`,
-  `Control.activeDialog()`, `isTouched()`) hasn't been confirmed against a
-  real FreeCAD session.
+  nothing new to capture.
+  **Live-verified 2026-07-19** (user session, real FreeCAD): `slotChangedObject`
+  fires correctly (`CheckpointState.dirty` confirmed `True` right after an
+  edit) and `Document.isTouched()` works as expected. **Found and fixed a
+  real bug** in the same session: `FreeCADGui.Control.activeDialog()`
+  returns a **bool** (`True` when a task dialog/panel is active), not the
+  dialog object or `None` — the original code checked
+  `... is not None`, and `False is not None` is `True` in Python, so
+  `_is_freecad_busy()` reported "busy" unconditionally, permanently
+  blocking every checkpoint regardless of actual state. Diagnosed by
+  walking the user through `dock._checkpoint_state.dirty` (confirmed
+  `True`) then `dock._is_freecad_busy()` (confirmed stuck `True`) then
+  `repr(FreeCADGui.Control.activeDialog())` (revealed `False, <class
+  'bool'>`) in the Python console — three quick checks isolated it exactly.
+  Fixed to check truthiness directly (`if FreeCADGui.Control.activeDialog():`)
+  instead of `is not None`. `Document.HasPendingTransaction` remains
+  unexercised (the user wasn't mid-transaction during this session) — still
+  flagged as not independently confirmed, though the same fail-closed
+  design means a wrong value there would under-fire (delay a checkpoint),
+  not corrupt anything, unlike the `activeDialog()` bug which over-fired
+  "busy" and blocked checkpointing entirely.
 - Restore-on-start: `ui/repo_validator.py`'s `_handle_valid_repo()` now
   calls `_maybe_offer_recovery_restore()`, which checks
   `checkpoint.recovery_branch_status()` and — only when no `.FCStd` document

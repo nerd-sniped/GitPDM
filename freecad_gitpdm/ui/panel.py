@@ -468,9 +468,14 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         an unreadable state as busy and skips this tick) rather than open,
         since the failure mode of a wrongly-skipped checkpoint is just a
         delayed one, while the failure mode of saving mid-edit could corrupt
-        in-progress work. NOTE: not live-verified against a real FreeCAD
-        session (same caveat class as export/thumbnail.py's embedded-
-        thumbnail path -- see CLAUDE.md's ui/ bullet).
+        in-progress work.
+
+        `Control.activeDialog()` returns a bool (True when a task dialog/
+        panel is active, e.g. mid-sketch-edit), not the dialog object or
+        None -- checking it with `is not None` is always True regardless of
+        the actual state (`False is not None` == True), which made this
+        method permanently report "busy" and silently block every
+        checkpoint. Found live 2026-07-19 via a real FreeCAD session.
         """
         try:
             import FreeCAD
@@ -479,7 +484,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             doc = FreeCAD.ActiveDocument
             if doc is not None and getattr(doc, "HasPendingTransaction", False):
                 return True
-            if FreeCADGui.Control.activeDialog() is not None:
+            if FreeCADGui.Control.activeDialog():
                 return True
             return False
         except Exception as e:

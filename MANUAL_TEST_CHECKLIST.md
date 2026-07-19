@@ -401,12 +401,21 @@ a **"Recovery Restored"** confirmation.
 
 ### T6.3 — Busy-guard: no checkpoint fires mid-edit
 
+Covers a real bug found and fixed 2026-07-19 in a live debugging session:
+`FreeCADGui.Control.activeDialog()` returns a bool, not the dialog object
+or `None` — checking it with `is not None` made `_is_freecad_busy()`
+permanently report "busy" (`False is not None` is `True`), silently
+blocking every checkpoint forever, not just during real edits. If this
+regresses, T6.1/T6.2/T6.4 will also silently fail (nothing ever fires) —
+if any of those look dead, check `dock._is_freecad_busy()` in the Python
+console first, exactly like this bug was found.
+
 **Steps:** Enter Sketch edit mode (Part Design → Create Sketch) and stay in
 it past 45 seconds idle.
 **Expected:** No save/checkpoint occurs while the task panel is open — no
 Report View line, no unexpected save prompt, no interruption to the edit.
 Exit the sketch editor, wait 45s again — the checkpoint fires normally this
-time.
+time (confirmed working as of the 2026-07-19 fix above).
 **Result:** ___
 
 ### T6.4 — Max-interval backstop fires during continuous active editing
