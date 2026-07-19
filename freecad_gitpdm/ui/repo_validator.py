@@ -17,7 +17,7 @@ except ImportError:
             "Neither PySide6 nor PySide2 found. FreeCAD installation may be incomplete."
         ) from e
 
-from freecad_gitpdm.core import log, session_lock, settings, storage_mode
+from freecad_gitpdm.core import log, session_lock, settings, storage_mode, checkpoint
 
 
 class RepoValidationHandler:
@@ -291,7 +291,69 @@ class RepoValidationHandler:
         # Explicitly ensure branch buttons are updated
         QtCore.QTimer.singleShot(100, self._parent._update_branch_button_states)
 
+        # Phase G6 (R2.5): offer to restore a checkpoint left over from an
+        # interrupted previous session, once the rest of activation settles.
+        QtCore.QTimer.singleShot(
+            200, lambda: self._maybe_offer_recovery_restore(repo_root)
+        )
+
         log.info(f"Validated repo: {repo_root}")
+
+    def _maybe_offer_recovery_restore(self, repo_root):
+        """
+        Phase G6 (R2.5) restore-on-start: if refs/heads/gitpdm/recovery is
+        ahead of HEAD, offer to restore it. Only offered when no FreeCAD
+        document is currently open -- restoring writes files into the
+        working tree, the same class of operation the "close ALL documents"
+        guard around branch switching exists for (see CLAUDE.md).
+        """
+        try:
+            if self._parent._current_repo_root != repo_root:
+                return  # repo was switched again before this fired
+            status = checkpoint.recovery_branch_status(self._git_client, repo_root)
+            if not status.available:
+                return
+
+            open_docs = self._parent._branch_ops._get_all_open_fcstd_documents()
+            if open_docs:
+                log.debug(
+                    "Recovery checkpoint available but documents are open; "
+                    "not prompting to restore"
+                )
+                return
+
+            reply = QtWidgets.QMessageBox.question(
+                self._parent,
+                "Recovery Checkpoint Available",
+                "GitPDM found work checkpointed before this session started "
+                "(possibly from a crash or an interrupted shutdown).\n\n"
+                f"Recovery snapshot: {status.recovery_sha[:8]}\n\n"
+                "Restore it into your working files now?",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                QtWidgets.QMessageBox.No,
+            )
+            if reply != QtWidgets.QMessageBox.Yes:
+                log.info("User declined recovery-checkpoint restore")
+                return
+
+            result = checkpoint.restore_recovery_checkpoint(
+                self._git_client, repo_root, status.recovery_sha
+            )
+            if result.ok:
+                QtWidgets.QMessageBox.information(
+                    self._parent,
+                    "Recovery Restored",
+                    "Recovery checkpoint restored into your working files.",
+                )
+                log.info(f"Restored recovery checkpoint {status.recovery_sha[:8]}")
+            else:
+                QtWidgets.QMessageBox.warning(
+                    self._parent,
+                    "Restore Failed",
+                    f"Could not restore recovery checkpoint:\n{result.stderr}",
+                )
+        except Exception as e:
+            log.debug(f"Recovery restore check failed: {e}")
 
     def _acquire_session_lock(self, repo_root) -> bool:
         """

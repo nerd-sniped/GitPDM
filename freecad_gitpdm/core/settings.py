@@ -602,3 +602,34 @@ def save_last_api_error(code: str | None, message: str | None):
 def load_last_api_error():
     """Return tuple (code, message) for last API error."""
     return load_provider_last_api_error("github")
+
+
+# --- Phase G6 (R2.5): continuous checkpointing ---
+#
+# Recovery-branch auto-push defaults to ON when headless credential backends
+# are active (a container has no one to click "push" for it) and OFF on
+# desktop by default (per-save-cycle network pushes would be surprising for
+# an interactive user). Stored as a tri-state string rather than a bool so
+# "never touched" (follow the default) is distinguishable from an explicit
+# "off" (see core/checkpoint.py:should_auto_push_recovery).
+_CHECKPOINT_AUTO_PUSH_KEY = "CheckpointAutoPushOverride"
+
+
+def save_checkpoint_auto_push_override(value: bool | None):
+    """value=True/False forces auto-push on/off; None clears the override
+    and reverts to following headless_backends_active()."""
+    if value is None:
+        save_setting(_CHECKPOINT_AUTO_PUSH_KEY, "")
+    else:
+        save_setting(_CHECKPOINT_AUTO_PUSH_KEY, "true" if value else "false")
+
+
+def load_checkpoint_auto_push_override() -> bool | None:
+    """True/False if the user explicitly overrode the push policy, else
+    None to mean "follow the default"."""
+    raw = load_setting(_CHECKPOINT_AUTO_PUSH_KEY, "")
+    if raw == "true":
+        return True
+    if raw == "false":
+        return False
+    return None

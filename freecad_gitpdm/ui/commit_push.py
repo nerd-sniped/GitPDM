@@ -15,7 +15,7 @@ except ImportError:
             "Neither PySide6 nor PySide2 found. FreeCAD installation may be incomplete."
         ) from e
 
-from freecad_gitpdm.core import log
+from freecad_gitpdm.core import log, checkpoint
 from freecad_gitpdm.ui import dialogs
 
 
@@ -276,6 +276,36 @@ class CommitPushHandler:
 
         QtCore.QTimer.singleShot(2000, self._parent._clear_status_message)
         self._parent._update_button_states()
+        QtCore.QTimer.singleShot(300, self._maybe_offer_recovery_prune)
+
+    def _maybe_offer_recovery_prune(self):
+        """
+        Phase G6 (R2.5): "prune/reset offer on next real commit" -- a real
+        commit just happened, so any recovery checkpoint from before it is
+        superseded by actual history. Offer to clear it; declining just
+        means it'll be offered again after the next real commit.
+        """
+        repo_root = self._parent._current_repo_root
+        if not repo_root:
+            return
+        try:
+            status = checkpoint.recovery_branch_status(self._git_client, repo_root)
+            if not status.available:
+                return
+
+            reply = QtWidgets.QMessageBox.question(
+                self._parent,
+                "Clear Recovery Checkpoint?",
+                "This commit supersedes an earlier auto-saved recovery "
+                "checkpoint. Clear it now?",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                QtWidgets.QMessageBox.No,
+            )
+            if reply == QtWidgets.QMessageBox.Yes:
+                checkpoint.prune_recovery_branch(self._git_client, repo_root)
+                log.info("Pruned recovery checkpoint after a real commit")
+        except Exception as e:
+            log.debug(f"Recovery prune check failed: {e}")
 
     def _handle_commit_failed(self, message):
         """Handle commit failure."""
@@ -532,6 +562,7 @@ class CommitPushHandler:
         QtCore.QTimer.singleShot(2000, self._parent._clear_status_message)
 
         self._parent._update_button_states()
+        QtCore.QTimer.singleShot(300, self._maybe_offer_recovery_prune)
 
     def _handle_commit_push_failed(self, message):
         """Handle commit & push failure."""

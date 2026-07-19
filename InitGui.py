@@ -42,6 +42,7 @@ class GitPDMWorkbench(FreeCADGui.Workbench):
             "Separator",
             "GitPDM_ChangeStorageMode",
             "GitPDM_DeepenHistory",
+            "GitPDM_ClearRecoveryCheckpoint",
             "GitPDM_OpenRepoBrowser",
         ]
         self.appendMenu("Git PDM", self._menu_commands)

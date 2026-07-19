@@ -54,6 +54,7 @@ class ConnectionsDialog(QtWidgets.QDialog):
 
         self._build_github_account_section(layout)
         self._build_other_hosts_section(layout)
+        self._build_checkpointing_section(layout)
 
         close_row = QtWidgets.QHBoxLayout()
         close_row.addStretch()
@@ -231,6 +232,43 @@ class ConnectionsDialog(QtWidgets.QDialog):
 
         if self._other_host_ids:
             self._on_other_hosts_provider_changed(0)
+
+    # ========== Checkpointing section (Phase G6 / R2.5) ==========
+
+    def _build_checkpointing_section(self, layout):
+        """
+        Recovery-branch push policy: auto-push defaults to ON when headless
+        credential backends are active (a container has no one to click
+        "push" for it) and OFF on desktop by default. This lets either kind
+        of user override that default explicitly.
+        """
+        group = QtWidgets.QGroupBox("Checkpointing")
+        group_layout = QtWidgets.QHBoxLayout()
+        group_layout.setContentsMargins(6, 4, 6, 4)
+        group_layout.setSpacing(4)
+        group.setLayout(group_layout)
+
+        group_layout.addWidget(QtWidgets.QLabel("Push recovery checkpoints:"))
+        self.checkpoint_push_combo = QtWidgets.QComboBox()
+        self.checkpoint_push_combo.addItem("Automatic (follow environment)", None)
+        self.checkpoint_push_combo.addItem("Always", True)
+        self.checkpoint_push_combo.addItem("Never", False)
+        current = settings.load_checkpoint_auto_push_override()
+        self.checkpoint_push_combo.setCurrentIndex(
+            {None: 0, True: 1, False: 2}.get(current, 0)
+        )
+        self.checkpoint_push_combo.currentIndexChanged.connect(
+            self._on_checkpoint_push_policy_changed
+        )
+        group_layout.addWidget(self.checkpoint_push_combo, 1)
+
+        layout.addWidget(group)
+        self._group_checkpointing = group
+
+    def _on_checkpoint_push_policy_changed(self, index):
+        value = self.checkpoint_push_combo.itemData(index)
+        settings.save_checkpoint_auto_push_override(value)
+        log.debug(f"Checkpoint auto-push override set to {value!r}")
 
     def _current_other_host_id(self) -> str:
         idx = self.other_hosts_combo.currentIndex()

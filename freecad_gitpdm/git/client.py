@@ -10,6 +10,7 @@ from __future__ import annotations
 import subprocess
 import os
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -98,6 +99,10 @@ STATUS_UNKNOWN = "UNKNOWN"
 # Phase G5 / R2.4: default shallow-clone depth offered by the clone UI when
 # a fast cold-start clone is desirable (e.g. a fresh container).
 DEFAULT_SHALLOW_CLONE_DEPTH = 20
+
+# Phase G6 / R2.5: continuous-checkpointing recovery branch. Never checked
+# out, never merged automatically -- see commit_recovery_checkpoint() below.
+RECOVERY_REF = "refs/heads/gitpdm/recovery"
 
 
 @dataclass
@@ -1459,8 +1464,10 @@ class GitClient:
 
         return result
 
-    def _run_command(self, args, timeout=60):
-        """Run a git command and wrap result."""
+    def _run_command(self, args, timeout=60, env=None):
+        """Run a git command and wrap result. `env`, if given, overrides the
+        subprocess environment entirely (used by the checkpoint plumbing
+        below to redirect GIT_INDEX_FILE without touching the real index)."""
         cmd_result = CmdResult(
             ok=False,
             stdout="",
@@ -1474,6 +1481,7 @@ class GitClient:
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                env=env,
                 **_get_subprocess_kwargs(),
             )
             cmd_result.stdout = proc.stdout.strip()
@@ -1487,6 +1495,231 @@ class GitClient:
             cmd_result.error_code = "OS_ERROR"
 
         return cmd_result
+
+    def rev_parse(self, repo_root, ref):
+        """
+        Resolve `ref` to a commit SHA, or None if it doesn't exist. Read-only
+        (safe to call at any time, including mid-edit with a document open).
+        """
+        if not self.is_git_available():
+            return None
+        if not repo_root or not os.path.isdir(repo_root):
+            return None
+
+        git_cmd = self._get_git_command()
+        result = self._run_command(
+            [
+                git_cmd,
+                "-C",
+                repo_root,
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                f"{ref}^{{commit}}",
+            ],
+            timeout=15,
+        )
+        return result.stdout.strip() if result.ok and result.stdout.strip() else None
+
+    def commit_recovery_checkpoint(self, repo_root, message, branch_ref=RECOVERY_REF):
+        """
+        Phase G6 (R2.5): snapshot the current working tree onto `branch_ref`
+        using git plumbing only -- write-tree/commit-tree/update-ref never
+        touch HEAD, the real `.git/index`, or the working tree, so this is
+        safe to call while a document from this repo is open in FreeCAD (see
+        CLAUDE.md "branch switching safety": the corruption risk there is
+        specifically about checkout/reset rewriting files under an open
+        document, which this never does).
+
+        The snapshot is built via a throwaway index file (GIT_INDEX_FILE
+        pointed outside `.git/index`): `add -A` against that empty index adds
+        every file currently on disk (respecting .gitignore) and simply omits
+        anything no longer present, which is the correct "what does the
+        working tree look like right now" snapshot -- no separate deletion
+        bookkeeping is needed. The resulting commit's parent is the recovery
+        branch's current tip if one exists, else HEAD, so the branch grows a
+        continuous, independent history that mainline commits never see.
+
+        Returns a CmdResult; on success, `.stdout` holds the new commit SHA.
+        """
+        if not self.is_git_available():
+            return CmdResult(False, "", "Git not available", "NO_GIT")
+        if not repo_root or not os.path.isdir(repo_root):
+            return CmdResult(False, "", "Invalid repository", "INVALID_REPO")
+
+        head_sha = self.rev_parse(repo_root, "HEAD")
+        if not head_sha:
+            return CmdResult(False, "", "No commits yet on HEAD", "NO_HEAD")
+
+        prior_tip = self.rev_parse(repo_root, branch_ref)
+        parent_sha = prior_tip or head_sha
+
+        git_cmd = self._get_git_command()
+        git_dir = os.path.join(repo_root, ".git")
+        fd, tmp_index = tempfile.mkstemp(prefix="gitpdm-checkpoint-", dir=git_dir)
+        os.close(fd)
+        # mkstemp creates the file so the path is reserved, but a 0-byte
+        # file isn't a valid git index -- git needs the path to not exist
+        # yet so it initializes a fresh empty index there itself.
+        os.remove(tmp_index)
+        try:
+            env = dict(os.environ)
+            env["GIT_INDEX_FILE"] = tmp_index
+
+            add_result = self._run_command(
+                [git_cmd, "-C", repo_root, "add", "-A"], timeout=120, env=env
+            )
+            if not add_result.ok:
+                return CmdResult(
+                    False,
+                    "",
+                    add_result.stderr or "checkpoint staging failed",
+                    "CHECKPOINT_ADD_FAILED",
+                )
+
+            tree_result = self._run_command(
+                [git_cmd, "-C", repo_root, "write-tree"], timeout=60, env=env
+            )
+            if not tree_result.ok or not tree_result.stdout.strip():
+                return CmdResult(
+                    False,
+                    "",
+                    tree_result.stderr or "write-tree failed",
+                    "CHECKPOINT_TREE_FAILED",
+                )
+            tree_sha = tree_result.stdout.strip()
+
+            commit_result = self._run_command(
+                [
+                    git_cmd,
+                    "-C",
+                    repo_root,
+                    "commit-tree",
+                    tree_sha,
+                    "-p",
+                    parent_sha,
+                    "-m",
+                    message,
+                ],
+                timeout=30,
+            )
+            if not commit_result.ok or not commit_result.stdout.strip():
+                return CmdResult(
+                    False,
+                    "",
+                    commit_result.stderr or "commit-tree failed",
+                    "CHECKPOINT_COMMIT_FAILED",
+                )
+            new_sha = commit_result.stdout.strip()
+
+            update_args = [git_cmd, "-C", repo_root, "update-ref", branch_ref, new_sha]
+            if prior_tip:
+                # Compare-and-swap: fails loudly instead of clobbering if
+                # something else moved the ref between rev_parse and here.
+                update_args.append(prior_tip)
+            update_result = self._run_command(update_args, timeout=15)
+            if not update_result.ok:
+                return CmdResult(
+                    False,
+                    "",
+                    update_result.stderr or "update-ref failed",
+                    "CHECKPOINT_REF_FAILED",
+                )
+
+            return CmdResult(True, new_sha, "", None)
+        finally:
+            try:
+                os.remove(tmp_index)
+            except OSError:
+                pass
+
+    def push_ref(self, repo_root, ref_name, remote="origin"):
+        """
+        Push a specific local ref (e.g. RECOVERY_REF) to the same-named ref
+        on `remote`, without touching HEAD or the currently checked-out
+        branch. Used to auto-push the recovery branch (Phase G6 / R2.5);
+        the mainline `push()` above is unaffected and unused here.
+        """
+        if not self.is_git_available():
+            return CmdResult(False, "", "Git not available", "NO_GIT")
+        if not repo_root or not os.path.isdir(repo_root):
+            return CmdResult(False, "", "Invalid repository", "INVALID_REPO")
+
+        git_cmd = self._get_git_command()
+        cred_args = _headless_credential_args()
+        args = [
+            git_cmd,
+            *cred_args,
+            "-C",
+            repo_root,
+            "push",
+            remote,
+            f"{ref_name}:{ref_name}",
+        ]
+        result = self._run_command(args, timeout=180)
+        if not result.ok:
+            result.error_code = self._classify_push_error(result.stderr)
+        return result
+
+    def restore_from_recovery(self, repo_root, recovery_sha):
+        """
+        Materialize `recovery_sha`'s tree onto the working directory via
+        `git checkout <sha> -- .` -- restores file contents for the
+        checkpointed paths without moving HEAD or switching the checked-out
+        branch (Phase G6 / R2.5's restore-on-start). Only safe to call when
+        no document from this repo is open in FreeCAD; the caller is
+        responsible for that guard, the same "close all documents" pattern
+        already used around branch switching (see CLAUDE.md).
+        """
+        if not self.is_git_available():
+            return CmdResult(False, "", "Git not available", "NO_GIT")
+        if not repo_root or not os.path.isdir(repo_root):
+            return CmdResult(False, "", "Invalid repository", "INVALID_REPO")
+        if not recovery_sha:
+            return CmdResult(
+                False, "", "No recovery snapshot to restore", "NO_RECOVERY_SHA"
+            )
+
+        git_cmd = self._get_git_command()
+        return self._run_command(
+            [git_cmd, "-C", repo_root, "checkout", recovery_sha, "--", "."],
+            timeout=60,
+        )
+
+    def delete_recovery_branch(
+        self, repo_root, branch_ref=RECOVERY_REF, remote="origin"
+    ):
+        """
+        Prune the recovery branch (local, best-effort remote) once its
+        checkpoints are superseded by a real commit (Phase G6 / R2.5's
+        "prune/reset offer on next real commit"). Never touches HEAD or the
+        working tree.
+        """
+        if not self.is_git_available():
+            return CmdResult(False, "", "Git not available", "NO_GIT")
+        if not repo_root or not os.path.isdir(repo_root):
+            return CmdResult(False, "", "Invalid repository", "INVALID_REPO")
+
+        git_cmd = self._get_git_command()
+        # branch_ref is already the full ref (e.g. refs/heads/gitpdm/recovery
+        # -- note the branch name itself contains a "/"), so use it as-is.
+        local_result = self._run_command(
+            [git_cmd, "-C", repo_root, "update-ref", "-d", branch_ref],
+            timeout=15,
+        )
+
+        cred_args = _headless_credential_args()
+        remote_result = self._run_command(
+            [git_cmd, *cred_args, "-C", repo_root, "push", remote, f":{branch_ref}"],
+            timeout=60,
+        )
+        if not remote_result.ok:
+            log.debug(
+                f"Remote recovery-branch delete failed (non-fatal): "
+                f"{remote_result.stderr}"
+            )
+
+        return local_result
 
     def _classify_commit_error(self, stderr_text):
         """Map commit stderr output to a friendly code."""

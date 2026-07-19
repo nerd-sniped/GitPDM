@@ -27,9 +27,10 @@ Keep this table current — update it in the same PR as the work it describes.
 | G3 storage modes | ✅ Implemented & merged | `dev`, 2026-07-18 |
 | G4 provider abstraction | ✅ Implemented & merged | `dev` @ `e5039de` (PR #7), 2026-07-18 |
 | G5 container ergonomics | ✅ Implemented & merged | `dev`, 2026-07-18 |
-| Multi-provider hosts (GitLab/Bitbucket/Gitea/SourceHut) | ✅ Implemented (not yet merged to `dev`) | `multi-provider-hosts` branch off `dev`, 2026-07-18 |
-| Bottom-dock UI simplification (panel layout + GitPDM menu + native thumbnails) | ✅ Implemented (uncommitted on `dev`) | `dev` working tree, 2026-07-18 |
-| G6–G8 | Not started | — |
+| Multi-provider hosts (GitLab/Bitbucket/Gitea/SourceHut) | ✅ Implemented & merged | `dev`, 2026-07-18 |
+| Bottom-dock UI simplification (panel layout + GitPDM menu + native thumbnails) | ✅ Implemented & committed | `dev`, 2026-07-18 |
+| G6 continuous checkpointing | ✅ Implemented | `dev`, 2026-07-18 |
+| G7–G8 | Not started | — |
 
 Also landed on `dev` (2026-07-17), outside any phase:
 
@@ -53,8 +54,8 @@ build its container image pinned to `v0.5.0`. **G3, G4, and G5 have all
 merged into `dev`** (G4 via PR #7 @ `e5039de`, 2026-07-18; G3 and G5 merged
 locally from `g3-storage-modes` and `g5-container-ergonomics` on
 2026-07-18 so all three could be tested together in one FreeCAD session).
-**G6** (checkpointing, needs G5) and **G7** (docs sweep, needs G3) are both
-now unblocked.
+**G6** (checkpointing, needs G5) is now implemented (see "G6 as built" below);
+**G7** (docs sweep, needs G3) is unblocked and next.
 
 **Multi-provider hosts** (GitLab, Bitbucket, Gitea/Forgejo, SourceHut —
 implemented on `multi-provider-hosts` off `dev`, 2026-07-18, not yet
@@ -607,9 +608,115 @@ multi-provider hosts work above which it follows directly):
 
 ---
 
-## Phase G6 — Continuous checkpointing *(default-on; ships with the deployment MVP)*
+## Phase G6 — Continuous checkpointing *(default-on; ships with the deployment MVP)* ✅ IMPLEMENTED
 
 **Implements:** R2.5 (read it in full — it specifies triggers, guards, and the push-policy split). **Depends on:** G5.
+
+**As built** (`dev`, 2026-07-18 — kept for reference; the brief below is the original spec):
+
+- `git/client.py` gained the plumbing primitives, kept host-agnostic and
+  reusable rather than baked into the scheduler: `rev_parse()` (read-only ref
+  resolution), `commit_recovery_checkpoint()` (the `GIT_INDEX_FILE` + `add -A`
+  + `write-tree` + `commit-tree` + `update-ref` sequence — parented on the
+  recovery branch's own prior tip, falling back to HEAD only for the first
+  checkpoint, so mainline commits never gain recovery-branch ancestors),
+  `push_ref()` (pushes an arbitrary local ref without touching HEAD or the
+  checked-out branch), `restore_from_recovery()` (`git checkout <sha> -- .`,
+  which writes files without moving HEAD or switching branches), and
+  `delete_recovery_branch()` (local `update-ref -d` + best-effort remote
+  delete-ref, for the prune offer). Two real bugs were caught and fixed by
+  the real-git integration tests before landing: `tempfile.mkstemp()`
+  reserves the temp-index path by creating a 0-byte file, which git rejects
+  as "smaller than expected" — the file has to be removed again, leaving
+  only the path, before pointing `GIT_INDEX_FILE` at it; and
+  `delete_recovery_branch()`'s branch-name extraction used
+  `rsplit("/", 1)`, which — since the branch name itself is `gitpdm/recovery`
+  (a slash-containing name) — chopped it down to bare `recovery` and deleted
+  the wrong ref. Fixed by using the full `refs/heads/...` ref directly
+  instead of reconstructing it from a split.
+- `core/checkpoint.py` (new): FreeCAD-agnostic orchestration, per CLAUDE.md's
+  "tests must run without FreeCAD" — the two FreeCAD-only questions ("is the
+  user mid-edit" and "perform the actual save") are taken as injected
+  `is_busy`/`save_if_dirty` callables rather than imported, so the scheduling
+  and policy logic (`should_checkpoint()`, `should_auto_push_recovery()`,
+  `run_checkpoint()`) is covered by pure-Python unit tests with a fake clock.
+  `should_checkpoint()` fires on idle-since-last-edit (default 45s) OR a
+  max-interval backstop since the *last checkpoint* (default 180s, not since
+  the most recent edit — continuous active editing still gets checkpointed
+  periodically instead of never going idle; a fake-clock test specifically
+  pins this baseline choice). `max_interval_seconds_for_repo()` reads G3's
+  `storage_mode` and lengthens the backstop to 600s in `lfs` mode (the
+  settings-coupling requirement below). `run_shutdown_checkpoint()` +
+  `register_sigterm_handler()` expose the external-signal hook the brief
+  asked for, but deliberately don't self-install: GitPDM runs embedded in
+  FreeCAD's GUI process, not as a standalone daemon, so installing a raw
+  `signal.signal(SIGTERM, ...)` handler that calls into Qt/git from signal
+  context would be its own hazard. The pattern mirrors `auth/check.py`
+  (G1): an importable, headless-invokable entry point that a deployment's
+  own process supervisor wires up, not something GitPDM calls on itself.
+- Push policy: `core/settings.py` gained a tri-state
+  `save_checkpoint_auto_push_override()`/`load_checkpoint_auto_push_override()`
+  pair (string-backed `""`/`"true"`/`"false"`, so "never touched" is
+  distinguishable from an explicit "off") — `should_auto_push_recovery()`
+  checks the override first, else follows `headless_backends_active()` (G1's
+  existing container-detection signal). Exposed as a 3-option combo box
+  ("Automatic (follow environment)" / "Always" / "Never") in
+  `ui/connections_dialog.py`'s new "Checkpointing" section — the natural home
+  per that dialog's own stated purpose (settings you don't touch often).
+- `ui/panel.py`: `_checkpoint_state` (a `CheckpointState`) + a 10s
+  `QTimer` polling `should_checkpoint()`/`run_checkpoint()` — the 10s tick is
+  just scheduling granularity, not the checkpoint cadence itself, which
+  `should_checkpoint()` decides. `_DocumentObserver` gained `slotChangedObject`
+  (FreeCAD's per-property-change signal) to mark activity, the same
+  observer class G3 already extended with `slotStartSaveDocument`/
+  `slotFinishSaveDocument`. `_is_freecad_busy()` (checks
+  `Document.HasPendingTransaction` and `FreeCADGui.Control.activeDialog()`)
+  fails **closed** (treats an unreadable state as busy) rather than open,
+  since a wrongly-skipped checkpoint just runs late, while a mid-edit save
+  risks real corruption. `_save_active_document_if_dirty()` uses
+  `Document.isTouched()` to skip the blocking whole-file save when there's
+  nothing new to capture. **Not live-verified** (same caveat class as
+  `export/thumbnail.py`'s embedded-thumbnail path, flagged the same way):
+  the exact FreeCAD API surface here (`HasPendingTransaction`,
+  `Control.activeDialog()`, `isTouched()`) hasn't been confirmed against a
+  real FreeCAD session.
+- Restore-on-start: `ui/repo_validator.py`'s `_handle_valid_repo()` now
+  calls `_maybe_offer_recovery_restore()`, which checks
+  `checkpoint.recovery_branch_status()` and — only when no `.FCStd` document
+  is currently open, reusing `branch_ops.py`'s existing
+  `_get_all_open_fcstd_documents()` guard rather than duplicating it (the
+  same corruption-risk class the "close ALL documents" branch-switching
+  guard exists for) — offers a `QMessageBox` restore prompt.
+- Prune offer: `ui/commit_push.py`'s `_maybe_offer_recovery_prune()` fires
+  after both the plain "Commit" and the combined "Commit & Push" success
+  paths, offering to clear the recovery branch once a real commit supersedes
+  it; declining just means it's offered again after the next real commit,
+  matching the brief. Also reachable on demand from the "Git PDM" menu
+  (`GitPDM_ClearRecoveryCheckpoint`, alongside the other rarely-touched
+  entries like Change Storage Mode / Deepen History) rather than only after
+  a commit.
+- `tests/test_checkpoint.py` (new, 28 tests): real-git integration tests
+  (same style as `test_generic_provider_flow.py`) for the plumbing —
+  specifically proving the corruption-safety invariant (`HEAD`, the real
+  index, and the working tree are byte-identical before/after a checkpoint),
+  that mainline history never gains recovery commits, that a second
+  checkpoint chains onto the first rather than HEAD, and that restore writes
+  files without moving HEAD — plus pure unit tests (fake clock, fake
+  `git_client`) for `should_checkpoint()`'s idle/backstop decision, the
+  push-policy override tri-state, and `run_checkpoint()`'s busy-guard/push
+  wiring.
+- `tools/architecture_baseline.json`: `git/client.py` bumped 2050 → 2300 (new
+  plumbing methods, ~2234) and `ui/repo_validator.py` bumped 600 → 650 (the
+  restore-on-start prompt, ~626).
+- 405 tests pass (up from 377); ruff, format check, and the architecture
+  guard are all clean.
+- **Deferred, not done:** an in-panel commit-log/history browser doesn't
+  exist yet (same gap G5 already noted), so there's no UI surface to show
+  *which* checkpoints exist beyond the single latest recovery-branch tip;
+  the restore/prune flows work against "the current tip" only. SIGTERM
+  wiring into an actual deployment process supervisor is explicitly the
+  sister repo's responsibility, not exercised here beyond unit-testing that
+  `register_sigterm_handler()` installs successfully.
 
 **Context:** this delivers the Onshape-style "walk away anytime, lose ≤ ~1 minute" guarantee via debounced checkpoints, not per-action persistence (prohibitive on FreeCAD's blocking whole-file save — see R2.5 rationale).
 

@@ -34,20 +34,22 @@ and update the plan's **Status ledger** in the same PR as the work.
 Feature work happens on `dev`; CI runs on push/PR to both `main` and `dev`.
 
 Status: **G1 (credential engine), G2 (release + CI), G3 (storage modes), G4
-(provider abstraction), and G5 (container ergonomics) are all implemented and
-merged** on `dev`, plus two unnumbered efforts built on top per explicit user
-request: **multi-provider hosts** (GitLab/Bitbucket/Gitea-Forgejo/SourceHut
-join GitHub with real PAT-paste workflows) and a **bottom-dock UI
-simplification** (panel collapsed into a short bottom dock, credentials/rare
-actions moved to a "Git PDM" menu, native FreeCAD thumbnails for preview).
-**Next up:** G6 (continuous checkpointing — needs G5, now unblocked) or G7
-(docs sweep — needs G3, now unblocked); G8's spike can run any time. Two
-items are flagged as needing a real-environment verification pass before
-being fully trusted: SourceHut's GraphQL schema (unverified live) and the
-embedded-thumbnail zip path/casing (unverified against a live FreeCAD save)
-— see `GITPDM_DEV_PLAN.md`'s status ledger for details. The overriding
-constraint for every phase: desktop behavior must be a no-op or an
-improvement ("the desktop user is sacred").
+(provider abstraction), G5 (container ergonomics), and G6 (continuous
+checkpointing) are all implemented and merged** on `dev`, plus two unnumbered
+efforts built on top per explicit user request: **multi-provider hosts**
+(GitLab/Bitbucket/Gitea-Forgejo/SourceHut join GitHub with real PAT-paste
+workflows) and a **bottom-dock UI simplification** (panel collapsed into a
+short bottom dock, credentials/rare actions moved to a "Git PDM" menu, native
+FreeCAD thumbnails for preview). **Next up:** G7 (docs sweep — needs G3, now
+unblocked); G8's spike can run any time. Three items are flagged as needing a
+real-environment verification pass before being fully trusted: SourceHut's
+GraphQL schema (unverified live), the embedded-thumbnail zip path/casing
+(unverified against a live FreeCAD save), and G6's FreeCAD busy/dirty API
+surface (`Document.HasPendingTransaction`, `FreeCADGui.Control.activeDialog()`,
+`Document.isTouched()` — unverified against a live FreeCAD session) — see
+`GITPDM_DEV_PLAN.md`'s status ledger for details. The overriding constraint
+for every phase: desktop behavior must be a no-op or an improvement ("the
+desktop user is sacred").
 
 ## Entry points / how FreeCAD loads this
 
@@ -94,7 +96,16 @@ when running tests or scripts outside the app.
   pattern used everywhere else (read a property, never branch on provider
   id), needed because hosts disagree on the username to send alongside a
   PAT over HTTPS (e.g. GitLab requires `oauth2`, Bitbucket requires
-  `x-token-auth`). Don't "simplify" this back to a hardcoded value.
+  `x-token-auth`). Don't "simplify" this back to a hardcoded value. Phase G6
+  added the recovery-branch checkpoint plumbing here too: `rev_parse()`,
+  `commit_recovery_checkpoint()`, `push_ref()`, `restore_from_recovery()`,
+  `delete_recovery_branch()` — all pure git plumbing (`write-tree`/
+  `commit-tree`/`update-ref`, a throwaway `GIT_INDEX_FILE`), never HEAD-
+  moving or working-tree-touching porcelain except `restore_from_recovery()`,
+  which deliberately does touch the working tree (that's its job) via
+  `checkout <sha> -- .` rather than a branch switch, so it doesn't trip the
+  branch-switching corruption guard below. `core/checkpoint.py` is the only
+  caller; don't call these plumbing methods from `ui/` directly.
 - `providers/` — git host abstraction (Phase G4; R5.1-R5.3), extended to
   five hosts in the multi-provider phase (see `GITPDM_DEV_PLAN.md`).
   `base.py` defines `ProviderCapabilities` (`supports_device_flow`,
@@ -146,7 +157,19 @@ when running tests or scripts outside the app.
   (`log.py`, prefix `[GitPDM]`), background job handling (`jobs.py`), path
   resolution (`paths.py`), settings persistence via FreeCAD parameter store
   (`settings.py`), input validation, diagnostics, scaffolding new repos,
-  per-repo provider selection (`provider_config.py`).
+  per-repo provider selection (`provider_config.py`). `checkpoint.py`
+  (Phase G6 / R2.5) is the continuous-checkpointing scheduler/policy layer —
+  deliberately FreeCAD-agnostic (no `import FreeCAD`, testable with plain
+  pytest): `should_checkpoint()` (idle-debounce + max-interval backstop, the
+  backstop measured from the last checkpoint, not the last edit, so
+  continuous active editing still gets checkpointed periodically),
+  `should_auto_push_recovery()` (settings override, else follows G1's
+  `headless_backends_active()`), and `run_checkpoint()`/
+  `run_shutdown_checkpoint()`, which take FreeCAD-only concerns
+  (`is_busy`/`save_if_dirty`) as injected callables rather than importing
+  FreeCAD themselves — `ui/panel.py` supplies the real ones. The git
+  plumbing itself lives on `GitClient`, not here (see `git/client.py`
+  above).
 - `ui/` — the dockable panel (`panel.py`, the largest file in the codebase)
   and its feature handlers: `branch_ops.py`, `commit_push.py`,
   `fetch_pull.py`, `file_browser.py`, `github_auth.py` (GitHub's OAuth

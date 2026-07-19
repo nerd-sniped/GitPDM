@@ -19,8 +19,16 @@ import os
 import glob
 import sys
 import subprocess
+import time
 
-from freecad_gitpdm.core import log, session_lock, settings, jobs, storage_mode
+from freecad_gitpdm.core import (
+    log,
+    session_lock,
+    settings,
+    jobs,
+    storage_mode,
+    checkpoint,
+)
 from freecad_gitpdm.git import client
 from freecad_gitpdm.ui import dialogs
 from freecad_gitpdm.ui.file_browser import FileBrowserHandler
@@ -46,6 +54,21 @@ class _DocumentObserver:
         self._refresh_timer.setInterval(500)
         self._refresh_timer.timeout.connect(self._do_refresh)
         log.debug("DocumentObserver created")
+
+    def slotChangedObject(self, obj, prop):
+        """
+        Called on every property change to any object in any open document
+        (FreeCAD's signalChangedObject). This is the "activity" signal the
+        Phase G6 (R2.5) checkpoint scheduler debounces against -- an edit
+        resets the idle clock so a checkpoint only fires once the user has
+        actually stopped touching the model for a while. Cheap and
+        unconditional (no repo-root filtering): a wrong-repo edit just
+        means the idle clock resets one extra time, which is harmless,
+        versus resolving obj's owning document's path on every property
+        change of every edit.
+        """
+        if self._panel._current_repo_root:
+            self._panel._checkpoint_state.note_activity(time.time())
 
     def slotCreatedDocument(self, doc):
         """
@@ -224,6 +247,15 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._lock_refresh_timer.setInterval(5 * 60 * 1000)
         self._lock_refresh_timer.timeout.connect(self._on_lock_refresh_tick)
         self._lock_refresh_timer.start()
+        # Phase G6 (R2.5): continuous checkpointing. The tick interval is
+        # just the scheduler's polling granularity, not the checkpoint
+        # cadence itself -- should_checkpoint() (idle-debounce + max-interval
+        # backstop) decides whether a given tick actually does anything.
+        self._checkpoint_state = checkpoint.CheckpointState()
+        self._checkpoint_timer = QtCore.QTimer(self)
+        self._checkpoint_timer.setInterval(10 * 1000)
+        self._checkpoint_timer.timeout.connect(self._on_checkpoint_timer_tick)
+        self._checkpoint_timer.start()
         self._cached_has_remote = False
         self._is_refreshing_status = (
             False  # Sprint PERF-1: prevent concurrent status refreshes
@@ -392,6 +424,117 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 session_lock.refresh_lock(self._current_repo_root)
             except Exception as e:
                 log.debug(f"Failed to refresh session lock: {e}")
+
+    def _on_checkpoint_timer_tick(self):
+        """
+        Scheduler poll (Phase G6 / R2.5): ask the pure should_checkpoint()
+        decision whether this tick should actually run a checkpoint, and if
+        so, run one via core/checkpoint.py's FreeCAD-agnostic orchestration.
+        """
+        if not self._current_repo_root:
+            return
+        try:
+            now = time.time()
+            max_interval = checkpoint.max_interval_seconds_for_repo(
+                self._current_repo_root
+            )
+            if not checkpoint.should_checkpoint(
+                self._checkpoint_state, now, max_interval_seconds=max_interval
+            ):
+                return
+
+            result = checkpoint.run_checkpoint(
+                self._git_client,
+                self._current_repo_root,
+                is_busy=self._is_freecad_busy,
+                save_if_dirty=self._save_active_document_if_dirty,
+            )
+            if result.ok:
+                self._checkpoint_state.note_checkpoint(now)
+                log.debug(
+                    f"Checkpoint committed {result.sha[:8]}"
+                    + (" (pushed)" if result.pushed else "")
+                )
+            elif result.skipped_reason == "busy":
+                log.debug("Checkpoint deferred: FreeCAD is mid-edit")
+            else:
+                log.debug(f"Checkpoint failed: {result.message}")
+        except Exception as e:
+            log.debug(f"Checkpoint tick failed: {e}")
+
+    def _is_freecad_busy(self):
+        """
+        Best-effort "don't save mid-edit" guard (R2.5). Fails CLOSED (treats
+        an unreadable state as busy and skips this tick) rather than open,
+        since the failure mode of a wrongly-skipped checkpoint is just a
+        delayed one, while the failure mode of saving mid-edit could corrupt
+        in-progress work. NOTE: not live-verified against a real FreeCAD
+        session (same caveat class as export/thumbnail.py's embedded-
+        thumbnail path -- see CLAUDE.md's ui/ bullet).
+        """
+        try:
+            import FreeCAD
+            import FreeCADGui
+
+            doc = FreeCAD.ActiveDocument
+            if doc is not None and getattr(doc, "HasPendingTransaction", False):
+                return True
+            if FreeCADGui.Control.activeDialog() is not None:
+                return True
+            return False
+        except Exception as e:
+            log.debug(f"Busy check failed, treating as busy: {e}")
+            return True
+
+    def _save_active_document_if_dirty(self):
+        """
+        Perform FreeCAD's blocking whole-document save, but only if there
+        are unsaved changes to a document that has already been saved once
+        (a never-saved document has nothing on disk yet for a checkpoint to
+        capture, and forcing a first Save-As dialog would defeat the point
+        of a background checkpoint). NOTE: not live-verified (same caveat
+        as _is_freecad_busy above).
+        """
+        try:
+            import FreeCAD
+
+            doc = FreeCAD.ActiveDocument
+            if doc is None or not doc.FileName:
+                return
+            if hasattr(doc, "isTouched") and not doc.isTouched():
+                return
+            doc.save()
+            log.debug("Checkpoint triggered a document save")
+        except Exception as e:
+            log.debug(f"Checkpoint save-if-dirty failed: {e}")
+
+    def _clear_recovery_checkpoint_clicked(self):
+        """GitPDM menu entry: manually clear the recovery branch (Phase G6 /
+        R2.5's prune offer, available on demand rather than only after the
+        next real commit)."""
+        if not self._current_repo_root:
+            return
+        status = checkpoint.recovery_branch_status(
+            self._git_client, self._current_repo_root
+        )
+        if not status.available:
+            QtWidgets.QMessageBox.information(
+                self,
+                "No Recovery Checkpoint",
+                "There is no recovery checkpoint to clear.",
+            )
+            return
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            "Clear Recovery Checkpoint?",
+            f"Clear the recovery checkpoint ({status.recovery_sha[:8]})?\n\n"
+            "This does not affect your committed history or working files.",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+        if reply == QtWidgets.QMessageBox.Yes:
+            checkpoint.prune_recovery_branch(self._git_client, self._current_repo_root)
+            log.info("Recovery checkpoint cleared via GitPDM menu")
 
     def _schedule_auto_preview_generation(self, filename):
         """Best-effort automatic preview export after a save/close."""

@@ -328,6 +328,25 @@ class GitPDMDeepenHistoryCommand:
         return bool(settings.load_repo_path())
 
 
+class GitPDMClearRecoveryCheckpointCommand:
+    """Manually clear the continuous-checkpointing recovery branch (G6)."""
+
+    def GetResources(self):
+        return {
+            "Pixmap": "",
+            "MenuText": "Clear Recovery Checkpoint",
+            "ToolTip": "Delete the gitpdm/recovery auto-checkpoint branch, if any",
+        }
+
+    def Activated(self):
+        dock = _find_or_create_dock()
+        _show_dock(dock)
+        dock._clear_recovery_checkpoint_clicked()
+
+    def IsActive(self):
+        return bool(settings.load_repo_path())
+
+
 class GitPDMOpenRepoBrowserCommand:
     """Open the dockable repository file browser."""
 
@@ -356,4 +375,7 @@ FreeCADGui.addCommand("GitPDM_OpenPreviewFolder", GitPDMOpenPreviewFolderCommand
 FreeCADGui.addCommand("GitPDM_ToggleStagePreviews", GitPDMToggleStagePreviewsCommand())
 FreeCADGui.addCommand("GitPDM_ChangeStorageMode", GitPDMChangeStorageModeCommand())
 FreeCADGui.addCommand("GitPDM_DeepenHistory", GitPDMDeepenHistoryCommand())
+FreeCADGui.addCommand(
+    "GitPDM_ClearRecoveryCheckpoint", GitPDMClearRecoveryCheckpointCommand()
+)
 FreeCADGui.addCommand("GitPDM_OpenRepoBrowser", GitPDMOpenRepoBrowserCommand())
