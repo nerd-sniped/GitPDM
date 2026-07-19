@@ -338,7 +338,8 @@ multi-provider hosts work above which it follows directly):
   and a sync-status chip; branch/upstream/last-checked/storage-mode still
   update live but are no longer laid out on screen, surfacing instead as
   composed tooltip text via `_refresh_status_chip_tooltips()`), and Actions
-  (fetch/pull/stage-all/Open Browser on one row, then the commit message +
+  (fetch/pull/stage-all on one row — Open Browser was here too until the
+  2026-07-19 file-browser removal, see below — then the commit message +
   Commit & Push). The pending-changes chip is a `QToolButton` popping the
   existing changes list via a `QWidgetAction`-wrapped popup rather than a
   permanently visible list widget. The collapse/expand toggle
@@ -388,6 +389,40 @@ multi-provider hosts work above which it follows directly):
   whether `read_embedded_thumbnail()`'s zip-path assumptions hold against
   a real save) — still needs an explicit check that the rendered preview
   image looks right end-to-end.
+  **`ui/file_browser.py` deleted outright, same date, per explicit user
+  request:** its "Repository Browser" `QDockWidget` was created eagerly at
+  panel construction (`ensure_browser_host()` called unconditionally from
+  `panel.py`'s buttons-section build) and added to the main window's left
+  dock area, tabbed with Tree view — meaning it occupied real screen space
+  on every session start, not just when explicitly opened. User's framing:
+  redundant with the OS's own file explorer for browsing/opening files,
+  and its click-to-preview thumbnail was itself just the same embedded PNG
+  Explorer/Finder already show as the file's icon — screen space spent on
+  functionality the OS provides for free. Removed: the dock, its file
+  list/search/filter, click-to-preview, double-click-to-open, "reveal in
+  file manager" context action, the "Open Browser" panel button, and the
+  `GitPDM_OpenRepoBrowser` menu command. **Also removed, not rehomed:**
+  per-file backup-count configuration (max `.FCBak` files kept), the one
+  genuinely GitPDM-specific feature the browser's context menu offered —
+  it now always uses `move_fcbak_to_previews()`'s hardcoded default (3)
+  with no UI to change it; flagged here rather than silently dropped in
+  case it's wanted back in a different home later. `export/thumbnail.py`'s
+  `read_embedded_thumbnail()` (unchanged) now has exactly one caller,
+  `export/exporter.py`. **Found and fixed a real, pre-existing, unrelated
+  bug while doing this:** `ui/branch_ops.py`'s
+  `refresh_after_branch_operation()` called
+  `self._parent._refresh_repo_browser_files()`, a method that hadn't
+  existed on `GitPDMDockWidget` since `29c8659` ("Refactor of all the code
+  to not have 5k line files", 2025-12-29) — that refactor deleted the
+  method definition and three of its four call sites, but missed the
+  fourth (the one that later became `branch_ops.py`'s
+  `refresh_after_branch_operation()` in `d0ef984`'s extraction). Every
+  branch switch/create/delete since 2025-12-29 has been hitting an
+  unhandled `AttributeError` at the tail end of that method, after the
+  actually-useful work (branch label, branch list, status refresh)
+  already completed — confirmed via `git log -S`, not guessed. Removed
+  the dead call outright rather than restoring the old method, since
+  there's no browser left for it to refresh.
 - **`export/exporter.py` (2026-07-19, found and fixed per explicit user
   report from a real FreeCAD session):** `export_active_document()`'s
   thumbnail step used to be a custom render — deterministic camera/

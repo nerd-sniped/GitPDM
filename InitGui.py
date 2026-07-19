@@ -43,7 +43,6 @@ class GitPDMWorkbench(FreeCADGui.Workbench):
             "GitPDM_ChangeStorageMode",
             "GitPDM_DeepenHistory",
             "GitPDM_ClearRecoveryCheckpoint",
-            "GitPDM_OpenRepoBrowser",
         ]
         self.appendMenu("Git PDM", self._menu_commands)
 
@@ -67,28 +66,13 @@ class GitPDMWorkbench(FreeCADGui.Workbench):
     def _open_panel_deferred(self):
         """Open panel after brief delay to keep UI responsive."""
         try:
-            import FreeCADGui
             from freecad_gitpdm import commands
-
-            try:
-                from PySide6 import QtWidgets
-            except ImportError:
-                from PySide2 import QtWidgets
-
-            mw = FreeCADGui.getMainWindow()
 
             # Bottom-docked, tabbed with Report view/Python console when
             # present (same fallback shape as commands._find_or_create_dock,
             # reused here so the two entry points never disagree on layout).
             dock = commands._find_or_create_dock()
             commands._show_dock(dock)
-
-            # Also bring repository browser to front if it exists
-            repo_browser = mw.findChild(QtWidgets.QDockWidget, "GitPDM_RepoBrowserDock")
-            if repo_browser:
-                if not repo_browser.isVisible():
-                    repo_browser.show()
-                repo_browser.raise_()
         except Exception as e:
             from freecad_gitpdm.core import log
 

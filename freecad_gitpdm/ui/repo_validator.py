@@ -242,7 +242,6 @@ class RepoValidationHandler:
         self._parent.repo_root_row.setVisible(False)
         self._parent.root_toggle_btn.setArrowType(QtCore.Qt.RightArrow)
         self._parent.root_toggle_btn.setText("Show root")
-        self._parent.browser_window_btn.setEnabled(False)
         self._parent._current_storage_mode = storage_mode.DEFAULT_MODE
         self._parent._update_storage_mode_label()
         self._parent._update_button_states()
@@ -262,7 +261,6 @@ class RepoValidationHandler:
 
         self._parent.root_toggle_btn.setEnabled(True)
         self._parent.repo_root_row.setVisible(self._parent.root_toggle_btn.isChecked())
-        self._parent.browser_window_btn.setEnabled(True)
 
         # Set FreeCAD working directory to repo folder
         # This ensures Save As dialog defaults to repo folder
@@ -278,8 +276,6 @@ class RepoValidationHandler:
 
         # Fetch branch and status
         self.fetch_branch_and_status(repo_root)
-        # Refresh repo browser
-        self._parent._file_browser.refresh_files()
         # Update preview status area
         self._parent._update_preview_status_labels()
         # Show/hide shallow-clone banner (Phase G5 / R2.4)
@@ -425,10 +421,7 @@ class RepoValidationHandler:
         self._parent.repo_root_row.setVisible(False)
         self._parent.root_toggle_btn.setArrowType(QtCore.Qt.RightArrow)
         self._parent.root_toggle_btn.setText("Show root")
-        self._parent.browser_window_btn.setEnabled(False)
         self._parent._update_button_states()
-        # Clear browser section
-        self._parent._file_browser.clear_browser()
         self._parent._check_shallow_clone_status(None)
         # Do not overwrite saved path - just show typed text in UI
         log.warning(f"Not a git repository: {path}")

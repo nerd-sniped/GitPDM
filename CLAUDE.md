@@ -185,7 +185,7 @@ when running tests or scripts outside the app.
   above).
 - `ui/` — the dockable panel (`panel.py`, the largest file in the codebase)
   and its feature handlers: `branch_ops.py`, `commit_push.py`,
-  `fetch_pull.py`, `file_browser.py`, `github_auth.py` (GitHub's OAuth
+  `fetch_pull.py`, `github_auth.py` (GitHub's OAuth
   device-flow connect/disconnect/verify), `pat_auth.py` (the equivalent
   PAT-paste connect/disconnect/verify for GitLab/Bitbucket/Gitea-Forgejo/
   SourceHut — meaningfully simpler, no device-code polling; every method
@@ -205,20 +205,36 @@ when running tests or scripts outside the app.
   against either the dock widget or the dialog. `label_style.py` holds the
   meta/strong label styling functions both files use. Rarely-touched or
   dense actions (Connections, Generate Previews, Change Storage Mode,
-  Deepen History, Open Repo Browser) are `commands.py` entries reachable
+  Deepen History) are `commands.py` entries reachable
   only from the "Git PDM" top menu-bar dropdown now, not the panel or the
   toolbar — see `commands.py`'s `_find_or_create_dock()`/`_show_dock()`.
-  `file_browser.py`'s click-to-preview reads `export/thumbnail.py`'s
-  `read_embedded_thumbnail()` (FreeCAD's own save-time thumbnail, read
-  straight out of the `.FCStd` zip). `export/exporter.py`'s committed,
-  GitHub-facing `preview.png` reads the same function now too (2026-07-19:
-  the custom viewport-render pipeline that used to generate it,
-  `set_view_for_thumbnail`/`save_thumbnail`, ran synchronously on every
-  save and blocked the UI while duplicating a snapshot FreeCAD already
-  takes itself — deleted outright per explicit user report from a real
-  FreeCAD session; see `GITPDM_DEV_PLAN.md`'s bottom-dock-UI "as built"
-  section for the fix and its tradeoff). `preset.json`'s `thumbnail`
-  sub-block is still accepted but no longer consulted by anything.
+  **`ui/file_browser.py` was removed entirely 2026-07-19** per explicit
+  user request: its "Repository Browser" dock (a left-side sidebar,
+  eagerly created and added to the main window on every panel init,
+  tabbed with Tree view) duplicated the OS's own file explorer for
+  browsing/opening files and its own click-to-preview duplicated the same
+  embedded thumbnail Explorer/Finder already show — real screen space
+  spent on functionality the OS already provides for free. Its one
+  GitPDM-specific extra, per-file backup-count configuration (max
+  `.FCBak` files kept), was removed with it rather than rehomed; it now
+  always uses the `move_fcbak_to_previews()` default (3) with no UI to
+  change it. `export/exporter.py`'s committed, GitHub-facing `preview.png`
+  is now `read_embedded_thumbnail()`'s only consumer (previously shared
+  with `file_browser.py`'s in-app preview) — see `export/thumbnail.py`'s
+  module docstring; that function itself is unchanged, only its second
+  caller went away. `preset.json`'s `thumbnail` sub-block is still
+  accepted but no longer consulted by anything (unrelated prior change,
+  2026-07-19, when the custom viewport-render pipeline that used to
+  generate the exported thumbnail — `set_view_for_thumbnail`/
+  `save_thumbnail` — was deleted in favor of the same embedded-thumbnail
+  read; see `GITPDM_DEV_PLAN.md`'s bottom-dock-UI "as built" section).
+  Also found and fixed while removing this: `branch_ops.py`'s
+  `refresh_after_branch_operation()` called
+  `self._parent._refresh_repo_browser_files()` — a method deleted from
+  `GitPDMDockWidget` by a December 2025 refactor that missed this one
+  caller (verified via `git log -S`; see `GITPDM_DEV_PLAN.md`), leaving a
+  latent `AttributeError` after every branch switch/create/delete ever
+  since, unrelated to and long predating this session's other work.
 
 ## Key behavioral constraint: branch switching safety
 

@@ -347,25 +347,6 @@ class GitPDMClearRecoveryCheckpointCommand:
         return bool(settings.load_repo_path())
 
 
-class GitPDMOpenRepoBrowserCommand:
-    """Open the dockable repository file browser."""
-
-    def GetResources(self):
-        return {
-            "Pixmap": "",
-            "MenuText": "Open Repository Browser",
-            "ToolTip": "Browse tracked FCStd files and preview them",
-        }
-
-    def Activated(self):
-        dock = _find_or_create_dock()
-        _show_dock(dock)
-        dock._file_browser.open_browser()
-
-    def IsActive(self):
-        return True
-
-
 # Register the commands with FreeCAD
 FreeCADGui.addCommand("GitPDM_TogglePanel", GitPDMTogglePanelCommand())
 FreeCADGui.addCommand("GitPDM_SaveIntoRepo", GitPDMSaveIntoRepoCommand())
@@ -378,4 +359,3 @@ FreeCADGui.addCommand("GitPDM_DeepenHistory", GitPDMDeepenHistoryCommand())
 FreeCADGui.addCommand(
     "GitPDM_ClearRecoveryCheckpoint", GitPDMClearRecoveryCheckpointCommand()
 )
-FreeCADGui.addCommand("GitPDM_OpenRepoBrowser", GitPDMOpenRepoBrowserCommand())

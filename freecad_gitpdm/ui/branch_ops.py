@@ -458,9 +458,6 @@ class BranchOperationsHandler:
         self._parent._refresh_status_views(self._parent._current_repo_root)
         self._parent._update_upstream_info(self._parent._current_repo_root)
 
-        # Refresh repo browser
-        self._parent._refresh_repo_browser_files()
-
     def is_busy(self):
         """Check if branch operation is in progress."""
         return self._is_switching_branch

@@ -332,8 +332,6 @@ class FetchPullHandler:
             self._parent._refresh_status_views(self._parent._current_repo_root)
 
             self._parent._update_upstream_info(self._parent._current_repo_root)
-            # Refresh repo browser after pull
-            self._parent._file_browser.refresh_files()
 
             pull_time = datetime.now(timezone.utc).isoformat()
             settings.save_last_pull_at(pull_time)

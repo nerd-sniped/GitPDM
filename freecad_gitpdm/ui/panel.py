@@ -31,7 +31,6 @@ from freecad_gitpdm.core import (
 )
 from freecad_gitpdm.git import client
 from freecad_gitpdm.ui import dialogs
-from freecad_gitpdm.ui.file_browser import FileBrowserHandler
 from freecad_gitpdm.ui.fetch_pull import FetchPullHandler
 from freecad_gitpdm.ui.commit_push import CommitPushHandler
 from freecad_gitpdm.ui.repo_validator import RepoValidationHandler
@@ -214,9 +213,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         # constructed eagerly below so startup connection checks still run
         # against real widgets regardless of dialog visibility.
         self._connections_dialog = ConnectionsDialog(self, self._services)
-        self._file_browser = FileBrowserHandler(
-            self, self._git_client, self._job_runner
-        )
         self._fetch_pull = FetchPullHandler(self, self._git_client, self._job_runner)
         self._commit_push = CommitPushHandler(self, self._git_client, self._job_runner)
         self._repo_validator = RepoValidationHandler(self, self._git_client)
@@ -1113,17 +1109,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.stage_all_checkbox.stateChanged.connect(self._update_button_states)
         row1_layout.addWidget(self.stage_all_checkbox)
 
-        row1_layout.addStretch()
-
-        self._file_browser.ensure_browser_host()
-        self.browser_window_btn = QtWidgets.QPushButton("Open Browser")
-        self.browser_window_btn.setEnabled(False)
-        self.browser_window_btn.setToolTip(
-            "Browse tracked FCStd files and preview them"
-        )
-        self.browser_window_btn.clicked.connect(self._file_browser.open_browser)
-        row1_layout.addWidget(self.browser_window_btn)
-
         group_layout.addLayout(row1_layout)
 
         # Extra actions are grouped for easy hide/show in compact mode
@@ -1740,11 +1725,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
     def _clear_status_message(self):
         """Clear the status message"""
         self.status_message_label.hide()
-
-    # --- Repository browser window/dock ---
-
-    # ========== File Browser (Sprint 4: Delegated to FileBrowserHandler) ==========
-    # Browser UI creation and management delegated to self._file_browser
 
     def _refresh_branch_list(self):
         """Update the branch list in the combo box (delegates to handler)."""
@@ -2538,8 +2518,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         # Refresh status views
         self._refresh_status_views(self._current_repo_root)
-
-    # Preview operations delegated to self._file_browser handler
 
     def _handle_publish_error(self, result):
         """Display publish error to user."""

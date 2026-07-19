@@ -5,9 +5,11 @@ Thumbnail reading for GitPDM previews.
 GitPDM used to render its own thumbnail on every save (zoom-to-fit +
 viewport screenshot, run synchronously on the main thread), which blocked
 FreeCAD's UI and duplicated a snapshot FreeCAD already takes itself at save
-time. That custom render path is gone; both the local file-browser preview
-(ui/file_browser.py) and the exported, committed preview.png
-(export/exporter.py) now read the same embedded thumbnail below.
+time. That custom render path is gone; the exported, committed preview.png
+(export/exporter.py) reads the same embedded thumbnail below. (The
+in-app "Repository Browser" dock that used to also read this for a local
+click-to-preview was removed entirely -- redundant with the OS's own file
+explorer, which already shows this exact embedded thumbnail.)
 """
 
 import zipfile
