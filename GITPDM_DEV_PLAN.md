@@ -28,6 +28,7 @@ Keep this table current — update it in the same PR as the work it describes.
 | G4 provider abstraction | ✅ Implemented & merged | `dev` @ `e5039de` (PR #7), 2026-07-18 |
 | G5 container ergonomics | ✅ Implemented & merged | `dev`, 2026-07-18 |
 | Multi-provider hosts (GitLab/Bitbucket/Gitea/SourceHut) | ✅ Implemented (not yet merged to `dev`) | `multi-provider-hosts` branch off `dev`, 2026-07-18 |
+| Bottom-dock UI simplification (panel layout + GitPDM menu + native thumbnails) | ✅ Implemented (uncommitted on `dev`) | `dev` working tree, 2026-07-18 |
 | G6–G8 | Not started | — |
 
 Also landed on `dev` (2026-07-17), outside any phase:
@@ -307,6 +308,105 @@ provider abstraction rather than being its own numbered phase):
   development environment either), so UI changes need manual verification
   in a real FreeCAD environment before merge — not yet done, tracked as
   outstanding alongside the SourceHut real-token pass.
+
+---
+
+**Bottom-dock UI simplification as built** (`dev` working tree, 2026-07-18 —
+per explicit user request; doesn't map onto a G-numbered phase, same as the
+multi-provider hosts work above which it follows directly):
+
+- **Ask:** collapse the tall right-side sidebar into a short strip docked at
+  the bottom of the FreeCAD window (like Report view/Python console),
+  showing only a repository header, a simple pending-changes/sync-status
+  row, and the action buttons; move credentials and other dense/rarely-used
+  controls into the "Git PDM" top menu-bar dropdown; and use FreeCAD's own
+  save-time embedded thumbnail for the file browser's click-to-preview
+  instead of requiring the manual "Generate Previews" export first. A
+  follow-up request removed the collapse/expand toggle entirely and made
+  Repository/Status/Actions share one row of columns instead of stacking,
+  and un-nested the three repo-switch buttons (Browse/Join/Start New) back
+  out from behind a dropdown since they're reached for often.
+- **`ui/panel.py`:** `GitPDMDockWidget`'s content is now three columns
+  sharing one `QHBoxLayout` row (`columns_row`, stretch factors 3/2/4) —
+  Repository (bold repo name, path field, and three always-visible
+  Browse…/Join Team…/New Project… buttons), Status (a pending-changes chip
+  and a sync-status chip; branch/upstream/last-checked/storage-mode still
+  update live but are no longer laid out on screen, surfacing instead as
+  composed tooltip text via `_refresh_status_chip_tooltips()`), and Actions
+  (fetch/pull/stage-all/Open Browser on one row, then the commit message +
+  Commit & Push). The pending-changes chip is a `QToolButton` popping the
+  existing changes list via a `QWidgetAction`-wrapped popup rather than a
+  permanently visible list widget. The collapse/expand toggle
+  (`_set_compact_mode`, `_on_compact_clicked`, the compact mini-commit row)
+  was removed outright — `hasattr()` guards already present elsewhere
+  (`ui/commit_push.py`) degrade gracefully now that those widgets no longer
+  exist, so no other file needed changes. No widget attribute names that
+  `branch_ops.py`/`commit_push.py`/`fetch_pull.py`/`repo_validator.py`
+  reach into by name were renamed or retyped (confirmed via grep before
+  starting) — only container/layout/visibility changed, since none of that
+  surface has pytest coverage (the 25 test files are all backend/provider
+  logic, zero UI-internals tests) and a live-FreeCAD manual pass is the only
+  real verification available.
+- **`ui/connections_dialog.py`** (new): the GitHub Account and Other Git
+  Hosts sections, moved out of `panel.py` verbatim into a standalone,
+  non-modal `ConnectionsDialog`, opened from the GitPDM menu
+  (`panel.open_connections_dialog()`). Constructed eagerly (hidden) inside
+  `GitPDMDockWidget.__init__`, same as before, so `GitHubAuthHandler`'s
+  startup connection checks keep firing against real widgets regardless of
+  the dialog's visibility. `ui/github_auth.py`/`ui/pat_auth.py` needed
+  **zero code changes** — they already address their parent generically as
+  `self.panel.<attr>`, so pointing that at the dialog instead of the dock
+  widget just worked.
+- **`ui/label_style.py`** (new): `_set_meta_label`/`_set_strong_label`'s
+  bodies extracted to plain functions so both `panel.py` and
+  `connections_dialog.py` style status labels identically without
+  duplicating the stylesheet strings.
+- **`export/thumbnail.py` + `ui/file_browser.py`:** new
+  `read_embedded_thumbnail(fcstd_path)` opens the `.FCStd` zip and returns
+  the PNG FreeCAD embeds at save time (when "Create new thumbnail when
+  saving the document" is enabled — the default), matched case-insensitively
+  by folder+extension rather than one hardcoded path since exact casing
+  hasn't been confirmed across FreeCAD versions. `file_browser.py`'s
+  `show_preview()` tries this first; only falls back to the old
+  deterministic manual-export PNG lookup (unchanged — it still feeds the
+  GitHub-facing docs gallery manifest, a different consumer with different
+  requirements) when no embedded thumbnail exists. **Not live-verified**
+  (same caveat class as SourceHut's schema, flagged the same way): needs a
+  real FreeCAD save with the thumbnail preference on to confirm the exact
+  embedded zip path/casing before this is trusted end-to-end.
+- **`commands.py` + `InitGui.py`:** the panel now docks at
+  `BottomDockWidgetArea`, tabbed with "Report view"/"Python console" when
+  present (falls back to a plain dock add otherwise — same fallback shape
+  already used for Tree view/Tasks). A shared `_find_or_create_dock()` /
+  `_show_dock()` pair in `commands.py` is used by every command and by
+  `InitGui.py`'s auto-open, so the two entry points can't disagree on
+  layout. Seven new commands (`GitPDM_Connections`,
+  `GitPDM_GeneratePreviews`, `GitPDM_OpenPreviewFolder`,
+  `GitPDM_ToggleStagePreviews`, `GitPDM_ChangeStorageMode`,
+  `GitPDM_DeepenHistory`, `GitPDM_OpenRepoBrowser`) are thin entry points
+  into logic that already lived on the panel/handlers — no new business
+  logic. The "Git PDM" menu (a workbench's top-level menu-bar entry — this
+  *is* the "top toolbar GitPDM dropdown" from the request) is now sectioned
+  with separators; the toolbar itself was trimmed to just Toggle Panel +
+  Save Into Repo, the two frequent one-click desktop actions.
+- **Not done, deliberately:** the already-hidden "System" (git availability)
+  and "Branch" (new/switch/delete work version) sections stay hidden exactly
+  as before — not resurfaced, no menu entries added, since the request
+  didn't ask for them back. The Sprint 7 one-click "Publish" flow
+  (`_on_publish_clicked`/`_run_publish_workflow`) was already unreachable
+  from any visible button and stays that way.
+- `tools/architecture_baseline.json`: `ui/file_browser.py` bumped 850 → 900
+  for the embedded-thumbnail-first/manual-fallback split in `show_preview()`
+  (~874 lines). `ui/panel.py` actually **shrank** (2795 → ~2473 lines)
+  despite the new column layout, since the GitHub/Other-Hosts sections and
+  their handler-wiring methods moved out to `connections_dialog.py`.
+- 377 tests still pass (no new tests — same "zero precedent for testing Qt
+  widget classes directly" situation noted under G4/multi-provider hosts);
+  ruff, format check, and the architecture guard are all clean. Manual
+  verification in real FreeCAD is still outstanding for: the bottom-dock
+  visual layout (whether three columns stay legible at typical dock widths),
+  the GitPDM menu's new sectioned entries, and — most importantly — the
+  embedded-thumbnail zip path/casing above.
 
 ---
 

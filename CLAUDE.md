@@ -33,21 +33,35 @@ repo root on the `dev` branch. Read the phase brief before implementing,
 and update the plan's **Status ledger** in the same PR as the work.
 Feature work happens on `dev`; CI runs on push/PR to both `main` and `dev`.
 
-Status: **G1 (headless credential engine), G2 (release + CI), and G4
-(provider abstraction) are implemented and merged** on `dev`. **G3** (storage
-modes: delta vs. LFS, repo-scoped compression) is implemented but still sits
-on its own branch (`g3-storage-modes` off `dev`) awaiting merge. **Next up:**
-merge G3, then either G5 (container ergonomics — needs G1 + G4, now unblocked)
-or G7 (docs sweep — needs G3). The overriding constraint for every phase:
-desktop behavior must be a no-op or an improvement ("the desktop user is
-sacred").
+Status: **G1 (credential engine), G2 (release + CI), G3 (storage modes), G4
+(provider abstraction), and G5 (container ergonomics) are all implemented and
+merged** on `dev`, plus two unnumbered efforts built on top per explicit user
+request: **multi-provider hosts** (GitLab/Bitbucket/Gitea-Forgejo/SourceHut
+join GitHub with real PAT-paste workflows) and a **bottom-dock UI
+simplification** (panel collapsed into a short bottom dock, credentials/rare
+actions moved to a "Git PDM" menu, native FreeCAD thumbnails for preview).
+**Next up:** G6 (continuous checkpointing — needs G5, now unblocked) or G7
+(docs sweep — needs G3, now unblocked); G8's spike can run any time. Two
+items are flagged as needing a real-environment verification pass before
+being fully trusted: SourceHut's GraphQL schema (unverified live) and the
+embedded-thumbnail zip path/casing (unverified against a live FreeCAD save)
+— see `GITPDM_DEV_PLAN.md`'s status ledger for details. The overriding
+constraint for every phase: desktop behavior must be a no-op or an
+improvement ("the desktop user is sacred").
 
 ## Entry points / how FreeCAD loads this
 
 - `Init.py` / `InitGui.py` — FreeCAD addon bootstrap (workbench registration).
   These run inside FreeCAD's embedded Python, not a normal interpreter.
+  `InitGui.py`'s `Initialize()` keeps the toolbar to just two frequent
+  one-click commands (Toggle Panel, Save Into Repo); everything else lives
+  only in the sectioned "Git PDM" menu-bar dropdown it also builds there.
 - `freecad_gitpdm/workbench.py` — workbench definition (toolbar/menu wiring).
-- `freecad_gitpdm/commands.py` — FreeCAD command objects (the UI entry actions).
+- `freecad_gitpdm/commands.py` — FreeCAD command objects (the UI entry
+  actions). `_find_or_create_dock()` / `_show_dock()` are the shared
+  find-or-create-the-panel-then-delegate helpers every command (and
+  `InitGui.py`'s auto-open) goes through, so the dock area/tabify behavior
+  can't drift between entry points.
 
 Because `FreeCAD`/`FreeCADGui` only exist inside the FreeCAD process, they are
 mocked in tests via `tests/conftest.py` (`mock_freecad` autouse fixture,
@@ -141,7 +155,30 @@ when running tests or scripts outside the app.
   SourceHut — meaningfully simpler, no device-code polling; every method
   takes an explicit `provider_id` since more than one of these can be
   connected at once), `repo_picker.py`, `repo_validator.py`,
-  `new_repo_wizard.py`, `dialogs.py`.
+  `new_repo_wizard.py`, `dialogs.py`, `connections_dialog.py`,
+  `label_style.py`. `GitPDMDockWidget` (`panel.py`) docks at the *bottom*
+  of the FreeCAD window (tabbed with Report view/Python console), not the
+  side — its content is three columns sharing one row (Repository / Status
+  / Actions), not stacked group boxes, so the whole thing stays short. The
+  GitHub Account and Other Git Hosts connect/disconnect UI lives in
+  `connections_dialog.py`'s `ConnectionsDialog` (opened from the "Git PDM"
+  menu, not embedded inline) — constructed eagerly and hidden alongside the
+  panel so `GitHubAuthHandler`'s startup checks keep running regardless of
+  whether it's currently shown; `github_auth.py`/`pat_auth.py` address
+  their parent generically (`self.panel.<attr>`) so they work unmodified
+  against either the dock widget or the dialog. `label_style.py` holds the
+  meta/strong label styling functions both files use. Rarely-touched or
+  dense actions (Connections, Generate Previews, Change Storage Mode,
+  Deepen History, Open Repo Browser) are `commands.py` entries reachable
+  only from the "Git PDM" top menu-bar dropdown now, not the panel or the
+  toolbar — see `commands.py`'s `_find_or_create_dock()`/`_show_dock()`.
+  `file_browser.py`'s click-to-preview tries `export/thumbnail.py`'s
+  `read_embedded_thumbnail()` (FreeCAD's own save-time thumbnail, read
+  straight out of the `.FCStd` zip) first, falling back to the deterministic
+  manually-exported preview PNG only when no embedded thumbnail exists —
+  the exact embedded-thumbnail zip path/casing hasn't been verified against
+  a live FreeCAD save yet, flagged in that function's docstring the same
+  way SourceHut's unverified schema is flagged above (`providers/` bullet).
 
 ## Key behavioral constraint: branch switching safety
 
