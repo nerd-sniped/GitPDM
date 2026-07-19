@@ -762,14 +762,20 @@ multi-provider hosts work above which it follows directly):
   `_get_all_open_fcstd_documents()` guard rather than duplicating it (the
   same corruption-risk class the "close ALL documents" branch-switching
   guard exists for) — offers a `QMessageBox` restore prompt.
-- Prune offer: `ui/commit_push.py`'s `_maybe_offer_recovery_prune()` fires
+- Prune: `ui/commit_push.py`'s `_auto_prune_recovery_checkpoint()` fires
   after both the plain "Commit" and the combined "Commit & Push" success
-  paths, offering to clear the recovery branch once a real commit supersedes
-  it; declining just means it's offered again after the next real commit,
-  matching the brief. Also reachable on demand from the "Git PDM" menu
-  (`GitPDM_ClearRecoveryCheckpoint`, alongside the other rarely-touched
-  entries like Change Storage Mode / Deepen History) rather than only after
-  a commit.
+  paths, clearing the recovery branch once a real commit supersedes it.
+  **Revised 2026-07-19 per explicit user decision:** originally asked via
+  a `QMessageBox.question` ("Clear Recovery Checkpoint?"); changed to
+  silent auto-prune — a commit always captures the current working tree,
+  which is at least as up to date as any earlier checkpoint of that same
+  tree, so there was nothing genuine to confirm and declining just meant
+  re-asking after every single commit. Still reachable on demand from the
+  "Git PDM" menu (`GitPDM_ClearRecoveryCheckpoint`, alongside the other
+  rarely-touched entries like Change Storage Mode / Deepen History) for
+  anyone who wants to inspect a checkpoint before it's cleared (e.g. if
+  edits were undone since it fired, it could hold state the final commit
+  doesn't).
 - `tests/test_checkpoint.py` (new, 28 tests): real-git integration tests
   (same style as `test_generic_provider_flow.py`) for the plumbing —
   specifically proving the corruption-safety invariant (`HEAD`, the real

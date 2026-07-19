@@ -460,13 +460,19 @@ setting change, since push failures log at warning level) noting the push
 failed.
 **Result:** ___
 
-### T6.8 — Cleanup: prune offer after a real commit
+### T6.8 — Cleanup: auto-prune after a real commit
+
+Revised 2026-07-19 per explicit user decision: this used to ask via a
+"Clear Recovery Checkpoint?" dialog; it now prunes silently since a real
+commit always supersedes any earlier checkpoint of the same tree, so
+there's nothing to confirm.
 
 **Steps:** With a recovery checkpoint present, make a real commit (**Commit**
 or **Commit and Push**).
-**Expected:** A **"Clear Recovery Checkpoint?"** dialog appears; clicking
-**Yes** removes `gitpdm/recovery` locally (and best-effort remotely if it
-had been pushed).
+**Expected:** No dialog appears. `git branch --list` shows `gitpdm/recovery`
+is gone immediately after the commit completes (locally, and remotely too
+if it had been pushed). Report View shows `[GitPDM] ... Auto-pruned
+recovery checkpoint <sha>` (requires "Show Log messages").
 **Result:** ___
 
 ### T6.9 — Manual clear via the Git PDM menu

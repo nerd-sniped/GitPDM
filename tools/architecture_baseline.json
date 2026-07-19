@@ -4,7 +4,7 @@
     "freecad_gitpdm/ui/github_auth.py": { "max_lines": 1000, "target_lines": 750, "note": "Bumped from 760 to 1000 to stop the guard from being a recurring nag; 750 is the size we'd like to trim back toward, not a hard limit." },
     "freecad_gitpdm/ui/file_browser.py": { "max_lines": 900, "note": "Bumped from 850: show_preview() split into _load_embedded_thumbnail_pixmap (FreeCAD's native save-time thumbnail, tried first) and _load_manual_preview_pixmap (the old deterministic-export fallback), ~874." },
     "freecad_gitpdm/ui/fetch_pull.py": { "max_lines": 450 },
-    "freecad_gitpdm/ui/commit_push.py": { "max_lines": 575 },
+    "freecad_gitpdm/ui/commit_push.py": { "max_lines": 600, "note": "Bumped from 575: G6 recovery-checkpoint auto-prune (replaced a confirm dialog with silent pruning + a fuller docstring explaining why), ~576." },
     "freecad_gitpdm/ui/repo_validator.py": { "max_lines": 650, "note": "Bumped from 600: G6 restore-on-start prompt (_maybe_offer_recovery_restore), ~626." },
     "freecad_gitpdm/ui/branch_ops.py": { "max_lines": 950 },
     "freecad_gitpdm/git/client.py": { "max_lines": 2300, "note": "Bumped from 2050: G6 recovery-branch plumbing (rev_parse, commit_recovery_checkpoint, push_ref, restore_from_recovery, delete_recovery_branch), ~2234." },

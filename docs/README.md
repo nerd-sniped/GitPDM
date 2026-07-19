@@ -547,8 +547,11 @@ if FreeCAD or your machine crashes.
 - **Restore:** on opening a repo, if a checkpoint newer than your current
   history exists (and no document is currently open), GitPDM offers to
   restore it into your working files.
-- **Cleanup:** once a real commit supersedes a checkpoint, GitPDM offers to
-  clear it (or do it anytime via **Git PDM → Clear Recovery Checkpoint**).
+- **Cleanup:** once a real commit supersedes a checkpoint, GitPDM clears it
+  automatically — a commit always captures the current working tree, which
+  is at least as up to date as any earlier checkpoint of that same tree, so
+  there's nothing to confirm. You can also clear one on demand anytime via
+  **Git PDM → Clear Recovery Checkpoint**.
 - In `lfs` storage mode, checkpoints are spaced further apart by default —
   each one is a full stored LFS object, so frequent checkpoints are more
   expensive there than in `delta` mode.

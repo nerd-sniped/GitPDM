@@ -276,14 +276,22 @@ class CommitPushHandler:
 
         QtCore.QTimer.singleShot(2000, self._parent._clear_status_message)
         self._parent._update_button_states()
-        QtCore.QTimer.singleShot(300, self._maybe_offer_recovery_prune)
+        QtCore.QTimer.singleShot(300, self._auto_prune_recovery_checkpoint)
 
-    def _maybe_offer_recovery_prune(self):
+    def _auto_prune_recovery_checkpoint(self):
         """
-        Phase G6 (R2.5): "prune/reset offer on next real commit" -- a real
-        commit just happened, so any recovery checkpoint from before it is
-        superseded by actual history. Offer to clear it; declining just
-        means it'll be offered again after the next real commit.
+        Phase G6 (R2.5): a real commit just happened, so any recovery
+        checkpoint from before it is superseded by actual history -- a
+        commit always captures the current working tree, which is at
+        least as up to date as any earlier checkpoint of that same tree.
+
+        Auto-prunes silently rather than asking (revised 2026-07-19 per
+        explicit user decision: declining had no real benefit for the
+        common case, just meant re-asking after every single commit).
+        Still reachable on demand via "Git PDM -> Clear Recovery
+        Checkpoint" for anyone who wants to inspect a checkpoint before
+        it would be cleared -- e.g. if edits were undone since the
+        checkpoint fired, it could hold state the final commit doesn't.
         """
         repo_root = self._parent._current_repo_root
         if not repo_root:
@@ -292,20 +300,13 @@ class CommitPushHandler:
             status = checkpoint.recovery_branch_status(self._git_client, repo_root)
             if not status.available:
                 return
-
-            reply = QtWidgets.QMessageBox.question(
-                self._parent,
-                "Clear Recovery Checkpoint?",
-                "This commit supersedes an earlier auto-saved recovery "
-                "checkpoint. Clear it now?",
-                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-                QtWidgets.QMessageBox.No,
+            checkpoint.prune_recovery_branch(self._git_client, repo_root)
+            log.info(
+                f"Auto-pruned recovery checkpoint {status.recovery_sha[:8]} "
+                "(superseded by this commit)"
             )
-            if reply == QtWidgets.QMessageBox.Yes:
-                checkpoint.prune_recovery_branch(self._git_client, repo_root)
-                log.info("Pruned recovery checkpoint after a real commit")
         except Exception as e:
-            log.debug(f"Recovery prune check failed: {e}")
+            log.debug(f"Recovery auto-prune failed: {e}")
 
     def _handle_commit_failed(self, message):
         """Handle commit failure."""
@@ -562,7 +563,7 @@ class CommitPushHandler:
         QtCore.QTimer.singleShot(2000, self._parent._clear_status_message)
 
         self._parent._update_button_states()
-        QtCore.QTimer.singleShot(300, self._maybe_offer_recovery_prune)
+        QtCore.QTimer.singleShot(300, self._auto_prune_recovery_checkpoint)
 
     def _handle_commit_push_failed(self, message):
         """Handle commit & push failure."""

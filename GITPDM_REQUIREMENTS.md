@@ -156,6 +156,16 @@ exists in settings), it's just no longer the default. The original
 requirement text below is kept for historical record; treat this note as
 authoritative for current behavior.
 
+**Prune policy revised 2026-07-19, per explicit user decision (supersedes
+"The next real commit offers to prune/reset the recovery branch" below):**
+a real commit now clears the recovery branch automatically, no confirmation
+dialog. A commit always captures the current working tree, which is at
+least as up to date as any earlier checkpoint of that same tree, so there
+was nothing genuine to confirm — declining the old dialog just meant
+re-asking after every single commit with no real upside. Still reachable
+on demand via the "Git PDM" menu for anyone who wants to inspect a
+checkpoint before it's cleared.
+
 **Goal:** the Onshape *guarantee* — walk away at any moment, from any device, and lose at most ~a minute of work — without the Onshape *mechanism*. Onshape persists every action because it has no files: each UI action is a transaction against a cloud feature-graph database. FreeCAD's save is a blocking, whole-file serialization of a monolithic `.FCStd` on the Qt main thread. Per-action persistence is therefore prohibitive here (UI freezes, mid-transaction corruption risk); a debounced checkpoint policy is not.
 
 **Requirement — checkpoint policy, default ON:**
