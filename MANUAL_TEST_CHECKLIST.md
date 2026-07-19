@@ -1,23 +1,21 @@
-# GitPDM Manual Test Checklist — G3, G4, G5, Multi-provider hosts
+# GitPDM Manual Test Checklist — G3, G4, G5, G6, Multi-provider hosts
 
 Covers the phases that haven't had a real FreeCAD/Qt pass yet. G1 and G2
 are already fully verified end-to-end (see `GITPDM_DEV_PLAN.md`'s "Closed
 since the table above was first written" section) and aren't repeated here.
+G7 (docs sweep) has no runtime surface to test and is also skipped.
 
-**Branch:** `g3-storage-modes` and `g5-container-ergonomics` are both
-merged into local `dev` (2026-07-18, merge commits `db4a44e` and
-`6c0cf68`) so the G3/G4/G5 sections below can be tested in one FreeCAD
-session against a single checkout. This merge is **local only** — nothing
-has been pushed to `origin/dev`.
+**Branch:** everything below (G3–G6, multi-provider hosts, the bottom-dock
+UI simplification) is merged into `dev` and pushed to `origin/dev` as of
+2026-07-19 — a single `dev` checkout covers the whole file, no merging
+required.
 
-The **multi-provider hosts** section further down is on a *separate*
-branch, `multi-provider-hosts` (off `dev`, 2026-07-18), **not yet merged**
-— it hasn't gone through the same "merge everything into dev" step as
-G3/G5. Check out `multi-provider-hosts` directly for that section, or
-merge it into your `dev` checkout first if you want one session covering
-everything (`git merge multi-provider-hosts` — touches `core/settings.py`,
-`core/services.py`, `providers/`, and the same UI files G3/G5 touched, so
-check for conflicts same as the earlier G3/G5 merge required).
+**Report View setup (do this first):** most of G6's log lines
+(`log.info`/`log.debug`) go to FreeCAD's `PrintLog` channel, which Report
+View **hides by default**. Right-click Report View → enable **Show Log
+messages**, or several G6 steps below will show nothing even when working
+correctly. (Push-failure warnings use `log.warning`/`PrintWarning` and are
+visible either way.)
 
 Each test has a **Steps**, **Expected**, and a blank **Result** line —
 fill in Pass/Fail + notes as you go. If something fails, capture the exact
@@ -34,6 +32,9 @@ error text/log line before moving on.
   machine, for the session-lock tests (G5).
 - A way to open a Python console inside FreeCAD (View → Panels → Python
   console) — used for a couple of state-inspection/simulation steps below.
+- Ability to force-kill the FreeCAD process (Task Manager end-task, or
+  `kill -9`) — needed for G6's crash-recovery round trip (T6.2). A clean
+  quit doesn't exercise the same path.
 
 ---
 
@@ -355,6 +356,121 @@ active.
 
 ---
 
+## G6 — Continuous checkpointing
+
+Nothing here has touched a real Qt/FreeCAD runtime yet. The git plumbing
+itself (`GitClient.commit_recovery_checkpoint`/`push_ref`/
+`restore_from_recovery`) is proven by real-git integration tests —
+byte-identical HEAD/index/working-tree before and after, mainline history
+never polluted — so this section is specifically about the FreeCAD-side
+wiring that pytest can't reach: the busy-guard (`Document.HasPendingTransaction`,
+`FreeCADGui.Control.activeDialog()`), the dirty-check (`Document.isTouched()`),
+and the actual save trigger. If any of those FreeCAD API calls turn out to
+be wrong, the failure mode isn't "checkpoint doesn't fire" — it's "the
+busy-guard never trips and a checkpoint saves mid-edit," which is exactly
+the corruption class the rest of this codebase's safety guards exist to
+prevent. Treat this as the highest-priority section in the file.
+
+**Timing reference:** idle-debounce 45s since your last edit; max-interval
+backstop 3 minutes since the last checkpoint (10 minutes in `lfs` mode),
+so continuous active editing still gets checkpointed periodically. A
+`QTimer` polls every 10s to check whether either condition is met — that's
+scheduling granularity, not the checkpoint cadence itself.
+
+### T6.1 — Idle checkpoint fires and lands on `gitpdm/recovery`, not mainline
+
+**Steps:** Open a repo with at least one commit. Edit and save a document
+once normally. Make a second edit but don't save. Wait ~50 seconds idle.
+**Expected:** Within ~10s of the 45s mark, Report View shows
+`[GitPDM] ... Checkpoint committed <sha>` (requires "Show Log messages" —
+see setup note above). The document gets saved to disk as part of this.
+`git log --oneline HEAD` does **not** show the checkpoint. `git branch
+--list` shows `gitpdm/recovery`.
+**Result:** ___
+
+### T6.2 — Crash-recovery round trip (the core G6 guarantee, never run before)
+
+**Steps:** After T6.1's checkpoint exists, force-kill FreeCAD (Task
+Manager / `kill -9` — not a clean quit) without making a real commit.
+Relaunch FreeCAD, open the same repo.
+**Expected:** A **"Recovery Checkpoint Available"** dialog appears showing
+the checkpoint's short SHA. Clicking **Yes** restores file content matching
+what you had right before the kill (not the last real commit), followed by
+a **"Recovery Restored"** confirmation.
+**Result:** ___
+
+### T6.3 — Busy-guard: no checkpoint fires mid-edit
+
+**Steps:** Enter Sketch edit mode (Part Design → Create Sketch) and stay in
+it past 45 seconds idle.
+**Expected:** No save/checkpoint occurs while the task panel is open — no
+Report View line, no unexpected save prompt, no interruption to the edit.
+Exit the sketch editor, wait 45s again — the checkpoint fires normally this
+time.
+**Result:** ___
+
+### T6.4 — Max-interval backstop fires during continuous active editing
+
+**Steps:** Keep actively editing (never idle more than ~30s at a stretch)
+for a full 3+ minutes on a delta-mode repo.
+**Expected:** A checkpoint still fires around the 3-minute mark even though
+you never went properly idle (`git log gitpdm/recovery --oneline` shows a
+new commit at roughly that interval).
+**Result:** ___
+
+### T6.5 — Push policy: default is auto-push everywhere (changed 2026-07-19)
+
+The default flipped after the rest of G6 was built: checkpoints now push
+automatically on a plain desktop session too, not only when
+`GITPDM_TOKEN`/`GITPDM_TOKEN_FILE` are set. This is the test to prioritize.
+
+**Steps:** On a normal desktop session (no env vars set), with a repo that
+has a real, authenticated remote, leave **Git PDM → Connections… →
+Checkpointing** on its default "Automatic" setting. Let a checkpoint fire
+(T6.1). Check whether `gitpdm/recovery` reached the remote (`git fetch`
+then `git log origin/gitpdm/recovery --oneline`, or check the host's web
+UI directly).
+**Expected:** The recovery branch **is** present on the remote — it pushed
+automatically, with no setting changed from its default.
+**Result:** ___
+
+### T6.6 — Push policy: "Never" keeps checkpoints local
+
+**Steps:** Switch Checkpointing to **Never**. Let another checkpoint fire.
+**Expected:** A new commit appears on the local `gitpdm/recovery` branch,
+but `git fetch` + comparing against `origin/gitpdm/recovery` shows the
+remote never received it.
+**Result:** ___
+
+### T6.7 — Push with no remote configured doesn't error
+
+**Steps:** On a repo with no remote at all, let a checkpoint fire.
+**Expected:** The local checkpoint commit still succeeds — no crash, no
+scary dialog. At most a quiet Report View **warning** (visible without any
+setting change, since push failures log at warning level) noting the push
+failed.
+**Result:** ___
+
+### T6.8 — Cleanup: prune offer after a real commit
+
+**Steps:** With a recovery checkpoint present, make a real commit (**Commit**
+or **Commit and Push**).
+**Expected:** A **"Clear Recovery Checkpoint?"** dialog appears; clicking
+**Yes** removes `gitpdm/recovery` locally (and best-effort remotely if it
+had been pushed).
+**Result:** ___
+
+### T6.9 — Manual clear via the Git PDM menu
+
+**Steps:** **Git PDM → Clear Recovery Checkpoint**, once with a checkpoint
+present and once with none.
+**Expected:** With one present: same confirm-then-clear flow as T6.8. With
+none present: an informational "No Recovery Checkpoint" message, not an
+error.
+**Result:** ___
+
+---
+
 ## Multi-provider hosts (GitLab, Bitbucket, Gitea/Forgejo, SourceHut)
 
 Branch `multi-provider-hosts` (see the branch note at the top). Nothing
@@ -488,4 +604,5 @@ flows also run through, so this is worth re-confirming.
 | G3 storage modes | ☐ | | |
 | G4 provider abstraction | ☐ | | |
 | G5 container ergonomics | ☐ | | |
+| G6 continuous checkpointing | ☐ | | |
 | Multi-provider hosts | ☐ | | |
