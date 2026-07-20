@@ -11,7 +11,7 @@ leaving FreeCAD. Full user-facing documentation (tutorials, how-tos, reference)
 lives in `docs/README.md` — read that for feature behavior; this file is about
 working on the code.
 
-Current version: 0.6.0 (kept in sync across `docs/README.md`,
+Current version: 0.6.1 (kept in sync across `docs/README.md`,
 `pyproject.toml`, `freecad_gitpdm/__init__.py`, `Init.py`, and `package.xml`
 — bump all five together when releasing). `v0.4.0` was tagged from
 pre-credential-engine `main`; `v0.5.0` carried G1 (credential engine) + G2
@@ -21,6 +21,16 @@ publish all green) and the release page is live with the archive attached.
 `v0.6.0` folds in G3-G7, the multi-provider hosts and bottom-dock UI work,
 and the storage-mode retirement / presence-indicator swap, tagged and
 pushed 2026-07-20 in preparation for FreeCAD Addon Manager submission.
+`v0.6.1` is a patch release the same day: an audit against FreeCAD's
+actual published Addon Index quality standards (PySide-shim migration,
+SPDX headers, `package.xml` `<depend>`/readme-URL fixes, a SECURITY.md
+refresh) plus one real security fix found along the way — the Gitea/
+Forgejo self-hosted host-URL field accepted a plain `http://` PAT
+destination with no local warning; `core/input_validator.py`'s new
+`validate_self_hosted_url()` now requires `https://` there, matching
+GitHub's already-hardcoded-HTTPS path (GitLab/Bitbucket/SourceHut never
+had this gap — they connect through fixed HTTPS endpoints, not a
+user-supplied host).
 
 Note for future releases: pushing any change under `.github/workflows/` can
 fail with `refusing to allow an OAuth App to create or update workflow ...
