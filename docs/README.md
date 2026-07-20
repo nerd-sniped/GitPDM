@@ -310,7 +310,7 @@ connected host (or "Generic," for any git remote at all, no host API
 involved) before asking for repository details.
 
 Every host has different feature support (repo creation via API, PR
-integration, LFS locking) — GitPDM only offers actions the selected host can
+integration) — GitPDM only offers actions the selected host can
 actually do; it won't show a button that would just fail. Two hosts have
 extra requirements: Bitbucket repos live under a **workspace** (not just
 "your account"), and Gitea/Forgejo needs the **Server URL** above since it's
@@ -378,14 +378,15 @@ Accurate lookup documentation. Minimal narrative.
 - Any git host: GitHub (OAuth device flow, no typing) plus GitLab, Bitbucket,
   Gitea/Forgejo, and SourceHut (paste a Personal Access Token) — or any bare
   git remote at all, with zero host API involved (the "Generic" option)
-- A per-repository **storage mode** choice (delta vs. LFS) so history size
-  and team file-locking are a deliberate tradeoff, not a silent default —
-  see [Storage Modes](#storage-modes)
 - Continuous background checkpointing to a recovery branch, so an idle or
   crashed session loses at most a few minutes of work — see
   [Continuous Checkpointing](#continuous-checkpointing)
 - An advisory session lock so two GitPDM instances don't silently fight over
   the same working tree
+- An advisory "who else has this open" presence indicator, so two people
+  editing the same file at once get a heads-up before they collide instead
+  of finding out at push time — see
+  [Advisory File Presence](#advisory-file-presence)
 - Shallow-clone support with a "history truncated" banner and one-click
   deepen, for fast cold starts
 - Preview export and publishing pipeline (thumbnail PNG, JSON metadata, STL)
@@ -412,63 +413,28 @@ Branch switching is currently limited because FreeCAD `.FCStd` files are ZIP arc
 
 ---
 
-## Storage Modes
+## Advisory File Presence
 
-Every repository has one storage mode, recorded in
-`.freecad-pdm/config.json`'s `storageMode` field (`"delta"` or `"lfs"`) and
-enforced in `.gitattributes` — the two modes are mutually exclusive **by
-design**, not just by convention (GitPDM won't let a repo end up in both at
-once):
+GitPDM tracks, per repository, which `.FCStd` files are currently open and
+by whom, via a dedicated `gitpdm/presence` branch holding one small JSON
+file (`core/presence.py`, `git/client.py`'s presence plumbing) — no setup
+needed, and it works with any git host since it's plain git underneath.
 
-| | **Delta mode (default)** | **LFS mode (opt-in)** |
-|---|---|---|
-| `.FCStd` compression | 0 (store, no deflate) — scoped to the moment of each save, restored right after | Normal (restored to your prior FreeCAD preference) |
-| Git history | Plain git objects, delta-compressible across saves | Git LFS pointers; each version stored in full |
-| Cost | Free, unmetered on GitHub | GitHub's free LFS allowance: ~1 GiB storage, ~1 GiB/month bandwidth |
-| File locking | Not available | Available (prevents two people editing the same `.FCStd` at once) |
+When you open a document that someone else already has open, GitPDM shows a
+one-time, non-blocking notice ("Also open by Alice, last seen 3m ago") and a
+small status label next to the repo name. **This is advisory, not
+enforcement** — it never blocks a save or a checkout, the same design
+philosophy as the session lock above. `.FCStd` files can't be merged either
+way, so preventing a collision outright would need real file locking; what
+this gives you instead is the chance to coordinate *before* you both sink
+time into edits that would collide, without any of the cost or setup of a
+locking system. See
+`Dev_Docs/PRESENCE_AND_LFS_REMOVAL_PLAN.md` for the full design rationale,
+including why GitPDM deliberately doesn't offer real file locking.
 
-**These are opposites on purpose** (R1.1/R4.2): compression=0 makes each
-saved file bigger on disk but keeps unchanged bytes identical across saves,
-which is what lets Git (or LFS) delta-compress or dedupe between versions.
-Turning LFS on without also restoring normal compression would store every
-uncompressed version in full, multiplying storage and bandwidth for no
-benefit — so GitPDM restores normal compression automatically in LFS mode,
-and the combination "compression 0 + LFS" is unreachable through the UI.
-
-Change a repo's mode via **Git PDM → Change Storage Mode…** (or the panel's
-Storage Mode row); switching always shows a confirmation explaining the
-consequence, in either direction — never a silent flip. See also
-[Why GitPDM Sets FreeCAD's Compression Level to 0](#why-gitpdm-sets-freecads-compression-level-to-0-in-delta-mode)
-for exactly when and how the compression change happens.
-
-### Benchmark
-
-`tools/storage_mode_benchmark.py` saves a synthetic document 10× per mode
-and reports git's packed size after `git gc`. **Read this caveat before the
-numbers**: FreeCAD isn't pip-installable, so the script can't drive real
-`App.Document.save()` calls — it zips a synthetic ~160 KB XML-like payload
-instead of real BREP geometry, using `ZIP_STORED`/`ZIP_DEFLATED` to stand in
-for compression 0/3. A real run (2026-07-19, this synthetic proxy):
-
-```
-=== Summary (packed size after git gc) ===
-delta: 59.78 KiB
-lfs: 5.45 KiB
-```
-
-**LFS mode "wins" here** — which is the opposite of what delta mode is
-supposed to demonstrate, and is the script's own documented caveat playing
-out for real: at this small, synthetic scale, generic zlib deflate over
-repetitive text-like content already lets git's own delta compression find
-cross-version similarity just as well as (better than, in this run) storing
-it uncompressed. Real `.FCStd` files differ in exactly the ways that matter
-here — genuine BREP binary data, topological-naming churn on parametric
-edits, and file sizes far larger than this toy example — which is expected
-to make delta mode's advantage real in practice even though it doesn't show
-up in this small synthetic test. Treat these numbers as a worked example of
-the *measurement technique*, not proof of which mode is smaller for your
-project; run the same script's technique through FreeCAD's own CLI
-(`freecadcmd`) against a real project for a trustworthy verdict.
+An entry that goes quiet for more than 15 minutes (a crash, a force-quit) is
+treated as stale and stops being shown — it never permanently "sticks" a
+file as open.
 
 ---
 
@@ -531,7 +497,7 @@ without deepening first — the banner is informational, not a blocker.
 While a document is dirty, GitPDM saves it and snapshots the working tree
 onto a `gitpdm/recovery` git branch once either **45 seconds of idle time**
 have passed since your last edit, or **3 minutes** have passed since the
-last checkpoint (10 minutes in `lfs` storage mode) — whichever comes first,
+last checkpoint — whichever comes first,
 so continuous active editing still gets checkpointed periodically instead of
 never going idle. This is via git plumbing only, so it never touches your
 real commit history, moves `HEAD`, or does anything porcelain-level that
@@ -555,9 +521,6 @@ if FreeCAD or your machine crashes.
   is at least as up to date as any earlier checkpoint of that same tree, so
   there's nothing to confirm. You can also clear one on demand anytime via
   **Git PDM → Clear Recovery Checkpoint**.
-- In `lfs` storage mode, checkpoints are spaced further apart by default —
-  each one is a full stored LFS object, so frequent checkpoints are more
-  expensive there than in `delta` mode.
 
 ---
 
@@ -646,8 +609,9 @@ High-level modules:
   `gitea/`, `bitbucket/`, `sourcehut/` (each a subpackage), `shared/`
   (the host-agnostic HTTP client/cache/rate-limiter parts)
 - `export/` — preview generation pipeline (thumbnails, mesh export, manifest)
-- `core/` — shared utilities: logging, jobs, paths, settings, storage mode,
-  session lock, continuous checkpointing, per-repo provider selection
+- `core/` — shared utilities: logging, jobs, paths, settings, session lock,
+  advisory file presence, continuous checkpointing, per-repo provider
+  selection
 - `ui/` — the dockable panel and its feature handlers, plus the standalone
   Connections dialog for credential management
 
@@ -686,7 +650,8 @@ coding agents working on GitPDM.
 
 - Support for GitLab, Bitbucket, Gitea/Forgejo, and SourceHut, alongside
   GitHub — see [How to Connect a Non-GitHub Host](#how-to-connect-a-non-github-host)
-- Repo-scoped storage modes (delta vs. LFS) — see [Storage Modes](#storage-modes)
+- Advisory "who else has this open" file presence — see
+  [Advisory File Presence](#advisory-file-presence)
 - Continuous background checkpointing — see [Continuous Checkpointing](#continuous-checkpointing)
 - Headless/container operation via environment-variable credentials — see
   [Credential Chain & Environment Variables](#credential-chain--environment-variables)
@@ -734,34 +699,34 @@ That’s why GitPDM takes a safety-first approach and requires closing documents
 
 ---
 
-## Storage Modes (Delta vs. LFS)
+## Why GitPDM Doesn't Offer Git LFS File Locking
 
-**Delta mode (default, free).** GitPDM saves `.FCStd` files uncompressed so
-that git can store only what actually changed between versions, rather than
-a fresh copy each commit. Repos stay small, and plain git on GitHub is free
-and unmetered. Individual files on disk are larger; this is intentional and
-is what makes the history small.
+Git LFS has a real file-locking feature: reserve a file so a teammate can't
+edit it at the same time. Because `.FCStd` files can't be merged, that kind
+of locking looks like the obvious answer to concurrent edits — GitPDM
+carried an opt-in "LFS storage mode" built around exactly this for a while.
 
-**LFS mode (opt-in, for teams).** Git LFS adds file locking — the ability to
-reserve a file so a teammate cannot edit it simultaneously. Because `.FCStd`
-files cannot be merged, locking is the only real answer to concurrent edits.
-The cost: LFS stores every version in full, with no delta compression, and
-GitHub's free LFS allowance is ~1 GiB of storage and ~1 GiB/month of
-bandwidth. GitPDM restores normal compression in this mode to keep those
-numbers down.
+It was removed. The reasoning (recorded in full in
+`Dev_Docs/PRESENCE_AND_LFS_REMOVAL_PLAN.md`): a prevented collision and a
+resolved collision cost about the same in practice, because GitPDM's
+continuous checkpointing and recovery branch already mean no version is
+ever truly lost — a conflict just means picking a version and manually
+reapplying the other person's changes, not losing work outright. What
+locking actually saves you is the wasted *effort* of two people editing the
+same file at once without knowing it — a coordination problem, not a data-
+safety one. Real Git LFS locking also comes bundled with LFS's storage
+model (every version stored in full, no delta compression, a metered
+quota) — a real cost for a feature whose actual benefit is just "tell
+people what's already being edited."
 
-**Which do I want?** Working alone: delta mode. You do not have a
-concurrency problem, and delta mode is free. Sharing write access with
-others: LFS mode, and budget for a data pack.
-
-See [Storage Modes](#storage-modes) in the Technical Reference for the exact
-mechanics (the `.gitattributes`/`.freecad-pdm/config.json` fields) and real
-benchmark numbers, and the compression explanation below for exactly when
-GitPDM touches FreeCAD's global preference.
+GitPDM solves the coordination problem directly and for free: see
+[Advisory File Presence](#advisory-file-presence). It works on every git
+host (no LFS-locking API required), costs nothing in storage, and stays
+purely advisory — a heads-up, never a block.
 
 ---
 
-## Why GitPDM Sets FreeCAD's Compression Level to 0 (in Delta Mode)
+## Why GitPDM Sets FreeCAD's Compression Level to 0
 
 `.FCStd` files are ZIP archives, and FreeCAD compresses (deflates) the entries inside by default. Deflate output is sensitive to small input changes — editing one feature can rewrite most of the archive's compressed bytes even though the underlying model barely changed, which leaves Git nothing meaningful to diff or delta-compress between saves.
 
@@ -770,12 +735,10 @@ preference to 0 whenever a repository was opened, and left it there — which
 silently affected every `.FCStd` file you saved afterward, in any project,
 until you noticed and changed it back. That behavior is gone. GitPDM now
 scopes the change to the moment of an actual save: right before a save
-starts (and only for a document inside a `delta`-mode repo), it records your
-current compression preference, sets it to **0** for that one save, and
-restores your prior value immediately after — every time, even if you're
-also saving unrelated documents in other projects at the same time. In `lfs`
-mode this never happens at all; LFS mode keeps your normal compression
-preference throughout.
+starts, it records your current compression preference, sets it to **0**
+for that one save, and restores your prior value immediately after — every
+time, even if you're also saving unrelated documents in other projects at
+the same time.
 
 If FreeCAD or GitPDM crashes mid-save, the next time GitPDM starts it
 detects a scope left active from the interrupted save and restores your
@@ -808,7 +771,7 @@ If you’re new to version control, it helps to separate the *local* and *remote
 On performance:
 
 - Git operations are intended not to freeze the UI, but very large repositories can be slower to scan.
-- `.gitignore` and choosing the right [storage mode](#storage-modes-delta-vs-lfs) are the two main ways to keep CAD repositories manageable.
+- A good `.gitignore` (excluding `.FCBak` backups, export output you don't want tracked, etc.) is the main way to keep CAD repositories manageable in size.
 
 ---
 

@@ -24,7 +24,7 @@ Keep this table current — update it in the same PR as the work it describes.
 |---|---|---|
 | G1 credential engine | ✅ Implemented | `dev` @ `ceaa4f5`, 2026-07-17 |
 | G2 release + CI | ✅ Implemented | `dev`, 2026-07-17 |
-| G3 storage modes | ✅ Implemented & merged | `dev`, 2026-07-18 |
+| G3 storage modes | ⛔ Retired 2026-07-20 (see below) | `dev`, 2026-07-18 → retired 2026-07-20 |
 | G4 provider abstraction | ✅ Implemented & merged | `dev` @ `e5039de` (PR #7), 2026-07-18 |
 | G5 container ergonomics | ✅ Implemented & merged | `dev`, 2026-07-18 |
 | Multi-provider hosts (GitLab/Bitbucket/Gitea/SourceHut) | ✅ Implemented & merged | `dev`, 2026-07-18 |
@@ -39,6 +39,8 @@ Keep this table current — update it in the same PR as the work it describes.
 | Recovery success path no longer pops Explorer (native reopen is trustworthy now, export stays as a silent fallback) | ✅ Implemented | `dev`, 2026-07-19 |
 | Checkpoint history browsing (restore any past checkpoint, not just the latest tip) | ✅ Implemented | `dev`, 2026-07-19 |
 | Automatic self-populating recovery-export folder, chronologically named + pruned | ✅ Implemented | `dev`, 2026-07-19 |
+| Advisory file presence (Plan A — see `PRESENCE_AND_LFS_REMOVAL_PLAN.md`) | ✅ Implemented | `dev`, 2026-07-20 |
+| LFS storage-mode removal (Plan B — see `PRESENCE_AND_LFS_REMOVAL_PLAN.md`) | ✅ Implemented | `dev`, 2026-07-20 |
 | G8 | Not started | — |
 
 Also landed on `dev` (2026-07-17), outside any phase:
@@ -1087,7 +1089,21 @@ was actually *made*, breaking chronological tracking):
 
 ---
 
-## Phase G3 — Storage modes *(independent; ship any time before public docs)* ✅ IMPLEMENTED
+## Phase G3 — Storage modes *(independent; ship any time before public docs)* ⛔ RETIRED 2026-07-20
+
+**⛔ Retired 2026-07-20** — see `Dev_Docs/PRESENCE_AND_LFS_REMOVAL_PLAN.md` for
+the full record; kept below for historical reference, not as current
+behavior. Real Git LFS file locking (this phase's entire justification for
+the "lfs" mode) was never actually implemented on any provider
+(`supports_lfs_locking` stayed `False` everywhere, permanently deferred as
+D1) — on reflection, locking's real value is preventing *wasted editing
+effort*, not preventing data loss (checkpoints/recovery already make every
+state recoverable), and that value doesn't need Git LFS's storage model at
+all. Replaced by an advisory, provider-agnostic "who else has this file
+open" presence indicator (`core/presence.py`); the entire storage-mode
+split (`core/storage_mode.py`, `ui/storage_mode_dialog.py`, the wizard's
+mode picker, `supports_lfs_locking`, `git lfs install`) was then deleted.
+Every repo now behaves like the old "delta" mode, unconditionally.
 
 **Implements:** R1.1, R1.2, R1.3, R1.4. **Depends on:** nothing (parallel-safe with G1/G2).
 
@@ -1504,7 +1520,7 @@ was actually *made*, breaking chronological tracking):
 ## Deferred (tracked, not scheduled)
 
 - **R2.6** touch-viable panel — after the deployment project's touch pass produces findings.
-- **D1** LFS locking — ships with a real `lfs`-mode team user, not before.
+- ~~**D1** LFS locking~~ — retired 2026-07-20 rather than shipped; see `Dev_Docs/PRESENCE_AND_LFS_REMOVAL_PLAN.md`. Replaced by the advisory presence indicator (Plan A), which needed no per-provider locking API.
 - **D2** assembly link integrity — research spike first; likely GitPDM's long-term differentiator.
 - **GitLab full implementation** — exercises R2.1a's refresh path for real; schedule when a GitLab user exists.
 

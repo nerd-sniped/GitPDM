@@ -23,7 +23,18 @@ C4 is the one to defend hardest. Most GitPDM users will never run it in a contai
 
 ## 1. Storage & compression policy
 
-### R1.1 — Decouple compression from LFS *(priority: high)*
+**⛔ R1.1–R1.4 retired 2026-07-20** — the storage-mode split (`delta`/`lfs`)
+these requirements describe was removed; see
+`Dev_Docs/PRESENCE_AND_LFS_REMOVAL_PLAN.md` for the full rationale (Git LFS
+locking, the entire justification for `lfs` mode, was never implemented on
+any provider; the coordination value it would have provided is delivered
+instead by an advisory presence indicator that needs none of LFS's storage
+tradeoffs). Kept below for historical reference — R1.2's compression-scoping
+mechanism itself (`enter_git_friendly_compression_scope()`) is still live
+and still applies unconditionally to every repo, just no longer gated on a
+mode choice.
+
+### R1.1 — Decouple compression from LFS *(priority: high, retired)*
 
 Setting FreeCAD's compression level to 0 and enabling Git LFS are **mutually defeating**. This must be encoded in the product, not just the docs.
 
@@ -356,9 +367,9 @@ Open a discussion with the HW author proposing division of labor: HW owns compar
 
 ## 6. Deferred / research
 
-### D1 — File locking
+### D1 — File locking *(retired 2026-07-20, not shipped)*
 
-Real check-out/check-in via `git-lfs` native locking (`lockable` in `.gitattributes`, `git lfs lock` / `unlock`). GitHub already implements the server API — it exists because game studios have the same un-mergeable-binary problem. Ships with LFS mode, not before. **Not needed at user scale 1.**
+Real check-out/check-in via `git-lfs` native locking (`lockable` in `.gitattributes`, `git lfs lock` / `unlock`). GitHub already implements the server API — it exists because game studios have the same un-mergeable-binary problem. Was deferred to ship with LFS mode; instead, LFS mode itself was retired (see `Dev_Docs/PRESENCE_AND_LFS_REMOVAL_PLAN.md`) once it became clear real locking's actual value — preventing wasted editing effort, not data loss — didn't require Git LFS's storage tradeoffs at all. Replaced by an advisory, host-agnostic "who else has this open" presence indicator (`core/presence.py`) that needs no per-host locking API.
 
 ### D2 — Assembly link integrity
 

@@ -65,15 +65,16 @@ def create_user_repo(
         GitHubApiNetworkError: On network connectivity issues
     """
     if not req.name or not req.name.strip():
-        raise GitHubApiError("Repository name is required")
+        raise GitHubApiError(code="BAD_RESPONSE", message="Repository name is required")
 
     # Validate repo name (simple check: letters, numbers, ., -, _)
     import re
 
     if not re.match(r"^[a-zA-Z0-9._-]+$", req.name):
         raise GitHubApiError(
-            f"Invalid repository name '{req.name}'. "
-            "Use letters, numbers, dash, dot, or underscore."
+            code="BAD_RESPONSE",
+            message=f"Invalid repository name '{req.name}'. "
+            "Use letters, numbers, dash, dot, or underscore.",
         )
 
     # Build request body
@@ -108,20 +109,24 @@ def create_user_repo(
                 for err in errors:
                     if err.get("field") == "name":
                         raise GitHubApiError(
-                            f"Repository '{req.name}' already exists. "
-                            "Try a different name."
+                            code="BAD_RESPONSE",
+                            message=f"Repository '{req.name}' already exists. "
+                            "Try a different name.",
                         )
             except (AttributeError, TypeError):
                 pass
             raise GitHubApiError(
-                "Repository creation failed (422). Check name is unique and valid."
+                code="BAD_RESPONSE",
+                message="Repository creation failed (422). Check name is unique and valid.",
             )
         elif status == 401:
             log.warning("Unauthorized: token may have expired")
             raise GitHubApiError(
-                "Authentication failed. "
+                code="UNAUTHORIZED",
+                status=status,
+                message="Authentication failed. "
                 "Your session may have expired. "
-                "Reconnect GitHub and try again."
+                "Reconnect GitHub and try again.",
             )
         elif status == 403:
             # Check rate limit
@@ -130,20 +135,28 @@ def create_user_repo(
             )
             if remaining is not None and str(remaining) == "0":
                 raise GitHubApiError(
-                    "GitHub rate limit reached. Wait a moment and try again."
+                    code="RATE_LIMITED",
+                    status=status,
+                    message="GitHub rate limit reached. Wait a moment and try again.",
                 )
             raise GitHubApiError(
-                "Permission denied. Check that your token has repo creation scope."
+                code="FORBIDDEN",
+                status=status,
+                message="Permission denied. Check that your token has repo creation scope.",
             )
         else:
             raise GitHubApiError(
-                f"Failed to create repository (HTTP {status}). "
-                "Check your internet connection and try again."
+                code="UNKNOWN",
+                status=status,
+                message=f"Failed to create repository (HTTP {status}). "
+                "Check your internet connection and try again.",
             )
 
     # Parse success response
     if not response_json or not isinstance(response_json, dict):
-        raise GitHubApiError("Invalid response from GitHub API")
+        raise GitHubApiError(
+            code="BAD_RESPONSE", message="Invalid response from GitHub API"
+        )
 
     try:
         repo_info = CreatedRepoInfo(
@@ -154,11 +167,15 @@ def create_user_repo(
         )
 
         if not repo_info.full_name or not repo_info.clone_url:
-            raise GitHubApiError("Incomplete response from GitHub API")
+            raise GitHubApiError(
+                code="BAD_RESPONSE", message="Incomplete response from GitHub API"
+            )
 
         log.info(f"Repository created: {repo_info.full_name}")
         return repo_info
 
     except (KeyError, AttributeError, TypeError) as e:
         log.error(f"Failed to parse repo creation response: {e}")
-        raise GitHubApiError("Invalid response format from GitHub API")
+        raise GitHubApiError(
+            code="BAD_RESPONSE", message="Invalid response format from GitHub API"
+        )

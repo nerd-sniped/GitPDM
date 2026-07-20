@@ -1,14 +1,14 @@
-# GitPDM Manual Test Checklist — G3, G4, G5, G6, Multi-provider hosts
+# GitPDM Manual Test Checklist — G3 (retired), G4, G5, G6, Multi-provider hosts, Advisory File Presence
 
 Covers the phases that haven't had a real FreeCAD/Qt pass yet. G1 and G2
 are already fully verified end-to-end (see `GITPDM_DEV_PLAN.md`'s "Closed
 since the table above was first written" section) and aren't repeated here.
 G7 (docs sweep) has no runtime surface to test and is also skipped.
 
-**Branch:** everything below (G3–G6, multi-provider hosts, the bottom-dock
-UI simplification) is merged into `dev` and pushed to `origin/dev` as of
-2026-07-19 — a single `dev` checkout covers the whole file, no merging
-required.
+**Branch:** everything below (G3's retirement, G4–G6, multi-provider hosts,
+the bottom-dock UI simplification, Advisory File Presence) is merged into
+`dev` and pushed to `origin/dev` as of 2026-07-20 — a single `dev` checkout
+covers the whole file, no merging required.
 
 **Report View setup (do this first):** most of G6's log lines
 (`log.info`/`log.debug`) go to FreeCAD's `PrintLog` channel, which Report
@@ -38,36 +38,47 @@ error text/log line before moving on.
 
 ---
 
-## G3 — Storage modes
+## G3 — Storage (retired 2026-07-20; see `PRESENCE_AND_LFS_REMOVAL_PLAN.md`)
 
-### T3.1 — Fresh repo defaults to delta mode
+The storage-mode split (delta/LFS, mode switching, the benchmark script)
+this section used to test was removed outright — every repo now behaves
+like the old "delta" mode, unconditionally, with no mode choice anywhere.
+What's left to verify is that the removal was clean and that the one piece
+of G3 that's still alive (save-scoped compression) still works.
 
-**Steps:** Create a brand-new repo via GitPDM ("Start New Project…").
-Open `.freecad-pdm/config.json` in the repo.
-**Expected:** `storageMode` is `"delta"` (or the key is absent, which also
-means delta — `get_storage_mode()` defaults to delta on a missing key).
-**Result:** ___
+### T3.1 — `.gitattributes` correctness on a fresh repo
 
-### T3.2 — `.gitattributes` correctness in delta mode
-
-**Steps:** In the same repo, open `.gitattributes`.
+**Steps:** Create a brand-new repo via GitPDM ("Start New Project…"). Open
+`.gitattributes`.
 **Expected:** Contains exactly one `*.FCStd` line: `*.FCStd binary`. No
-`-delta`, no `filter=lfs` line for `*.FCStd`.
+`-delta`, no `filter=lfs` line for `*.FCStd`. No storage-mode UI appears
+anywhere in the wizard.
 **Result:** ___
 
-### T3.3 — Compression scoping is save-scoped, not repo-scoped
+### T3.2 — No storage-mode UI remains anywhere
 
-This is the regression T3.3 exists to catch: G3 replaced code that used to
-silently pin FreeCAD's **global** compression preference to 0 whenever a
-GitPDM repo was merely open. The fix scopes the override tightly around
-each save call (`slotStartSaveDocument`/`slotFinishSaveDocument`), not the
-whole time a repo is active.
+**Steps:** With a repo open, check: the panel's repo-selector area, the
+"Git PDM" top menu-bar dropdown, and the new-repo wizard's options page.
+**Expected:** No "Storage Mode" row, no "Change Storage Mode…" menu entry,
+no delta/LFS radio choice anywhere. `tools/storage_mode_benchmark.py`,
+`core/storage_mode.py`, and `ui/storage_mode_dialog.py` no longer exist in
+the source tree.
+**Result:** ___
+
+### T3.3 — Compression scoping is still save-scoped, not repo-scoped
+
+This is the regression T3.3 has always existed to catch: FreeCAD's
+**global** compression preference must never get silently pinned to 0 just
+because a GitPDM repo is open. The fix scopes the override tightly around
+each save call (`slotStartSaveDocument`/`slotFinishSaveDocument`), and as
+of the storage-mode removal this now applies unconditionally to every
+repo, not just ones previously flagged "delta".
 
 **Steps:**
 1. Note your current global compression preference: Edit → Preferences →
    General → Document → Compression level (or via Python console:
    `FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Document").GetInt("CompressionLevel", 3)`).
-2. Open a delta-mode GitPDM repo's `.FCStd` document and save it (Ctrl+S).
+2. Open any GitPDM repo's `.FCStd` document and save it (Ctrl+S).
 3. Immediately after the save completes, re-check the compression
    preference via the same Python console command.
 4. Open/save an unrelated document that is **not** part of any GitPDM repo
@@ -79,29 +90,7 @@ value from step 1 (not left at 0). The unrelated document's save in step 4
 is never affected.
 **Result:** ___
 
-### T3.4 — Switch delta → lfs
-
-**Steps:** With the repo open, click the "Change…" button next to
-"Storage Mode:" in the panel. Select "LFS" in the Storage Mode dialog.
-**Expected:** A blocking warning dialog appears before anything changes,
-titled around restoring compression / LFS storage/bandwidth /
-"Existing files won't shrink or migrate until you save them again."
-Confirming it: `.gitattributes`'s `*.FCStd` line becomes
-`*.FCStd filter=lfs diff=lfs merge=lfs -text`; `storageMode` in
-`.freecad-pdm/config.json` becomes `"lfs"`; FreeCAD's compression
-preference reverts to your normal (non-zero) default on the next save.
-**Result:** ___
-
-### T3.5 — Switch lfs → delta
-
-**Steps:** Reverse T3.4 — switch back to Delta mode via the same dialog.
-**Expected:** A warning dialog with the delta-mode consequences appears.
-After confirming: `.gitattributes`'s `*.FCStd` line is back to
-`*.FCStd binary` (no leftover LFS filter line), `storageMode` is `"delta"`,
-and the next save forces compression back to 0.
-**Result:** ___
-
-### T3.6 — Stuck compression scope recovers on next startup
+### T3.4 — Stuck compression scope recovers on next startup
 
 Simulates a crash mid-save that leaves the compression override "stuck".
 
@@ -121,14 +110,71 @@ compression preference ends up at `3` (or whatever value you set), not
 stuck at 0.
 **Result:** ___
 
-### T3.7 — Benchmark script runs and reports real numbers
+### T3.5 — Legacy LFS-mode repo shows a one-time notice, doesn't crash
 
-**Steps:** `python tools/storage_mode_benchmark.py` (check `--help` for
-any required args — it saves the same document 10× with a small change
-per save, in each mode, and reports `git count-objects -vH` growth).
-**Expected:** Runs to completion, prints a growth comparison between delta
-and lfs modes that looks sane (delta mode's repo growth should be
-noticeably sublinear vs. lfs's roughly-linear-per-save growth).
+**Steps:** Hand-edit an existing repo's `.freecad-pdm/config.json` to add
+`"storageMode": "lfs"`, then open that repo in GitPDM.
+**Expected:** A one-time informational dialog appears ("Legacy LFS Storage
+Mode…") explaining GitPDM no longer manages this, without touching
+`.gitattributes` or the config file. Reopening the same repo again in the
+same session does not re-show the dialog.
+**Result:** ___
+
+---
+
+## Advisory File Presence (Plan A, 2026-07-20)
+
+Tests the "who else has this file open" indicator — see
+`Dev_Docs/PRESENCE_AND_LFS_REMOVAL_PLAN.md`. This is advisory only: it must
+never block an open, save, or close. Needs the same two-FreeCAD-processes
+setup as the G5 session-lock tests (see Prerequisites above), both pointed
+at the same repo/remote, ideally under two different git identities
+(`git config user.name`/`user.email`, set `--local` per checkout so they
+differ).
+
+### TP.1 — Second opener sees a non-blocking notice
+
+**Steps:** In FreeCAD instance A, open a `.FCStd` document from the shared
+repo. In instance B (different git identity), open the *same* document.
+**Expected:** Instance B shows a non-blocking info dialog naming instance
+A's git identity and "last seen" a few moments ago. Instance B's document
+still opens normally — nothing is blocked. A small status label appears
+near the repo name in instance B's panel.
+**Result:** ___
+
+### TP.2 — Opening a different file doesn't trigger a false warning
+
+**Steps:** With instance A still holding one document open, open a
+*different* `.FCStd` file in instance B.
+**Expected:** No warning in instance B.
+**Result:** ___
+
+### TP.3 — Closing releases the entry
+
+**Steps:** Close the document in instance A. In instance B, close and
+reopen the same document (to force a fresh presence check).
+**Expected:** Instance B no longer sees a warning for that file.
+**Result:** ___
+
+### TP.4 — Stale entry from a crash doesn't stick
+
+**Steps:** Open a document in instance A, then force-kill instance A's
+FreeCAD process (Task Manager end-task, or `kill -9`) without closing the
+document first. Wait a few minutes, then open the same document in
+instance B.
+**Expected:** Instance B does not show a warning once the entry is older
+than the staleness window (15 minutes) — if tested sooner than that, the
+warning may still legitimately appear (this is expected: staleness is
+time-based, not crash-detecting).
+**Result:** ___
+
+### TP.5 — Works with no network / offline
+
+**Steps:** Disconnect the machine from the network (or point the repo's
+`origin` at an unreachable host), then open a `.FCStd` document.
+**Expected:** The document opens normally with no crash, hang, or error
+dialog. No presence warning is shown (nothing to check against). Closing
+the panel/FreeCAD afterward is not noticeably slower than usual.
 **Result:** ___
 
 ---
@@ -372,8 +418,8 @@ the corruption class the rest of this codebase's safety guards exist to
 prevent. Treat this as the highest-priority section in the file.
 
 **Timing reference:** idle-debounce 45s since your last edit; max-interval
-backstop 3 minutes since the last checkpoint (10 minutes in `lfs` mode),
-so continuous active editing still gets checkpointed periodically. A
+backstop 3 minutes since the last checkpoint, so continuous active editing
+still gets checkpointed periodically. A
 `QTimer` polls every 10s to check whether either condition is met — that's
 scheduling granularity, not the checkpoint cadence itself.
 

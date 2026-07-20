@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Optional
 
-from freecad_gitpdm.core import log, settings, storage_mode
+from freecad_gitpdm.core import log, settings
 from freecad_gitpdm.git.client import RECOVERY_REF, CmdResult, RecoveryCheckpointEntry
 
 # Folder (inside .git/, never walked by `git add`/checked in by any commit,
@@ -55,11 +55,6 @@ DEFAULT_IDLE_SECONDS = 45
 # continuous active editing still gets checkpointed periodically (within
 # R2.5's 2-5min band).
 DEFAULT_MAX_INTERVAL_SECONDS = 180
-
-# In "lfs" storage mode each checkpoint is a full stored LFS object rather
-# than a cheap delta-compressible commit, so the backstop is lengthened
-# (R2.5's settings-coupling requirement).
-LFS_MAX_INTERVAL_SECONDS = 600
 
 
 @dataclass
@@ -107,10 +102,10 @@ class RecoveryStatus:
 
 
 def max_interval_seconds_for_repo(repo_root) -> int:
-    """R2.5's settings coupling: lfs mode gets a longer backstop interval."""
-    mode = storage_mode.get_storage_mode(repo_root)
-    if mode == storage_mode.MODE_LFS:
-        return LFS_MAX_INTERVAL_SECONDS
+    """The max-interval backstop for a repo. A single constant now that
+    storage mode is gone (see Dev_Docs/PRESENCE_AND_LFS_REMOVAL_PLAN.md) --
+    kept as a function rather than inlining the constant at call sites, in
+    case a future per-repo override reappears."""
     return DEFAULT_MAX_INTERVAL_SECONDS
 
 

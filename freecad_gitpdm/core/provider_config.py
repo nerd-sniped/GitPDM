@@ -3,10 +3,9 @@
 GitPDM per-repo provider selection (Phase G4, R5.1/R5.3).
 
 Stores which git host a repo talks to in `.freecad-pdm/config.json`
-(the same config-file mechanism `core/storage_mode.py` uses for storage
-mode, and `export/preset.py` uses for export presets) so two repos with
-different providers open in one FreeCAD session don't fight over global
-state.
+(the same config-file mechanism `export/preset.py` uses for export presets)
+so two repos with different providers open in one FreeCAD session don't
+fight over global state.
 
     {
       "provider": "github" | "generic" | "gitlab",

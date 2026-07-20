@@ -29,7 +29,6 @@ class GiteaProvider(BaseProvider):
     capabilities = ProviderCapabilities(
         supports_device_flow=False,
         supports_repo_creation=True,
-        supports_lfs_locking=False,  # D1, deferred until a real lfs-mode team user exists
         supports_pull_requests=False,
         requires_manual_token=True,
         requires_host_url=True,

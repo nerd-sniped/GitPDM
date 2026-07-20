@@ -64,7 +64,7 @@ def get_diagnostics():
         from freecad_gitpdm.git import client
 
         git_client = client.GitClient()
-        git_version = git_client.get_git_version()
+        git_version = git_client.git_version()
         diagnostics["git_available"] = git_version is not None
         diagnostics["git_version"] = git_version if git_version else "Not found"
     except Exception as e:

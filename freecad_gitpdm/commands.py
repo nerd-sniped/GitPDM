@@ -294,25 +294,6 @@ class GitPDMToggleStagePreviewsCommand:
         return True
 
 
-class GitPDMChangeStorageModeCommand:
-    """Open the delta-vs-LFS storage mode change dialog."""
-
-    def GetResources(self):
-        return {
-            "Pixmap": "",
-            "MenuText": "Change Storage Mode…",
-            "ToolTip": "Switch between Delta (default) and LFS storage modes for *.FCStd files",
-        }
-
-    def Activated(self):
-        dock = _find_or_create_dock()
-        _show_dock(dock)
-        dock._repo_validator.change_storage_mode_clicked()
-
-    def IsActive(self):
-        return bool(settings.load_repo_path())
-
-
 class GitPDMDeepenHistoryCommand:
     """Fetch older history into a shallow clone."""
 
@@ -384,7 +365,6 @@ FreeCADGui.addCommand("GitPDM_Connections", GitPDMConnectionsCommand())
 FreeCADGui.addCommand("GitPDM_GeneratePreviews", GitPDMGeneratePreviewsCommand())
 FreeCADGui.addCommand("GitPDM_OpenPreviewFolder", GitPDMOpenPreviewFolderCommand())
 FreeCADGui.addCommand("GitPDM_ToggleStagePreviews", GitPDMToggleStagePreviewsCommand())
-FreeCADGui.addCommand("GitPDM_ChangeStorageMode", GitPDMChangeStorageModeCommand())
 FreeCADGui.addCommand("GitPDM_DeepenHistory", GitPDMDeepenHistoryCommand())
 FreeCADGui.addCommand(
     "GitPDM_ClearRecoveryCheckpoint", GitPDMClearRecoveryCheckpointCommand()

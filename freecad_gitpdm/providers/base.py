@@ -25,7 +25,6 @@ class ProviderCapabilities:
 
     supports_device_flow: bool = False
     supports_repo_creation: bool = False
-    supports_lfs_locking: bool = False
     supports_pull_requests: bool = False
 
     # Multi-provider support (PAT-paste hosts: GitLab, Bitbucket, Gitea/
@@ -192,7 +191,6 @@ class GenericProvider(BaseProvider):
     capabilities = ProviderCapabilities(
         supports_device_flow=False,
         supports_repo_creation=False,
-        supports_lfs_locking=False,
         supports_pull_requests=False,
     )
     default_host = ""

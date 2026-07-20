@@ -104,6 +104,11 @@ DEFAULT_SHALLOW_CLONE_DEPTH = 20
 # out, never merged automatically -- see commit_recovery_checkpoint() below.
 RECOVERY_REF = "refs/heads/gitpdm/recovery"
 
+# Advisory cross-user "who has this file open" presence branch (Plan A,
+# 2026-07-20). Like RECOVERY_REF, never checked out and never merged -- see
+# core/presence.py, which is the only caller of the plumbing methods below.
+PRESENCE_REF = "refs/heads/gitpdm/presence"
+
 
 @dataclass
 class FileStatus:
@@ -1504,6 +1509,43 @@ class GitClient:
 
         return cmd_result
 
+    def _run_command_with_input(self, args, input_text, timeout=60):
+        """Like _run_command, but feeds `input_text` on stdin -- needed for
+        plumbing commands that read their payload from stdin rather than
+        argv (`hash-object --stdin`, `mktree`).
+
+        Deliberately encodes to bytes rather than using `text=True` for the
+        input side: `mktree`'s entry line is newline-sensitive (it splits
+        entries on `\\n`), and Windows' text-mode stdin translates `\\n` to
+        `\\r\\n` on write, which corrupts the entry into a filename with a
+        trailing `\\r` baked into the tree object itself -- not just cosmetic,
+        since that `\\r` becomes part of the path git records forever
+        (caught via `git ls-tree` showing `greeting.txt\\r` during
+        development). Encoding ourselves and decoding stdout/stderr
+        ourselves sidesteps the platform-dependent translation entirely.
+        """
+        cmd_result = CmdResult(ok=False, stdout="", stderr="", error_code=None)
+
+        try:
+            proc = subprocess.run(
+                args,
+                input=input_text.encode("utf-8"),
+                capture_output=True,
+                timeout=timeout,
+                **_get_subprocess_kwargs(),
+            )
+            cmd_result.stdout = proc.stdout.decode("utf-8", errors="replace").strip()
+            cmd_result.stderr = proc.stderr.decode("utf-8", errors="replace").strip()
+            cmd_result.ok = proc.returncode == 0
+        except subprocess.TimeoutExpired:
+            cmd_result.stderr = "Command timed out"
+            cmd_result.error_code = "TIMEOUT"
+        except OSError as e:
+            cmd_result.stderr = str(e)
+            cmd_result.error_code = "OS_ERROR"
+
+        return cmd_result
+
     def rev_parse(self, repo_root, ref):
         """
         Resolve `ref` to a commit SHA, or None if it doesn't exist. Read-only
@@ -1870,6 +1912,127 @@ class GitClient:
             )
 
         return local_result
+
+    # --- Presence-branch plumbing (advisory "who has this open" tracking) --
+    #
+    # Unlike the recovery-branch plumbing above (which snapshots the entire
+    # working tree via a throwaway index), the presence branch's tree holds
+    # exactly one small JSON file, built directly from a string with plain
+    # object-writing plumbing (hash-object/mktree/commit-tree/update-ref) --
+    # no index, no working-tree dependency, since the JSON content has
+    # nothing to do with whatever happens to be on disk in repo_root. All
+    # four methods are read/write primitives only; core/presence.py owns the
+    # merge/retry policy and is the only intended caller.
+
+    def hash_object(self, repo_root, content):
+        """Write `content` as a git blob (no working-tree file needed) and
+        return its SHA, or None on failure."""
+        if not self.is_git_available():
+            return None
+        if not repo_root or not os.path.isdir(repo_root):
+            return None
+
+        git_cmd = self._get_git_command()
+        result = self._run_command_with_input(
+            [git_cmd, "-C", repo_root, "hash-object", "-w", "--stdin"],
+            input_text=content,
+            timeout=15,
+        )
+        return result.stdout.strip() if result.ok and result.stdout.strip() else None
+
+    def make_tree_with_file(self, repo_root, filename, blob_sha):
+        """Build a tree containing exactly one file entry (`filename` ->
+        `blob_sha`) and return the tree's SHA, or None on failure."""
+        if not self.is_git_available():
+            return None
+        if not repo_root or not os.path.isdir(repo_root):
+            return None
+
+        git_cmd = self._get_git_command()
+        entry = f"100644 blob {blob_sha}\t{filename}\n"
+        result = self._run_command_with_input(
+            [git_cmd, "-C", repo_root, "mktree"],
+            input_text=entry,
+            timeout=15,
+        )
+        return result.stdout.strip() if result.ok and result.stdout.strip() else None
+
+    def commit_tree_with_parent(self, repo_root, tree_sha, parent_sha, message):
+        """`commit-tree`, with `parent_sha` optional (omitted entirely for a
+        branch's first-ever commit, unlike commit_recovery_checkpoint which
+        always has HEAD to fall back on)."""
+        if not self.is_git_available():
+            return CmdResult(False, "", "Git not available", "NO_GIT")
+        if not repo_root or not os.path.isdir(repo_root):
+            return CmdResult(False, "", "Invalid repository", "INVALID_REPO")
+
+        git_cmd = self._get_git_command()
+        args = [git_cmd, "-C", repo_root, "commit-tree", tree_sha]
+        if parent_sha:
+            args.extend(["-p", parent_sha])
+        args.extend(["-m", message])
+        return self._run_command(args, timeout=30)
+
+    def update_ref_cas(self, repo_root, ref, new_sha, expected_old_sha=None):
+        """Compare-and-swap `update-ref`: succeeds unconditionally if
+        `expected_old_sha` is falsy (creating a brand-new ref), otherwise
+        fails loudly if `ref` no longer points at `expected_old_sha` (someone
+        else updated it first) rather than clobbering their write."""
+        if not self.is_git_available():
+            return CmdResult(False, "", "Git not available", "NO_GIT")
+        if not repo_root or not os.path.isdir(repo_root):
+            return CmdResult(False, "", "Invalid repository", "INVALID_REPO")
+
+        git_cmd = self._get_git_command()
+        args = [git_cmd, "-C", repo_root, "update-ref", ref, new_sha]
+        if expected_old_sha:
+            args.append(expected_old_sha)
+        return self._run_command(args, timeout=15)
+
+    def read_file_at_ref(self, repo_root, ref, filename):
+        """Read `filename`'s content as of `ref`'s tip, or None if the ref or
+        the file within it doesn't exist. Read-only, safe any time. Trailing
+        whitespace is stripped (the same CmdResult.stdout convention as every
+        other method here) -- harmless for the JSON payload this exists for,
+        but not a byte-exact file read."""
+        if not self.is_git_available():
+            return None
+        if not repo_root or not os.path.isdir(repo_root):
+            return None
+
+        git_cmd = self._get_git_command()
+        result = self._run_command(
+            [git_cmd, "-C", repo_root, "cat-file", "-p", f"{ref}:{filename}"],
+            timeout=15,
+        )
+        return result.stdout if result.ok else None
+
+    def fetch_ref(self, repo_root, ref_name, remote="origin"):
+        """Fast-forward the local `ref_name` to match `remote`'s, creating it
+        locally if it doesn't exist yet. Best-effort by design (offline, or
+        the ref not existing on the remote yet, are both routine, not
+        errors) -- callers should treat a failed fetch as "proceed with
+        whatever's local" rather than surfacing it."""
+        if not self.is_git_available():
+            return CmdResult(False, "", "Git not available", "NO_GIT")
+        if not repo_root or not os.path.isdir(repo_root):
+            return CmdResult(False, "", "Invalid repository", "INVALID_REPO")
+
+        git_cmd = self._get_git_command()
+        cred_args = _headless_credential_args()
+        result = self._run_command(
+            [
+                git_cmd,
+                *cred_args,
+                "-C",
+                repo_root,
+                "fetch",
+                remote,
+                f"{ref_name}:{ref_name}",
+            ],
+            timeout=60,
+        )
+        return result
 
     def _classify_commit_error(self, stderr_text):
         """Map commit stderr output to a friendly code."""
@@ -2290,23 +2453,6 @@ class GitClient:
         git_cmd = self._get_git_command()
         return self._run_command(
             [git_cmd, "-C", repo_root, "branch", "-M", branch],
-            timeout=30,
-        )
-
-    def lfs_install(self):
-        """
-        Run 'git lfs install' to set up Git LFS hooks in git config.
-        This is a one-time setup per user environment.
-
-        Returns:
-            CmdResult indicating success/failure
-        """
-        if not self.is_git_available():
-            return CmdResult(False, "", "Git not available", "NO_GIT")
-
-        git_cmd = self._get_git_command()
-        return self._run_command(
-            [git_cmd, "lfs", "install", "--skip-smudge"],
             timeout=30,
         )
 

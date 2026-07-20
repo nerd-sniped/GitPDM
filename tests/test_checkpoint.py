@@ -586,28 +586,12 @@ class TestShouldCheckpoint:
 
 
 class TestMaxIntervalForRepo:
-    def test_delta_mode_uses_default_interval(self, tmp_path):
+    def test_uses_default_interval(self, tmp_path):
         repo_root = tmp_path / "repo"
         (repo_root / ".freecad-pdm").mkdir(parents=True)
         assert (
             checkpoint.max_interval_seconds_for_repo(str(repo_root))
             == checkpoint.DEFAULT_MAX_INTERVAL_SECONDS
-        )
-
-    def test_lfs_mode_lengthens_interval(self, tmp_path):
-        from freecad_gitpdm.core import storage_mode
-
-        repo_root = tmp_path / "repo"
-        repo_root.mkdir()
-        storage_mode.apply_storage_mode(str(repo_root), storage_mode.MODE_LFS)
-
-        assert (
-            checkpoint.max_interval_seconds_for_repo(str(repo_root))
-            == checkpoint.LFS_MAX_INTERVAL_SECONDS
-        )
-        assert (
-            checkpoint.LFS_MAX_INTERVAL_SECONDS
-            > checkpoint.DEFAULT_MAX_INTERVAL_SECONDS
         )
 
 

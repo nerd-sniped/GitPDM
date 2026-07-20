@@ -58,7 +58,6 @@ class TestGenericProviderZeroApi:
         assert caps == ProviderCapabilities(
             supports_device_flow=False,
             supports_repo_creation=False,
-            supports_lfs_locking=False,
             supports_pull_requests=False,
         )
 
@@ -89,7 +88,6 @@ class TestGitHubProviderCapabilities:
         caps = GitHubProvider.capabilities
         assert caps.supports_device_flow is True
         assert caps.supports_repo_creation is True
-        assert caps.supports_lfs_locking is False
         assert caps.supports_pull_requests is False
 
     def test_owns_auth_endpoints(self):
@@ -115,7 +113,6 @@ class TestGitLabProviderCapabilities:
         caps = GitLabProvider.capabilities
         assert caps.supports_device_flow is False
         assert caps.supports_repo_creation is True
-        assert caps.supports_lfs_locking is False
         assert caps.supports_pull_requests is False
         assert caps.requires_manual_token is True
 

@@ -33,7 +33,6 @@ class SourceHutProvider(BaseProvider):
     capabilities = ProviderCapabilities(
         supports_device_flow=False,
         supports_repo_creation=True,
-        supports_lfs_locking=False,
         supports_pull_requests=False,
         requires_manual_token=True,
     )

@@ -76,6 +76,25 @@ correct) — see `GITPDM_DEV_PLAN.md`'s status ledger for details. The overridin
 for every phase: desktop behavior must be a no-op or an improvement ("the
 desktop user is sacred").
 
+**G3 (storage modes) was retired 2026-07-20** — see
+`Dev_Docs/PRESENCE_AND_LFS_REMOVAL_PLAN.md` for the full record. Real Git
+LFS file locking (the entire justification for the "lfs" storage mode) was
+never actually implemented on any provider (`supports_lfs_locking` was
+`False` everywhere, permanently deferred) — a closer look concluded that
+locking's real value is preventing *wasted editing effort*, not preventing
+data loss (checkpoints/recovery already make every state recoverable), and
+that value doesn't require Git LFS's storage model at all. Two changes
+landed together: an advisory, provider-agnostic "who else has this file
+open" presence indicator (`core/presence.py`, a `gitpdm/presence` branch,
+built on the same git-plumbing pattern as the recovery branch), then the
+entire storage-mode split was removed (`core/storage_mode.py`,
+`ui/storage_mode_dialog.py`, the wizard's mode picker, the `Change Storage
+Mode…` command, `supports_lfs_locking`, `git lfs install` — all deleted).
+Every repo behaves like the old "delta" mode now, unconditionally.
+`ui/repo_validator.py` surfaces a one-time notice for any repo whose
+`.freecad-pdm/config.json` still declares `"storageMode": "lfs"` from
+before this, rather than silently ignoring it.
+
 ## Entry points / how FreeCAD loads this
 
 - `Init.py` / `InitGui.py` — FreeCAD addon bootstrap (workbench registration).
@@ -83,6 +102,49 @@ desktop user is sacred").
   `InitGui.py`'s `Initialize()` keeps the toolbar to just two frequent
   one-click commands (Toggle Panel, Save Into Repo); everything else lives
   only in the sectioned "Git PDM" menu-bar dropdown it also builds there.
+  A real-environment install (2026-07-20, right after the workbench icon
+  was added) walked through four live iterations to get `Icon` (a
+  `GitPDMWorkbench` class attribute) working, mapping out real FreeCAD
+  behavior GitPDM now depends on. FreeCAD needs `Icon`/`MenuText`/`ToolTip`
+  for *every installed* addon up front (to populate the workbench
+  selector), without running each one's full `Init`/`InitGui` — so it
+  reads the class body via some lightweight scan, in an execution context
+  visibly different from a normal full-file exec: (1) `__file__` is never
+  defined there (`Icon = os.path.join(os.path.dirname(__file__), ...)` →
+  `name '__file__' is not defined`) — consistent with documented FreeCAD
+  behavior that Init.py/InitGui.py are exec'd, never imported, so there's
+  no `__file__` the way a normally-imported module gets one. (2) Moving
+  that computation into a module-level variable assigned via `try/except`
+  one line above the class (`_ADDON_ICON = ...`) failed the same way
+  (`name '_ADDON_ICON' is not defined`), even though the plain
+  `import os` / `import FreeCADGui` statements above it resolved fine in
+  every iteration — so this scan replays plain top-level `import`
+  statements from the rest of the file, but not other top-level statement
+  shapes (assignments, try/except). (3) Swapping in a plain, unconditional
+  `import freecad_gitpdm` (no intermediate variable) to get a reliable
+  `__file__` from *that* package still failed
+  (`name 'freecad_gitpdm' is not defined`) — unlike `os`/`FreeCADGui`
+  (modules already loaded into the embedded interpreter before any addon
+  code runs), `freecad_gitpdm` is a real filesystem package needing
+  `sys.path` to include the addon's own directory, and this scan
+  apparently runs *before* that happens, so the import silently failed
+  and the name was never bound — meaning nothing that depends on this
+  addon's own files being importable/path-relative can work at this
+  point, only FreeCAD's own already-loaded modules are reliably
+  available. **Working fix**: derive the path from `FreeCAD`'s own
+  `getUserAppDataDir()` instead (joined with the literal `Mod/GitPDM/...`
+  layout this project's own install docs tell users to use), computed
+  entirely *inside* the class body via a same-scope `try`/`except` (proven
+  safe unlike a module-level one — `MenuText`/`ToolTip`/`Icon` assignments
+  already ran sequentially in this same class-body namespace across all
+  four iterations; a class-body-local variable like `_icon_candidate`
+  assigned one line above `Icon`, in the *same* scope, is a fundamentally
+  different thing from a *module*-level one per (2)) falling back to `""`
+  if the guessed path doesn't exist on disk (e.g. a non-standard install
+  location) rather than blocking registration. Confirmed against a local
+  Python interpreter with `FreeCAD`/`FreeCADGui` stubbed in, both for the
+  file-exists and file-missing branches, before the live FreeCAD retest
+  that confirmed it end-to-end.
 - `freecad_gitpdm/workbench.py` — workbench definition (toolbar/menu wiring).
 - `freecad_gitpdm/commands.py` — FreeCAD command objects (the UI entry
   actions). `_find_or_create_dock()` / `_show_dock()` are the shared
@@ -134,7 +196,7 @@ when running tests or scripts outside the app.
 - `providers/` — git host abstraction (Phase G4; R5.1-R5.3), extended to
   five hosts in the multi-provider phase (see `GITPDM_DEV_PLAN.md`).
   `base.py` defines `ProviderCapabilities` (`supports_device_flow`,
-  `supports_repo_creation`, `supports_lfs_locking`, `supports_pull_requests`,
+  `supports_repo_creation`, `supports_pull_requests`,
   plus `requires_manual_token`/`requires_host_url`/`requires_workspace` for
   the PAT-paste hosts) and `BaseProvider`; `GenericProvider` (plain git +
   PAT/SSH, zero host API calls) is the base case, not a fallback.
@@ -358,7 +420,7 @@ when running tests or scripts outside the app.
   their parent generically (`self.panel.<attr>`) so they work unmodified
   against either the dock widget or the dialog. `label_style.py` holds the
   meta/strong label styling functions both files use. Rarely-touched or
-  dense actions (Connections, Generate Previews, Change Storage Mode,
+  dense actions (Connections, Generate Previews,
   Deepen History) are `commands.py` entries reachable
   only from the "Git PDM" top menu-bar dropdown now, not the panel or the
   toolbar — see `commands.py`'s `_find_or_create_dock()`/`_show_dock()`.

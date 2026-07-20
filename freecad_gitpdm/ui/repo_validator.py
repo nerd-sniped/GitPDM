@@ -4,6 +4,7 @@ Repository Validation Handler Module
 Sprint 4: Extracted from panel.py to manage repository validation and setup operations.
 """
 
+import json
 import os
 
 # Qt compatibility layer
@@ -17,7 +18,7 @@ except ImportError:
             "Neither PySide6 nor PySide2 found. FreeCAD installation may be incomplete."
         ) from e
 
-from freecad_gitpdm.core import log, session_lock, storage_mode, checkpoint
+from freecad_gitpdm.core import log, session_lock, checkpoint
 
 
 class RepoValidationHandler:
@@ -43,6 +44,10 @@ class RepoValidationHandler:
         """
         self._parent = parent
         self._git_client = git_client
+        # Repo roots we've already shown the legacy-LFS-mode notice for this
+        # session (see _check_legacy_lfs_storage_mode) -- avoids re-popping
+        # it every time the same repo is reactivated.
+        self._legacy_lfs_notice_shown = set()
 
     # ========== Public API ==========
 
@@ -140,39 +145,41 @@ class RepoValidationHandler:
         # Perform the actual init in a deferred call to keep UI responsive
         QtCore.QTimer.singleShot(50, lambda: self._do_create_repo(current_path))
 
-    def change_storage_mode_clicked(self):
-        """Handle the Storage Mode 'Change…' button click (G3)."""
-        from freecad_gitpdm.ui.storage_mode_dialog import StorageModeDialog
+    def _check_legacy_lfs_storage_mode(self, repo_root):
+        """
+        One-time-per-session notice (Plan B, LFS-mode removal -- see
+        Dev_Docs/PRESENCE_AND_LFS_REMOVAL_PLAN.md) for a repo whose
+        `.freecad-pdm/config.json` still declares `"storageMode": "lfs"`
+        from before storage-mode support existed in GitPDM. Real Git LFS
+        locking was never actually implemented behind that mode, so no
+        team relied on a working payoff -- but silently ignoring the
+        setting would leave a user wondering why the option just
+        disappeared. Read-only: never touches .gitattributes or
+        config.json, just surfaces what's already there.
+        """
+        if repo_root in self._legacy_lfs_notice_shown:
+            return
+        self._legacy_lfs_notice_shown.add(repo_root)
 
-        if not self._parent._current_repo_root:
-            self._parent._show_status_message("No repository selected", is_error=True)
+        config_path = os.path.join(repo_root, ".freecad-pdm", "config.json")
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
             return
 
-        current_mode = self._parent._current_storage_mode
-        dlg = StorageModeDialog(current_mode, parent=self._parent)
-        if dlg.exec() != QtWidgets.QDialog.Accepted:
-            log.info("Storage mode change cancelled")
-            return
-
-        new_mode = dlg.selected_mode
-        if new_mode == current_mode:
-            return
-
-        result = storage_mode.apply_storage_mode(
-            self._parent._current_repo_root, new_mode, git_client=self._git_client
-        )
-        if not result.ok:
-            self._parent._show_status_message(f"Error: {result.message}", is_error=True)
-            return
-
-        self._parent._current_storage_mode = new_mode
-        self._parent._update_storage_mode_label()
-        self._parent._show_status_message(
-            f"Storage mode set to '{new_mode}'. Review and commit "
-            ".gitattributes / .freecad-pdm/config.json to share it.",
-            is_error=False,
-        )
-        log.info(f"Storage mode changed to '{new_mode}'")
+        if isinstance(data, dict) and data.get("storageMode") == "lfs":
+            QtWidgets.QMessageBox.information(
+                self._parent,
+                "Legacy LFS Storage Mode",
+                "This repository was previously set to LFS storage mode, "
+                "which GitPDM no longer manages.\n\n"
+                "Your files and .gitattributes are untouched, but switching "
+                "back to plain git tracking is now a manual step (remove "
+                "the Git LFS filter line for *.FCStd from .gitattributes, "
+                "and run 'git lfs uninstall' if you no longer need LFS at "
+                "all).",
+            )
 
     def connect_remote_clicked(self):
         """Entry point for Connect Remote button or prompt."""
@@ -242,8 +249,6 @@ class RepoValidationHandler:
         self._parent.repo_root_row.setVisible(False)
         self._parent.root_toggle_btn.setArrowType(QtCore.Qt.RightArrow)
         self._parent.root_toggle_btn.setText("Show root")
-        self._parent._current_storage_mode = storage_mode.DEFAULT_MODE
-        self._parent._update_storage_mode_label()
         self._parent._update_button_states()
         self._parent._check_shallow_clone_status(None)
 
@@ -266,13 +271,7 @@ class RepoValidationHandler:
         # This ensures Save As dialog defaults to repo folder
         self._set_freecad_working_directory(repo_root)
 
-        # G3: cache the repo's storage mode for display and for the
-        # document observer's save-time compression scoping (settings.py).
-        # This is read-only here -- it never touches the global FreeCAD
-        # compression preference just because a repo was opened; that was
-        # the R1.2 regression this replaces.
-        self._parent._current_storage_mode = storage_mode.get_storage_mode(repo_root)
-        self._parent._update_storage_mode_label()
+        self._check_legacy_lfs_storage_mode(repo_root)
 
         # Fetch branch and status
         self.fetch_branch_and_status(repo_root)
@@ -597,8 +596,6 @@ class RepoValidationHandler:
         if self._parent._current_repo_root:
             session_lock.release_lock(self._parent._current_repo_root)
         self._parent._current_repo_root = None
-        self._parent._current_storage_mode = storage_mode.DEFAULT_MODE
-        self._parent._update_storage_mode_label()
         self._parent.root_toggle_btn.setEnabled(False)
         self._parent.root_toggle_btn.setChecked(False)
         self._parent.repo_root_row.setVisible(False)

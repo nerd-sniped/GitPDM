@@ -26,8 +26,8 @@ from freecad_gitpdm.core import (
     session_lock,
     settings,
     jobs,
-    storage_mode,
     checkpoint,
+    presence,
 )
 from freecad_gitpdm.git import client
 from freecad_gitpdm.ui import dialogs
@@ -71,7 +71,12 @@ class _DocumentObserver:
 
     def slotCreatedDocument(self, doc):
         """
-        Called when a new document is created (e.g. File > New).
+        Called when a new document is created (e.g. File > New) -- and, per
+        FreeCAD's own signalNewDocument semantics, also for File > Open (an
+        opened document is a "new" App::Document object in this session too),
+        which is what makes this the right hook for announcing presence: a
+        brand-new unsaved document has no FileName yet (nothing to announce),
+        while an opened one already does.
 
         Reasserts the working directory immediately, rather than waiting on
         the periodic timer, since a document created via File > New can be
@@ -87,6 +92,27 @@ class _DocumentObserver:
         except Exception as e:
             log.debug(f"Failed to reassert working directory on new document: {e}")
 
+        try:
+            filename = getattr(doc, "FileName", "") or ""
+            if filename:
+                self._panel._maybe_announce_presence_open(filename)
+        except Exception as e:
+            log.debug(f"Presence open-announce skipped: {e}")
+
+    def slotDeletedDocument(self, doc):
+        """
+        Called when a document is closed (FreeCAD's signalDeleteDocument).
+        Advisory presence counterpart to slotCreatedDocument above -- lets
+        other users stop seeing this file as open. Best-effort; a failure
+        here must never block the document from closing.
+        """
+        try:
+            filename = getattr(doc, "FileName", "") or ""
+            if filename:
+                self._panel._maybe_announce_presence_close(filename)
+        except Exception as e:
+            log.debug(f"Presence close-announce skipped: {e}")
+
     def slotStartSaveDocument(self, doc, filename):
         """
         Called just before a document is serialized to disk (FreeCAD's
@@ -100,8 +126,11 @@ class _DocumentObserver:
         self._maybe_enter_compression_scope(filename)
 
     def _maybe_enter_compression_scope(self, filename):
-        """Enter the git-friendly compression scope, but only for saves of
-        a document inside the active delta-mode GitPDM repo."""
+        """Enter the git-friendly compression scope for saves of a document
+        inside the active GitPDM repo. Unconditional now that storage mode
+        (delta vs. LFS) is gone -- see
+        Dev_Docs/PRESENCE_AND_LFS_REMOVAL_PLAN.md -- every repo gets the
+        delta-friendly behavior this scope exists for."""
         try:
             if not filename or not self._panel._current_repo_root:
                 return
@@ -109,8 +138,7 @@ class _DocumentObserver:
             repo_root = os.path.normpath(self._panel._current_repo_root)
             if not filename_norm.startswith(repo_root):
                 return
-            if storage_mode.get_storage_mode(repo_root) == storage_mode.MODE_DELTA:
-                settings.enter_git_friendly_compression_scope()
+            settings.enter_git_friendly_compression_scope()
         except Exception as e:
             log.debug(f"Compression scope check skipped: {e}")
 
@@ -137,6 +165,14 @@ class _DocumentObserver:
 
                     # Reset working directory to repo to ensure next Save As defaults correctly
                     self._panel._set_freecad_working_directory(repo_root)
+
+                    # Covers "File > New" followed by a first Save/Save As:
+                    # slotCreatedDocument saw no FileName yet, so this is the
+                    # first point presence has anything to announce for this
+                    # document. A no-op if we already announced it (e.g. an
+                    # ordinary re-save of an already-open, already-announced
+                    # document).
+                    self._panel._maybe_announce_presence_open(filename)
 
                     # Stop/start the timer on its owning thread to avoid
                     # cross-thread timer operations (Qt enforces thread affinity)
@@ -166,8 +202,8 @@ class _DocumentObserver:
             except Exception as e:
                 log.error(f"Error in save handler: {e}")
         finally:
-            # Always exit -- a no-op if we never entered (e.g. lfs mode,
-            # or a save outside the repo), so this is safe unconditionally.
+            # Always exit -- a no-op if we never entered (e.g. a save
+            # outside the repo), so this is safe unconditionally.
             settings.exit_git_friendly_compression_scope()
 
     def _do_refresh(self):
@@ -264,7 +300,11 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             False  # Sprint PERF-1: prevent concurrent upstream updates
         )
         self._doc_observer = None
-        self._current_storage_mode = storage_mode.DEFAULT_MODE
+        # Repo-relative paths we've announced as open on the presence branch
+        # this session (Plan A) -- drives what the heartbeat tick refreshes
+        # and what closeEvent announces closed. Advisory only; see
+        # core/presence.py.
+        self._presence_open_files = set()
         self._group_git_check = None
         self._group_repo_selector = None
         self._group_branch = None
@@ -458,6 +498,22 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             except Exception as e:
                 log.debug(f"Failed to release session lock on close: {e}")
 
+            # Best-effort, fired via the background job runner rather than
+            # run synchronously here: fetch_ref/push_ref have network
+            # timeouts up to a couple of minutes, and closing the panel (or
+            # FreeCAD itself) must never hang waiting on them. If the
+            # process exits before this finishes, our entry just ages out
+            # via STALE_PRESENCE_SECONDS -- the same graceful degradation as
+            # a crash, which is the correct advisory behavior either way.
+            repo_root = self._current_repo_root
+            for rel_path in list(self._presence_open_files):
+                self._job_runner.run_callable(
+                    f"presence-close-{rel_path}",
+                    lambda rp=rel_path: presence.announce_close(
+                        self._git_client, repo_root, rp
+                    ),
+                )
+
         super().closeEvent(event)
 
     def open_connections_dialog(self):
@@ -467,12 +523,92 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._connections_dialog.activateWindow()
 
     def _on_lock_refresh_tick(self):
-        """Heartbeat: keep our session lock's timestamp fresh (R2.3)."""
-        if self._current_repo_root:
-            try:
-                session_lock.refresh_lock(self._current_repo_root)
-            except Exception as e:
-                log.debug(f"Failed to refresh session lock: {e}")
+        """Heartbeat: keep our session lock's timestamp fresh (R2.3), and
+        (Plan A) refresh our own presence-branch entry for every file we've
+        announced open this session, so a long editing session doesn't look
+        abandoned to other users between opens/saves."""
+        if not self._current_repo_root:
+            return
+        try:
+            session_lock.refresh_lock(self._current_repo_root)
+        except Exception as e:
+            log.debug(f"Failed to refresh session lock: {e}")
+
+        repo_root = self._current_repo_root
+        for rel_path in list(self._presence_open_files):
+            self._job_runner.run_callable(
+                f"presence-heartbeat-{rel_path}",
+                lambda rp=rel_path: presence.heartbeat(self._git_client, repo_root, rp),
+            )
+
+    def _presence_rel_path_for(self, filename):
+        """Repo-relative path for `filename` if it's inside the active repo
+        (Plan A), else None -- same "under repo_root" test already used by
+        _DocumentObserver's compression-scope/save-refresh checks."""
+        if not filename or not self._current_repo_root:
+            return None
+        filename_norm = os.path.normpath(filename)
+        repo_root = os.path.normpath(self._current_repo_root)
+        if not filename_norm.startswith(repo_root):
+            return None
+        return presence.relative_path(repo_root, filename_norm)
+
+    def _maybe_announce_presence_open(self, filename):
+        """Announce a document as open on the presence branch (Plan A), and
+        warn -- non-blocking -- if another user already has it open. A
+        no-op if we've already announced this file this session (an
+        ordinary re-save shouldn't push a new presence commit every time)."""
+        rel_path = self._presence_rel_path_for(filename)
+        if not rel_path or rel_path in self._presence_open_files:
+            return
+        self._presence_open_files.add(rel_path)
+
+        repo_root = self._current_repo_root
+        git_client = self._git_client
+
+        def _do():
+            return presence.announce_open(git_client, repo_root, rel_path)
+
+        def _on_success(other):
+            if other is not None:
+                self._show_presence_warning(rel_path, other)
+
+        self._job_runner.run_callable(
+            f"presence-open-{rel_path}", _do, on_success=_on_success
+        )
+
+    def _maybe_announce_presence_close(self, filename):
+        """Announce a document as closed on the presence branch (Plan A). A
+        no-op if we never announced it open this session."""
+        rel_path = self._presence_rel_path_for(filename)
+        if not rel_path or rel_path not in self._presence_open_files:
+            return
+        self._presence_open_files.discard(rel_path)
+
+        repo_root = self._current_repo_root
+        git_client = self._git_client
+        self._job_runner.run_callable(
+            f"presence-close-{rel_path}",
+            lambda: presence.announce_close(git_client, repo_root, rel_path),
+        )
+        self.presence_label.setVisible(False)
+
+    def _show_presence_warning(self, rel_path, other):
+        """Non-blocking notice: someone else may already have this file
+        open. Never a Cancel/block dialog -- see Dev_Docs/
+        PRESENCE_AND_LFS_REMOVAL_PLAN.md for why this stays advisory only."""
+        last_seen = presence.describe_last_seen(other)
+        who = other.user + (f" on {other.host}" if other.host else "")
+        QtWidgets.QMessageBox.information(
+            self,
+            "File May Be In Use",
+            f"'{rel_path}' may already be open by {who}, last seen {last_seen}.\n\n"
+            "You can keep working -- if you both save, you'll get a conflict "
+            "you'll need to resolve manually.",
+        )
+        self.presence_label.setText(f"Also open by {who}")
+        self.presence_label.setToolTip(f"Last seen {last_seen}")
+        self.presence_label.setVisible(True)
 
     def _on_checkpoint_timer_tick(self):
         """
@@ -883,6 +1019,16 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._set_strong_label(self.ahead_behind_label, "black")
         header_row.addWidget(self.ahead_behind_label)
 
+        # Advisory presence indicator (Plan A) -- hidden by default, only
+        # shown once another user's live open-file entry is actually seen,
+        # so it never costs space/attention on the common "nobody else is
+        # around" case.
+        self.presence_label = QtWidgets.QLabel("")
+        self.presence_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        self._set_strong_label(self.presence_label, "#cc8400")
+        self.presence_label.setVisible(False)
+        header_row.addWidget(self.presence_label)
+
         header_row.addStretch()
 
         self.operation_status_label = QtWidgets.QLabel("Ready")
@@ -1058,21 +1204,9 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.branch_label = QtWidgets.QLabel("—")
         self.upstream_label = QtWidgets.QLabel("—")
         self.last_fetch_label = QtWidgets.QLabel("—")
-        self.storage_mode_label = QtWidgets.QLabel("—")
         dense_layout.addWidget(self.branch_label, 0, 0)
         dense_layout.addWidget(self.upstream_label, 0, 1)
         dense_layout.addWidget(self.last_fetch_label, 0, 2)
-        dense_layout.addWidget(self.storage_mode_label, 0, 3)
-        self.storage_mode_change_btn = QtWidgets.QPushButton("Change…")
-        self.storage_mode_change_btn.setEnabled(False)
-        self.storage_mode_change_btn.setToolTip(
-            "Switch between Delta (free, default) and LFS (opt-in, for "
-            "teams) storage modes for *.FCStd files"
-        )
-        self.storage_mode_change_btn.clicked.connect(
-            self._repo_validator.change_storage_mode_clicked
-        )
-        dense_layout.addWidget(self.storage_mode_change_btn, 0, 4)
         dense_container.setVisible(False)
         group_layout.addWidget(dense_container)
 
@@ -1087,13 +1221,12 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._group_repo_selector = group
 
     def _refresh_status_chip_tooltips(self):
-        """Compose the dense branch/upstream/storage info (no longer laid
-        out visibly) into tooltips on the two status chips."""
+        """Compose the dense branch/upstream info (no longer laid out
+        visibly) into tooltips on the two status chips."""
         changes_tip = (
             "Files you've modified but haven't saved as a version yet\n"
             "(Git term: 'working tree status' or 'dirty/clean state')\n\n"
-            f"Work version: {self.branch_label.text()}\n"
-            f"Storage mode: {self.storage_mode_label.text()}"
+            f"Work version: {self.branch_label.text()}"
         )
         self.working_tree_label.setToolTip(changes_tip)
 
@@ -2367,16 +2500,6 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         """Called when commit message text changes (debounced)."""
         self._button_update_timer.stop()
         self._button_update_timer.start()
-
-    def _update_storage_mode_label(self):
-        """Refresh the Storage Mode row (label text + Change… enabled state)."""
-        has_repo = bool(self._current_repo_root)
-        if has_repo:
-            self.storage_mode_label.setText(self._current_storage_mode)
-        else:
-            self.storage_mode_label.setText("—")
-        self.storage_mode_change_btn.setEnabled(has_repo)
-        self._refresh_status_chip_tooltips()
 
     def _on_refresh_clicked(self):
         """Handle Refresh Status button click."""
