@@ -4,6 +4,8 @@ GitPDM FreeCAD Addon - GUI Initialization Module
 Sprint 0: Register workbench when FreeCAD GUI is available
 """
 
+import os
+
 import FreeCADGui
 
 
@@ -14,7 +16,7 @@ class GitPDMWorkbench(FreeCADGui.Workbench):
 
     MenuText = "Git PDM"
     ToolTip = "Git-based Product Data Management for FreeCAD"
-    Icon = ""  # No icon for Sprint 0
+    Icon = os.path.join(os.path.dirname(__file__), "Resources", "icons", "GitPDM.svg")
 
     def Initialize(self):
         """

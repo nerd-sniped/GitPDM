@@ -10,13 +10,11 @@
   freecad/<Name>/ namespaced layout); both are accepted per FreeCAD's
   Addon-Academy docs.
 
-  TWO PLACEHOLDERS BELOW STILL NEED REAL VALUES BEFORE SUBMITTING:
-    - maintainer email (a real, monitored contact address)
-    - <icon>: GitPDM has no icon asset yet (InitGui.py's workbench class
-      still has Icon = "", unchanged since Sprint 0), so the tag is omitted
-      here rather than pointing at a file that doesn't exist. An addon
-      without an icon can still be listed, but a real SVG/PNG should be
-      added and this tag restored before submitting for best results.
+  Maintainer email is set (Ryan@nerd-sniped.com, 2026-07-20). Icon added
+  2026-07-20 at Resources/icons/GitPDM.svg and wired into both this file's
+  <icon> tag and InitGui.py's workbench Icon attribute (previously ""). No
+  known placeholders remain before submission — see the submission-process
+  note below.
 
   Submission itself (per https://freecad.github.io/Addon-Academy/Guides/Publishing/Indexed)
   is not a PR to this repo or to the index repo directly; it's a GitHub
@@ -40,13 +38,15 @@
     <tag>pdm</tag>
     <tag>collaboration</tag>
 
-    <maintainer email="REPLACE-WITH-REAL-MAINTAINER-EMAIL@example.invalid">GitPDM Contributors</maintainer>
+    <maintainer email="Ryan@nerd-sniped.com">GitPDM Contributors</maintainer>
+
+    <icon>Resources/icons/GitPDM.svg</icon>
 
     <license file="LICENSE">MIT</license>
 
     <url type="repository" branch="main">https://github.com/nerd-sniped/GitPDM</url>
     <url type="bugtracker">https://github.com/nerd-sniped/GitPDM/issues</url>
-    <url type="readme">https://github.com/nerd-sniped/GitPDM/blob/main/docs/README.md</url>
+    <url type="readme">https://github.com/nerd-sniped/GitPDM/blob/main/README.md</url>
 
     <content>
         <workbench>
