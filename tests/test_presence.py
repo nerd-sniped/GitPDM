@@ -249,6 +249,10 @@ class TestGitClientPresencePlumbing:
         repo_root.mkdir()
         init_result = git_client.init_repo(str(repo_root))
         assert init_result.ok, init_result.stderr
+        git_client.set_config(str(repo_root), "user.name", "Test", local=True)
+        git_client.set_config(
+            str(repo_root), "user.email", "test@example.invalid", local=True
+        )
 
         blob_sha = git_client.hash_object(str(repo_root), "hello world\n")
         assert blob_sha
@@ -280,6 +284,10 @@ class TestGitClientPresencePlumbing:
         repo_root = tmp_path / "repo"
         repo_root.mkdir()
         git_client.init_repo(str(repo_root))
+        git_client.set_config(str(repo_root), "user.name", "Test", local=True)
+        git_client.set_config(
+            str(repo_root), "user.email", "test@example.invalid", local=True
+        )
 
         blob_sha = git_client.hash_object(str(repo_root), "v1\n")
         tree_sha = git_client.make_tree_with_file(str(repo_root), "f.txt", blob_sha)
