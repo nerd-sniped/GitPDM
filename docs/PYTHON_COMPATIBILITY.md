@@ -2,36 +2,37 @@
 
 ## Supported Python Versions
 
-GitPDM supports **Python 3.8+** to ensure compatibility with all FreeCAD versions:
+GitPDM supports **Python 3.11+**:
 
-- **Python 3.8** - FreeCAD 0.19+
-- **Python 3.9** - FreeCAD 0.20
-- **Python 3.10** - FreeCAD 0.21 (most common)
-- **Python 3.11** - FreeCAD 0.21+
-- **Python 3.12** - Latest FreeCAD builds
+- **Python 3.11** - minimum; matches what FreeCAD 0.21+ (including 1.0)
+  bundles in its official Windows/macOS/AppImage builds
+- **Python 3.12** - latest FreeCAD builds
+
+Python 3.10 support was dropped 2026-07-20: no official FreeCAD release
+still bundles it, so supporting it bought no real-world compatibility,
+only extra CI matrix surface (see `CLAUDE.md`'s CI section for the actual
+bug that surfaced from testing it).
 
 ## Design Decisions
 
-### Why Python 3.8+?
-FreeCAD bundles its own Python interpreter, and different FreeCAD versions ship with different Python versions. To ensure GitPDM works across all supported FreeCAD releases, we target Python 3.8 as the minimum version.
+### Why Python 3.11+?
+FreeCAD bundles its own Python interpreter, and different FreeCAD versions
+ship with different Python versions. GitPDM targets the oldest Python
+version any currently-official FreeCAD build still ships, so its own
+minimum tracks FreeCAD's rather than an arbitrary older floor.
 
 ### Modern Syntax Support
-Despite targeting Python 3.8, the codebase uses modern Python syntax through `from __future__ import annotations`:
-
-- **Union types**: `str | None` instead of `Optional[str]`
-- **Type hints**: Full type annotation support
-- **Dataclasses**: Modern data structures
-
-This gives us the best of both worlds: modern, readable code that runs on older Python versions.
+The codebase uses `from __future__ import annotations`, so union-type
+syntax (`str | None` instead of `Optional[str]`) is available even though
+it isn't required at this Python floor.
 
 ## Testing
 
-The CI/CD pipeline tests against all supported Python versions (3.8-3.12) on:
+The CI/CD pipeline (`.github/workflows/ci.yml`) tests against 3.11 and
+3.12 on:
 - Linux (Ubuntu)
 - Windows
 - macOS
-
-This ensures compatibility across all platforms and Python versions that FreeCAD might use.
 
 ## Installation
 
@@ -43,26 +44,22 @@ GitPDM automatically uses FreeCAD's bundled Python (no installation needed).
 # Verify your Python version
 python --version
 
-# Should be 3.8 or higher
+# Should be 3.11 or higher
 pip install -e ".[dev]"
 ```
 
 ### Testing Against Specific Python Version
 ```bash
 # Using pyenv or conda to test different versions
-pyenv local 3.8.0
+pyenv local 3.11.0
 python -m pytest
 
-pyenv local 3.10.0
+pyenv local 3.12.0
 python -m pytest
 ```
 
-## Known Limitations
-
-- Requires `from __future__ import annotations` for union type syntax
-- Some type checking features (like `Self` type) require Python 3.11+, but we avoid these
-- Pattern matching (`match`/`case`) requires Python 3.10+, so we use if/elif instead
-
 ## FreeCAD Priority
 
-**FreeCAD compatibility is the top priority.** If a Python feature breaks compatibility with FreeCAD's bundled Python, we don't use it, even if it's available in newer Python versions.
+**FreeCAD compatibility is the top priority.** If a Python feature breaks
+compatibility with FreeCAD's bundled Python, we don't use it, even if it's
+available in newer Python versions.

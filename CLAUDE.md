@@ -511,8 +511,23 @@ CI fail.
 ### CI
 
 `.github/workflows/ci.yml` runs on push/PR to `main` and `dev`: ruff lint
-and format check, pytest across Python 3.10/3.11/3.12 on Linux/Windows/macOS,
+and format check, pytest across Python 3.11/3.12 on Linux/Windows/macOS,
 and the architecture guard. All three must pass.
+
+Python 3.10 support was dropped 2026-07-20 (`requires-python`/`pythonmin`
+now `>=3.11` in `pyproject.toml`/`package.xml`) — FreeCAD's own official
+builds (0.21 onward, including 1.0) bundle Python 3.11+, so 3.10 was never
+buying real compatibility, just extra CI matrix surface. This is also what
+surfaced (and let us just delete rather than work around) a real bug:
+`datetime.fromisoformat()` only gained support for a literal `"Z"` UTC
+suffix in 3.11 — `git log --format=%cI` can emit one on some platforms/git
+versions, and `core/checkpoint.py`'s `_folder_timestamp()` (feeding off
+`GitClient.commit_timestamp()`) was silently falling back to wall-clock
+"now" on 3.10 instead of the checkpoint's real commit time whenever that
+happened, defeating the entire point of that function (see its own
+entry above). Superseded `docs/PYTHON_COMPATIBILITY.md`'s "3.8+" claim,
+which had already gone stale before this — `pyproject.toml` was at
+`>=3.10` with no corresponding doc update.
 
 ## Conventions worth following
 

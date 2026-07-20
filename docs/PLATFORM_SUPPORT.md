@@ -78,7 +78,8 @@ The existing CI configuration already runs tests on:
 - `windows-latest` (Windows)
 - `macos-latest` (macOS)
 
-All platforms run with Python 3.10, 3.11, and 3.12.
+All platforms run with Python 3.11 and 3.12 (3.10 support was dropped
+2026-07-20 — see `docs/PYTHON_COMPATIBILITY.md`).
 
 ## Linux-Specific Requirements
 

@@ -37,7 +37,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ['3.10', '3.11', '3.12']
+        python-version: ['3.11', '3.12']
 
     steps:
       - name: Checkout code
@@ -59,7 +59,7 @@ jobs:
           pytest --cov=freecad_gitpdm --cov-report=xml --cov-report=term
 
       - name: Upload coverage reports
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.10'
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
