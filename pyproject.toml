@@ -1,6 +1,6 @@
 [project]
 name = "freecad-gitpdm"
-version = "0.5.0"
+version = "0.6.0"
 description = "Git-based Product Data Management for FreeCAD"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }

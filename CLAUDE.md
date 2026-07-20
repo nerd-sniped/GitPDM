@@ -11,13 +11,16 @@ leaving FreeCAD. Full user-facing documentation (tutorials, how-tos, reference)
 lives in `docs/README.md` — read that for feature behavior; this file is about
 working on the code.
 
-Current version: 0.5.0 (kept in sync across `docs/README.md`,
-`pyproject.toml`, `freecad_gitpdm/__init__.py`, and `Init.py` — bump all four
-together when releasing). `v0.4.0` was tagged from pre-credential-engine
-`main`; `v0.5.0` carries G1 (credential engine) + G2 (release automation),
-tagged and pushed 2026-07-17 — `.github/workflows/release.yml` ran clean
-(verify, build, container-smoke, publish all green) and the release page is
-live with the archive attached.
+Current version: 0.6.0 (kept in sync across `docs/README.md`,
+`pyproject.toml`, `freecad_gitpdm/__init__.py`, `Init.py`, and `package.xml`
+— bump all five together when releasing). `v0.4.0` was tagged from
+pre-credential-engine `main`; `v0.5.0` carried G1 (credential engine) + G2
+(release automation), tagged and pushed 2026-07-17 —
+`.github/workflows/release.yml` ran clean (verify, build, container-smoke,
+publish all green) and the release page is live with the archive attached.
+`v0.6.0` folds in G3-G7, the multi-provider hosts and bottom-dock UI work,
+and the storage-mode retirement / presence-indicator swap, tagged and
+pushed 2026-07-20 in preparation for FreeCAD Addon Manager submission.
 
 Note for future releases: pushing any change under `.github/workflows/` can
 fail with `refusing to allow an OAuth App to create or update workflow ...
