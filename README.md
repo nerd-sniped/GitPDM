@@ -30,13 +30,17 @@ Requires FreeCAD (current stable + one prior release) and Git on your `PATH`
 4. Ready to back up or collaborate? Open the **Git PDM** menu →
    **Connections** to connect a GitHub/GitLab/Bitbucket/Gitea-Forgejo/
    SourceHut account, then push.
+   - **Linux/macOS:** this step needs one extra one-time package install
+     the first time — see [Linux](docs/README.md#how-to-set-up-linux-token-storage-gnome-keyring--kwallet)
+     / [macOS](docs/README.md#how-to-fix-macos-keychain-access-issues)
+     setup if **Connect** doesn't succeed.
 
 ## Learn more
 
 - **[Full documentation](docs/README.md)** — tutorials, how-to guides,
-  technical reference (storage modes, credential chain, continuous
-  checkpointing, previews) and explanations (why branch switching is
-  tricky with `.FCStd` files, and more)
+  technical reference (credential chain, continuous checkpointing,
+  advisory file presence, previews) and explanations (why branch
+  switching is tricky with `.FCStd` files, and more)
 - **[Platform support](docs/PLATFORM_SUPPORT.md)**
 - **[Security policy](SECURITY.md)**
 

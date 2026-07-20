@@ -333,26 +333,111 @@ self-hosted with no single fixed address GitPDM can assume.
 
 ## How to Set Up Linux Token Storage (GNOME Keyring / KWallet)
 
-**Goal:** Enable secure token storage on Linux.
+**Goal:** Enable secure token storage on Linux so **Connect GitHub**
+(or **Connect** for another host) can actually save your token.
 
-1. Install packages:
+**Why this step exists:** GitPDM stores tokens via the Secret Service
+API using the `secretstorage` Python package. That package isn't
+currently on FreeCAD's list of Addon-Manager-installable Python
+packages, so installing GitPDM through the Addon Manager doesn't
+automatically install it — a one-time manual install is usually needed
+first. (If this package is later added to that list, this step becomes
+unnecessary.) Until it's installed, GitPDM still runs fine — only token
+storage fails, with a clear error rather than a crash.
+
+1. **Find out which Python FreeCAD is actually using.** This matters
+   because `secretstorage` has to go into *that* Python, which isn't
+   always your system's `python3` — it depends on whether FreeCAD came
+   from your distro's package manager (which often does share the
+   system Python) or a Snap/Flatpak/AppImage (which bundles its own).
+   In FreeCAD, open **View → Panels → Python console** (enable it if
+   you don't see it), then run:
+   ```python
+   import sys
+   print(sys.executable)
+   ```
+   Note the path it prints.
+
+2. **Install `secretstorage` into that Python.** The most reliable way
+   — it works no matter how FreeCAD was installed, because it always
+   targets the exact interpreter from step 1 — is from that same
+   Python console:
+   ```python
+   import subprocess, sys
+   subprocess.check_call([sys.executable, "-m", "pip", "install", "--user", "secretstorage"])
+   ```
+
+   If FreeCAD came from your distro's package manager and really does
+   share your system Python, installing via your OS package manager
+   works too:
    ```bash
    # Ubuntu/Debian
    sudo apt install python3-secretstorage gnome-keyring
-   ```
-2. Ensure a Secret Service compatible keyring daemon is running.
-3. Retry **Connect GitHub** in GitPDM.
 
-**Alternative:** If a keyring is not available (headless systems), use SSH for Git operations.
+   # Fedora/RHEL
+   sudo dnf install python3-secretstorage gnome-keyring
+
+   # Arch Linux
+   sudo pacman -S python-secretstorage gnome-keyring
+   ```
+   If GitPDM still can't store a token afterward, that's a sign the two
+   Pythons weren't actually the same one — use the Python-console method
+   from step 2 instead, since it can't target the wrong interpreter.
+
+3. Make sure a Secret Service-compatible keyring daemon is running
+   (GNOME Keyring, KWallet, or similar — most desktop Linux
+   environments already run one; the package installs above include it
+   if not).
+
+4. Restart FreeCAD, then retry **Connect GitHub** (or **Connect** for
+   another host) in GitPDM.
+
+**Alternative:** If a keyring genuinely isn't available (headless/server
+systems), see [Credential Chain & Environment Variables](#credential-chain--environment-variables)
+for env-var-based credentials, or use SSH for Git operations directly
+instead of GitPDM's token-based HTTPS flow.
 
 ---
 
 ## How to Fix macOS Keychain Access Issues
 
-**Goal:** Allow token storage in Keychain.
+**Goal:** Enable secure token storage on macOS so **Connect GitHub**
+(or **Connect** for another host) can actually save your token.
 
-1. Retry **Connect GitHub** and approve the Keychain prompt.
-2. If the prompt is blocked by system policy, consider granting FreeCAD/Python appropriate permissions in **System Settings → Privacy & Security**.
+**Why this step exists:** GitPDM stores tokens in macOS Keychain via
+the `keyring` Python package. Like `secretstorage` on Linux, it isn't
+currently on FreeCAD's list of Addon-Manager-installable Python
+packages, so installing GitPDM through the Addon Manager doesn't
+automatically install it — a one-time manual install is usually needed
+first. (If this package is later added to that list, this step becomes
+unnecessary.) Until it's installed, GitPDM still runs fine — only token
+storage fails, with a clear error rather than a crash.
+
+1. **Find out which Python FreeCAD is actually using.** The official
+   FreeCAD.app bundles its own Python, separate from macOS's system
+   Python (which doesn't ship a general-purpose `python3` by default
+   anyway). In FreeCAD, open **View → Panels → Python console** (enable
+   it if you don't see it), then run:
+   ```python
+   import sys
+   print(sys.executable)
+   ```
+
+2. **Install `keyring` into that Python**, from the same Python
+   console — this works no matter how FreeCAD was installed (official
+   `.dmg`, Homebrew cask, etc.), because it always targets the exact
+   interpreter from step 1:
+   ```python
+   import subprocess, sys
+   subprocess.check_call([sys.executable, "-m", "pip", "install", "--user", "keyring"])
+   ```
+
+3. Restart FreeCAD, then retry **Connect GitHub** (or **Connect** for
+   another host) and approve the Keychain prompt when macOS shows it.
+
+4. If the prompt is blocked by system policy rather than a missing
+   package, check **System Settings → Privacy & Security** for
+   FreeCAD/Python permissions.
 
 ---
 
@@ -407,7 +492,7 @@ Branch switching is currently limited because FreeCAD `.FCStd` files are ZIP arc
 |-------------|---------|-------|
 | FreeCAD | Current stable + one prior (1.1.x / 1.0.x as of this release) | Policy — verified manually before each release. Originally developed on 0.20–1.0. Install from https://www.freecad.org/downloads.php |
 | Git | 2.20+ | Install from https://git-scm.com/ |
-| Python | 3.8+ | Bundled with FreeCAD |
+| Python | 3.11+ | Bundled with FreeCAD (matches what FreeCAD 0.21+, including 1.0/1.1, ships) |
 | PySide2 or PySide6 | Any | Bundled with FreeCAD |
 | Git host account | N/A | Optional, for cloud features — GitHub, GitLab, Bitbucket, Gitea/Forgejo, SourceHut, or any other git remote |
 
@@ -531,22 +616,14 @@ Tokens for other hosts (pasted PATs) are stored the same way, under a
 separate namespaced entry per host, so connecting a second host never
 overwrites GitHub's credentials.
 
-- **Windows**: Windows Credential Manager
-- **macOS**: Keychain
-- **Linux**: Secret Service API (GNOME Keyring / KWallet)
-
-### Linux packages for Secret Service
-
-```bash
-# Ubuntu/Debian
-sudo apt install python3-secretstorage gnome-keyring
-
-# Fedora/RHEL
-sudo dnf install python3-secretstorage gnome-keyring
-
-# Arch Linux
-sudo pacman -S python-secretstorage gnome-keyring
-```
+- **Windows**: Windows Credential Manager (no extra install needed)
+- **macOS**: Keychain, via the `keyring` package — see
+  [How to Fix macOS Keychain Access Issues](#how-to-fix-macos-keychain-access-issues)
+  if a fresh install needs it set up
+- **Linux**: Secret Service API (GNOME Keyring / KWallet), via the
+  `secretstorage` package — see
+  [How to Set Up Linux Token Storage](#how-to-set-up-linux-token-storage-gnome-keyring--kwallet)
+  if a fresh install needs it set up
 
 ---
 
@@ -629,9 +706,10 @@ coding agents working on GitPDM.
 - Branch switching requires care (close documents first)
 - Merge conflict resolution is currently manual
 - Very large repositories can be slow to scan
-- No in-panel commit-log/history browser yet — checkpoint restore and
-  storage-mode changes act on "the current state" rather than letting you
-  browse and pick a specific point in time
+- No in-panel browser for your *real* commit history yet — **Git PDM →
+  Restore Recovery Checkpoint** does let you browse and pick among
+  recent auto-checkpoints (see [Continuous Checkpointing](#continuous-checkpointing)),
+  but there's no equivalent for browsing regular commits
 
 ### Near-term focus
 - Docs sweep and FreeCAD Addon Manager submission (this phase)
