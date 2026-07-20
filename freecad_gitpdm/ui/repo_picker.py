@@ -77,7 +77,7 @@ class RepoPickerDialog(QtWidgets.QDialog):
         # Which host's repos this dialog browses. Defaults to GitHub for
         # full backward compatibility with existing callers that don't
         # pass one yet (panel.py's "Join Team Project" button, pre-multi-
-        # provider) - see GITPDM_DEV_PLAN.md's multi-provider entry.
+        # provider) - see Dev_Docs/GITPDM_DEV_PLAN.md's multi-provider entry.
         self._provider: BaseProvider = provider or GitHubProvider()
         self._repos: List[RepoInfo] = []
         self._visible_repos: List[RepoInfo] = []

@@ -5,7 +5,7 @@ Phase G1: Credential persistence without an OS keyring.
 
 Stores tokens as JSON in ~/.config/GitPDM/credentials.json with mode 0600.
 Intended for containers and other headless environments where no OS
-credential service exists (see GITPDM_REQUIREMENTS.md R2.1).
+credential service exists (see Dev_Docs/GITPDM_REQUIREMENTS.md R2.1).
 
 SECURITY: This backend is gated behind the GITPDM_ALLOW_FILE_TOKENS=1
 environment variable. Without the flag, constructing the store raises —

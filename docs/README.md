@@ -1,5 +1,8 @@
 ﻿# GitPDM - Git-based Product Data Management for FreeCAD
 
+*Looking for a fast install + quick start instead? See the
+[top-level README](../README.md).*
+
 **Version Control Made Simple for Your CAD Projects**
 
 GitPDM is a FreeCAD workbench addon that brings Git version control and GitHub collaboration directly into FreeCAD. Think of it as “version history” for CAD projects, designed around FreeCAD documents, previews, and publishing.

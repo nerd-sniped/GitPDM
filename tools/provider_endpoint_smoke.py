@@ -9,7 +9,7 @@ attempt.
 
 This does NOT prove the providers are fully correct (a real-token pass
 that actually creates/lists a repo is still needed — see
-GITPDM_DEV_PLAN.md's multi-provider entry, especially for SourceHut, whose
+Dev_Docs/GITPDM_DEV_PLAN.md's multi-provider entry, especially for SourceHut, whose
 GraphQL schema could not be live-verified during development). It only
 proves each endpoint is up and each client's request/error-handling
 plumbing still produces a sane, non-crashing result.

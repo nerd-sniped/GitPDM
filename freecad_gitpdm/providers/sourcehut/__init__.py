@@ -10,7 +10,7 @@ The mutation/query field names in this subpackage are built from
 SourceHut's public GraphQL API documentation, not confirmed against the
 live schema. Treat this provider as needing a real-token acceptance pass
 (create a repo, list repos, verify identity against a real git.sr.ht
-account) before trusting it in production — see GITPDM_DEV_PLAN.md's
+account) before trusting it in production — see Dev_Docs/GITPDM_DEV_PLAN.md's
 multi-provider entry, which tracks this explicitly, mirroring how G1's
 docker acceptance run was tracked as outstanding and closed out later.
 """

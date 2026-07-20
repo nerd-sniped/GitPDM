@@ -27,10 +27,11 @@ scope for that one push instead.
 
 ## Roadmap / current status
 
-Development follows `GITPDM_DEV_PLAN.md` (phases G1–G8, one phase = one PR)
-with `GITPDM_REQUIREMENTS.md` as the requirements companion — both at the
-repo root on the `dev` branch. Read the phase brief before implementing,
-and update the plan's **Status ledger** in the same PR as the work.
+Development follows `Dev_Docs/GITPDM_DEV_PLAN.md` (phases G1–G8, one phase =
+one PR) with `Dev_Docs/GITPDM_REQUIREMENTS.md` as the requirements companion
+— both in `Dev_Docs/` on the `dev` branch. Read the phase brief before
+implementing, and update the plan's **Status ledger** in the same PR as the
+work.
 Feature work happens on `dev`; CI runs on push/PR to both `main` and `dev`.
 
 Status: **G1 (credential engine), G2 (release + CI), G3 (storage modes), G4

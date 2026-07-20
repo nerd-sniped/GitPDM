@@ -13,7 +13,7 @@ credential_username for git-over-HTTPS is "x-token-auth" — Bitbucket's
 documented literal-username convention for Repository/Project/Workspace
 Access Tokens used as the password. Not live-verified (would need a real
 clone attempt with a real token); flagged for the real-token acceptance
-pass per GITPDM_DEV_PLAN.md.
+pass per Dev_Docs/GITPDM_DEV_PLAN.md.
 """
 
 from __future__ import annotations

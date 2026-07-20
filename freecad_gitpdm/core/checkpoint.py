@@ -5,7 +5,7 @@ GitPDM Continuous Checkpointing (Phase G6 / R2.5)
 Delivers an Onshape-style "walk away anytime, lose <= ~1 minute" guarantee
 via debounced checkpoints onto a `gitpdm/recovery` branch -- not per-action
 persistence, which is prohibitive on FreeCAD's blocking whole-file save (see
-R2.5's rationale in GITPDM_DEV_PLAN.md).
+R2.5's rationale in Dev_Docs/GITPDM_DEV_PLAN.md).
 
 This module is deliberately FreeCAD-agnostic (CLAUDE.md: "Tests must run
 without FreeCAD"). The two things only FreeCAD can answer -- "is the user

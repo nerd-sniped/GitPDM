@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 SourceHut provider: PAT-paste auth (Bearer token) + repo creation/listing
-via the git.sr.ht GraphQL API. Additive beyond GITPDM_REQUIREMENTS.md's
+via the git.sr.ht GraphQL API. Additive beyond Dev_Docs/GITPDM_REQUIREMENTS.md's
 documented four hosts (GitHub/GitLab/Bitbucket/Gitea) — added per explicit
 user request. The riskiest provider here: its GraphQL schema could not be
 live-verified (see providers/sourcehut/__init__.py) since the endpoint

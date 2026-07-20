@@ -5,7 +5,7 @@ GitLab identity verification via GET /user.
 No token-refresh-check step here (unlike GitHub's identity.py): that
 machinery exists for OAuth device-flow tokens with a refresh_token, which
 GitLab support doesn't have in GitPDM yet (PAT-paste only — see
-GITPDM_DEV_PLAN.md's multi-provider entry). A pasted personal access token
+Dev_Docs/GITPDM_DEV_PLAN.md's multi-provider entry). A pasted personal access token
 has no refresh concept; if it's expired or revoked, GitLab just returns
 401 and the user re-pastes a new one.
 
