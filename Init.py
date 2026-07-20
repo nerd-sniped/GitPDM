@@ -6,7 +6,7 @@ GitPDM FreeCAD Addon - Initialization Module
 
 __title__ = "GitPDM"
 __author__ = "Nerd-Sniped.com"
-__version__ = "0.6.1"
+__version__ = "0.6.2"
 __license__ = "MIT"
 __url__ = "https://github.com/nerd-sniped/GitPDM"
 

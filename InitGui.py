@@ -94,11 +94,12 @@ class GitPDMWorkbench(FreeCADGui.Workbench):
 
         log.info("GitPDM workbench activated")
 
-        # Auto-show panel when workbench is activated
-        try:
-            from PySide6 import QtCore
-        except ImportError:
-            from PySide2 import QtCore
+        # Auto-show panel when workbench is activated. Goes through
+        # FreeCAD's own "PySide" compatibility shim (re-exports whichever
+        # binding -- PySide2/PySide6/... -- the running FreeCAD was built
+        # against) rather than a hardcoded PySide6/PySide2 fallback chain,
+        # so this doesn't need updating on the next Qt major-version bump.
+        from PySide import QtCore
 
         # Defer panel opening to avoid blocking UI
         QtCore.QTimer.singleShot(100, self._open_panel_deferred)

@@ -11,7 +11,7 @@ leaving FreeCAD. Full user-facing documentation (tutorials, how-tos, reference)
 lives in `docs/README.md` — read that for feature behavior; this file is about
 working on the code.
 
-Current version: 0.6.1 (kept in sync across `docs/README.md`,
+Current version: 0.6.2 (kept in sync across `docs/README.md`,
 `pyproject.toml`, `freecad_gitpdm/__init__.py`, `Init.py`, and `package.xml`
 — bump all five together when releasing). `v0.4.0` was tagged from
 pre-credential-engine `main`; `v0.5.0` carried G1 (credential engine) + G2
@@ -31,6 +31,28 @@ destination with no local warning; `core/input_validator.py`'s new
 GitHub's already-hardcoded-HTTPS path (GitLab/Bitbucket/SourceHut never
 had this gap — they connect through fixed HTTPS endpoints, not a
 user-supplied host).
+`v0.6.2` is a same-day follow-up patch fixing a second real bug found in
+a further review pass, plus recording an ecosystem-level limitation
+neither code change nor this repo can fully close: (1) `InitGui.py`'s
+`Activated()` still had the old raw `PySide6`/`PySide2` fallback chain —
+`v0.6.1`'s PySide-shim migration was scoped to `freecad_gitpdm/` and
+missed this repo-root file, since it isn't under that package. Fixed to
+`from PySide import QtCore`, matching every other call site. (2) Checked
+FreeCAD's actual Python package allow-list
+(`FreeCAD/Addons` repo, `Data/Python/{3.11,3.12,3.13}/Allowed-Packages`)
+and found neither `secretstorage` nor `keyring` — the two dependencies
+`v0.6.1` declared via `<depend>` — are on it, so the Addon Manager won't
+auto-install them regardless of the manifest declaration. Impact is
+contained: `token_store_linux.py`/`token_store_macos.py` already catch
+the `ImportError` at construction, mark themselves unavailable, and
+raise a clear `OSError` on save rather than crashing — so a Linux/macOS
+Addon-Manager install just needs a manual `pip install
+secretstorage`/`keyring` into FreeCAD's own Python for credential
+storage to work, with a clear error pointing at that instead of a silent
+failure. Package-Addition requests for both were drafted for the
+maintainer to file against `FreeCAD/Addons` (identity-bound, external,
+not something done from here) — not yet confirmed filed or accepted as
+of this writing.
 
 Note for future releases: pushing any change under `.github/workflows/` can
 fail with `refusing to allow an OAuth App to create or update workflow ...
