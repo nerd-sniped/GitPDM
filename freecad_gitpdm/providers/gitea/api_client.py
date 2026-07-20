@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 """
 Gitea/Forgejo REST API v1 client (stdlib-only, built on BaseApiClient).

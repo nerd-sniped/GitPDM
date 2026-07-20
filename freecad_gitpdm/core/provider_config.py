@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 """
 GitPDM per-repo provider selection (Phase G4, R5.1/R5.3).

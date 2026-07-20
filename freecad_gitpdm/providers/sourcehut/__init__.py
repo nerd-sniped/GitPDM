@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 """
 SourceHut provider (git.sr.ht GraphQL API, PAT/Bearer-token auth).

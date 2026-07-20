@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 """
 GitPDM Advisory File Presence (Plan A, 2026-07-20)

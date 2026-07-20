@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 """
 Shared label styling helpers for GitPDM's Qt panels/dialogs.
@@ -7,10 +8,10 @@ Extracted from panel.py so both the main dock widget and standalone dialogs
 duplicating the stylesheet strings.
 """
 
-try:
-    from PySide6 import QtCore, QtGui, QtWidgets
-except ImportError:
-    from PySide2 import QtCore, QtGui, QtWidgets
+# FreeCAD's own Qt compatibility shim -- re-exports whichever binding
+# (PySide2/PySide6/...) the running FreeCAD was built against, so this
+# code doesn't need updating on the next Qt major-version bump.
+from PySide import QtCore, QtGui, QtWidgets
 
 META_FONT_SIZE = 9
 STRONG_FONT_SIZE = 11

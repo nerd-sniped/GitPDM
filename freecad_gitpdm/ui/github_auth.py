@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 """
 GitHub OAuth Authentication Handlers
@@ -11,10 +12,10 @@ Handles:
 - UI state management for GitHub connection status
 """
 
-try:
-    from PySide6 import QtCore, QtGui, QtWidgets
-except ImportError:
-    from PySide2 import QtCore, QtGui, QtWidgets
+# FreeCAD's own Qt compatibility shim -- re-exports whichever binding
+# (PySide2/PySide6/...) the running FreeCAD was built against, so this
+# code doesn't need updating on the next Qt major-version bump.
+from PySide import QtCore, QtGui, QtWidgets
 
 from freecad_gitpdm.core import log, settings
 

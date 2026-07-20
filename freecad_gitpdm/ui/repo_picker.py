@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 """
 Repository picker dialog for GitPDM.
@@ -11,16 +12,10 @@ import os
 import re
 from typing import Callable, List, Optional
 
-# Qt compatibility layer - try PySide6 first, then PySide2
-try:
-    from PySide6 import QtCore, QtGui, QtWidgets
-except ImportError:  # pragma: no cover
-    try:
-        from PySide2 import QtCore, QtGui, QtWidgets
-    except ImportError as e:  # pragma: no cover
-        raise ImportError(
-            "Neither PySide6 nor PySide2 found. FreeCAD installation may be incomplete."
-        ) from e
+# FreeCAD's own Qt compatibility shim -- re-exports whichever binding
+# (PySide2/PySide6/...) the running FreeCAD was built against, so this
+# code doesn't need updating on the next Qt major-version bump.
+from PySide import QtCore, QtGui, QtWidgets
 
 from freecad_gitpdm.core import log, settings, jobs
 from freecad_gitpdm.git.client import GitClient, DEFAULT_SHALLOW_CLONE_DEPTH

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 """
 SourceHut provider: PAT-paste auth (Bearer token) + repo creation/listing

@@ -1,19 +1,14 @@
+# SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 """
 GitPDM Panel UI Module
 Sprint 2: Main dockable panel with git operations + fetch support
 """
 
-# Qt compatibility layer - try PySide6 first, then PySide2
-try:
-    from PySide6 import QtCore, QtGui, QtWidgets
-except ImportError:
-    try:
-        from PySide2 import QtCore, QtGui, QtWidgets
-    except ImportError as e:
-        raise ImportError(
-            "Neither PySide6 nor PySide2 found. FreeCAD installation may be incomplete."
-        ) from e
+# FreeCAD's own Qt compatibility shim -- re-exports whichever binding
+# (PySide2/PySide6/...) the running FreeCAD was built against, so this
+# code doesn't need updating on the next Qt major-version bump.
+from PySide import QtCore, QtGui, QtWidgets
 
 import os
 import glob

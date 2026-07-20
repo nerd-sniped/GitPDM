@@ -35,16 +35,18 @@ def mock_freecad():
 
 @pytest.fixture
 def mock_qt():
-    """Mock Qt modules"""
+    """Mock Qt modules behind FreeCAD's own "PySide" compatibility shim
+    (production code imports `from PySide import ...`, not PySide6/PySide2
+    directly -- see freecad_gitpdm's Qt-wrapper migration)."""
     pyside_mock = MagicMock()
-    sys.modules["PySide6"] = pyside_mock
-    sys.modules["PySide6.QtCore"] = MagicMock()
-    sys.modules["PySide6.QtWidgets"] = MagicMock()
-    sys.modules["PySide6.QtGui"] = MagicMock()
+    sys.modules["PySide"] = pyside_mock
+    sys.modules["PySide.QtCore"] = MagicMock()
+    sys.modules["PySide.QtWidgets"] = MagicMock()
+    sys.modules["PySide.QtGui"] = MagicMock()
 
     yield pyside_mock
 
-    for module in ["PySide6", "PySide6.QtCore", "PySide6.QtWidgets", "PySide6.QtGui"]:
+    for module in ["PySide", "PySide.QtCore", "PySide.QtWidgets", "PySide.QtGui"]:
         if module in sys.modules:
             del sys.modules[module]
 

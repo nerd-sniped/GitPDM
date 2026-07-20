@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 """
 GitPDM Commands Module
@@ -16,16 +17,10 @@ import FreeCAD
 import FreeCADGui
 from freecad_gitpdm.core import log, settings
 
-# Qt compatibility layer - try PySide6 first, then PySide2
-try:
-    from PySide6 import QtCore, QtWidgets
-except ImportError:
-    try:
-        from PySide2 import QtCore, QtWidgets
-    except ImportError:
-        raise ImportError(
-            "Neither PySide6 nor PySide2 found. FreeCAD installation may be incomplete."
-        )
+# FreeCAD's own Qt compatibility shim -- re-exports whichever binding
+# (PySide2/PySide6/...) the running FreeCAD was built against, so this
+# code doesn't need updating on the next Qt major-version bump.
+from PySide import QtCore, QtWidgets
 
 
 def _find_or_create_dock():

@@ -2,13 +2,13 @@
 
 ## Overview
 
-GitPDM is a FreeCAD workbench that connects to GitHub for backing up CAD files. This document describes the security architecture, implemented safeguards, and how to report security issues.
+GitPDM is a FreeCAD workbench that connects to Git hosting providers (GitHub, GitLab, Bitbucket, Gitea/Forgejo, or SourceHut) for backing up CAD files. This document describes the security architecture, implemented safeguards, and how to report security issues.
 
 ## Security Architecture
 
 ### Authentication Flow
 
-GitPDM uses **OAuth Device Flow** (RFC 8628) to authenticate users with GitHub:
+**GitHub** uses **OAuth Device Flow** (RFC 8628):
 
 1. **No passwords stored**: Users authenticate directly with GitHub; GitPDM never sees passwords
 2. **Minimal scopes**: Requests only `read:user` (profile) and `repo` (repository access)
@@ -17,9 +17,13 @@ GitPDM uses **OAuth Device Flow** (RFC 8628) to authenticate users with GitHub:
 5. **Token expiry detection**: Automatically detects expired tokens and refreshes using refresh_token
 6. **Hardened polling**: 15-minute absolute timeout, exponential backoff with jitter, correlation IDs for audit
 
+**GitLab, Bitbucket, Gitea/Forgejo, and SourceHut** use a **pasted Personal Access Token** instead: none of these has a pre-registered OAuth app GitPDM can use, so the user creates a PAT on the host themselves (scoped as narrowly as that host allows) and pastes it into GitPDM. GitPDM verifies the token against the host's API before storing it, and never displays or logs the value. Storage is the same OS credential storage used for GitHub tokens, keyed per-provider so connecting to more than one host at once doesn't overwrite another's credentials.
+
+**Headless/CI use** (no FreeCAD, no keyring prompt) resolves credentials from a fixed precedence: `GITPDM_TOKEN_FILE` > `GITPDM_TOKEN` > OS keyring. An additional file-backed token store exists for containers without a keyring at all, but it's gated behind `GITPDM_ALLOW_FILE_TOKENS=1` and unreachable otherwise -- this is enforced by its own test, not just convention.
+
 ### Rate Limiting & Abuse Prevention
 
-To prevent abuse and respect GitHub's secondary rate limits:
+To prevent abuse and respect each host's rate limits, GitHub's client uses:
 
 - **Global rate limit**: 100 requests/minute across all users
 - **Per-user rate limit**: 30 requests/minute per authenticated user
@@ -27,6 +31,11 @@ To prevent abuse and respect GitHub's secondary rate limits:
 - **Request coalescing**: Deduplicates redundant API calls
 - **Automatic backoff**: Exponential backoff with jitter on 5xx errors
 - **Secondary rate limit detection**: Respects `Retry-After` headers from GitHub abuse detection
+
+The GitLab/Bitbucket/Gitea-Forgejo/SourceHut clients share the same
+retry/circuit-breaker/rate-limiter skeleton (`providers/shared/`), so the
+mechanism is identical even though each host's own numeric quotas differ
+from GitHub's.
 
 ### Input Validation
 
@@ -38,6 +47,12 @@ All user-controlled inputs are validated before use:
 - **Commit messages**: Control characters stripped; max 50KB
 - **File paths**: Path traversal protection (no `..`); validated against repo root
 - **GitHub URLs**: HTTPS only; github.com domain validated
+- **Other host URLs** (GitLab/Bitbucket/Gitea-Forgejo/SourceHut self-hosted
+  instances): the user-supplied host is trusted as entered, since these are
+  meant to point at arbitrary self-hosted instances rather than a single
+  fixed domain -- **HTTPS is not currently enforced** for this path (a
+  pasted `http://` host URL is accepted); see the Known Limitations note
+  below
 
 ### Permissions & Least Privilege
 
@@ -57,10 +72,23 @@ All user-controlled inputs are validated before use:
 
 ### Network Security
 
-- **HTTPS only**: All GitHub communication uses TLS 1.2+
+- **HTTPS only for GitHub**: All GitHub communication uses TLS 1.2+
+- **Other providers**: the pasted PAT is only ever sent to whatever scheme
+  the user-supplied host URL specifies -- see the Input Validation and
+  Known Limitations notes above/below
 - **Certificate validation**: Full certificate chain validation (no insecure flags)
 - **No credential logging**: Authorization headers never logged
 - **Timeout enforcement**: All network calls have strict timeouts (10-180s)
+
+### Known Limitations
+
+- **No HTTPS enforcement for self-hosted providers**: unlike the GitHub
+  path (hardcoded to `github.com` over HTTPS), the GitLab/Bitbucket/
+  Gitea-Forgejo/SourceHut connect flow accepts whatever scheme the user
+  types into the host-URL field, including `http://`. A user who pastes
+  (or is tricked into pasting) a plain-HTTP self-hosted URL sends their
+  PAT over an unencrypted connection with no local warning. Tracked as a
+  real gap, not yet fixed.
 
 ## Attack Vectors & Mitigations
 
@@ -234,7 +262,7 @@ Include:
 - Credential storage weaknesses
 
 **Out of scope**:
-- GitHub.com vulnerabilities (report to GitHub)
+- Vulnerabilities in GitHub, GitLab, Bitbucket, Gitea/Forgejo, or SourceHut themselves (report to the respective provider)
 - FreeCAD core vulnerabilities (report to FreeCAD)
 - Denial of service via resource exhaustion (rate limits prevent this)
 
@@ -252,7 +280,7 @@ Include:
 - **Major releases** (X.0.0): May include breaking changes
 
 ### Release Notes
-Check [CHANGELOG.md](../CHANGELOG.md) for security-related updates marked with 🔒
+Check the [GitHub Releases page](https://github.com/nerd-sniped/GitPDM/releases) for security-related updates.
 
 ## Compliance & Privacy
 
@@ -263,7 +291,7 @@ GitPDM does NOT collect or transmit:
 - Crash reports
 - Personal information
 
-The only network requests are to GitHub's API for repo operations.
+The only network requests are to the configured Git host's API (GitHub, GitLab, Bitbucket, Gitea/Forgejo, or SourceHut) for repo operations.
 
 ### Data Storage
 GitPDM stores locally (never uploaded to our servers):
@@ -278,9 +306,13 @@ Users can:
 - **Portability**: Export repo history via Git
 - **Right to be forgotten**: Delete all local GitPDM data by uninstalling
 
-### GitHub's Data Handling
-GitHub's data handling described in their privacy policy:
-https://docs.github.com/en/site-policy/privacy-policies/github-privacy-statement
+### Your Git Host's Data Handling
+Whichever provider you connect handles your account data under its own privacy policy, not GitPDM's:
+- GitHub: https://docs.github.com/en/site-policy/privacy-policies/github-privacy-statement
+- GitLab: https://about.gitlab.com/privacy/
+- Bitbucket: https://www.atlassian.com/legal/privacy-policy
+- Gitea/Forgejo: set by whoever operates the specific instance you connect to
+- SourceHut: https://man.sr.ht/privacy.md
 
 ## Security Roadmap
 
@@ -290,6 +322,7 @@ https://docs.github.com/en/site-policy/privacy-policies/github-privacy-statement
 - ✅ Token expiry and refresh
 - ✅ OAuth hardening (timeouts, jitter, correlation IDs)
 - ✅ Input sanitization
+- ✅ Pasted-PAT auth path for GitLab/Bitbucket/Gitea-Forgejo/SourceHut, verified before storage, alongside GitHub's OAuth device flow
 
 ### Planned
 - 🔲 Webhook signature verification (if webhook support added)
@@ -307,9 +340,9 @@ https://docs.github.com/en/site-policy/privacy-policies/github-privacy-statement
 
 - **Security issues**: https://github.com/nerd-sniped/GitPDM/security/advisories/new
 - **General support**: https://github.com/nerd-sniped/GitPDM/issues
-- **Documentation**: https://github.com/nerd-sniped/GitPDM/docs
+- **Documentation**: https://github.com/nerd-sniped/GitPDM/blob/main/docs/README.md
 
 ---
 
-**Last updated**: 2026-01-01  
-**Security policy version**: 1.0
+**Last updated**: 2026-07-20  
+**Security policy version**: 1.1

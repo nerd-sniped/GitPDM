@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 """
 GitLab provider: PAT-paste auth + repo creation/listing via REST API v4.

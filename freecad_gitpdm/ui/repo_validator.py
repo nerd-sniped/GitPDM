@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 """
 Repository Validation Handler Module
@@ -7,16 +8,10 @@ Sprint 4: Extracted from panel.py to manage repository validation and setup oper
 import json
 import os
 
-# Qt compatibility layer
-try:
-    from PySide6 import QtCore, QtWidgets
-except ImportError:
-    try:
-        from PySide2 import QtCore, QtWidgets
-    except ImportError as e:
-        raise ImportError(
-            "Neither PySide6 nor PySide2 found. FreeCAD installation may be incomplete."
-        ) from e
+# FreeCAD's own Qt compatibility shim -- re-exports whichever binding
+# (PySide2/PySide6/...) the running FreeCAD was built against, so this
+# code doesn't need updating on the next Qt major-version bump.
+from PySide import QtCore, QtWidgets
 
 from freecad_gitpdm.core import log, session_lock, checkpoint
 

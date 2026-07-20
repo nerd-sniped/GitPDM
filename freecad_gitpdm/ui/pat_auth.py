@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 """
 PAT (Personal Access Token) Authentication Handler
@@ -10,10 +11,10 @@ code, no polling, no browser handoff - paste a token, verify it works,
 store it.
 """
 
-try:
-    from PySide6 import QtWidgets
-except ImportError:
-    from PySide2 import QtWidgets
+# FreeCAD's own Qt compatibility shim -- re-exports whichever binding
+# (PySide2/PySide6/...) the running FreeCAD was built against, so this
+# code doesn't need updating on the next Qt major-version bump.
+from PySide import QtWidgets
 
 from freecad_gitpdm.core import log, settings
 from freecad_gitpdm.core.log import _redact_sensitive

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 """
 SourceHut repository creation via the git.sr.ht GraphQL `createRepository`

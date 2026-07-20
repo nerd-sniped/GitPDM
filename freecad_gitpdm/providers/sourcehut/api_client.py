@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 """
 SourceHut GraphQL API client (stdlib-only, built on BaseApiClient).

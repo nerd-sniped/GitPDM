@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 """
 SourceHut repository listing via the git.sr.ht GraphQL `me { repositories }`

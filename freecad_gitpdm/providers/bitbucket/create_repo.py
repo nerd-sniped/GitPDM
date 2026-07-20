@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 """
 Bitbucket Cloud repository creation via POST /2.0/repositories/{workspace}/{slug}.

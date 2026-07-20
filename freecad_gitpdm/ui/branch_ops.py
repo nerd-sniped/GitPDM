@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 """
 Branch Operations Handler Module
@@ -9,16 +10,10 @@ import sys
 import glob
 import subprocess
 
-# Qt compatibility layer
-try:
-    from PySide6 import QtCore, QtWidgets
-except ImportError:
-    try:
-        from PySide2 import QtCore, QtWidgets
-    except ImportError as e:
-        raise ImportError(
-            "Neither PySide6 nor PySide2 found. FreeCAD installation may be incomplete."
-        ) from e
+# FreeCAD's own Qt compatibility shim -- re-exports whichever binding
+# (PySide2/PySide6/...) the running FreeCAD was built against, so this
+# code doesn't need updating on the next Qt major-version bump.
+from PySide import QtCore, QtWidgets
 
 from freecad_gitpdm.core import log, settings
 from freecad_gitpdm.ui import dialogs

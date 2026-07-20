@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 """
 GitLab REST API v4 client (stdlib-only, built on the shared BaseApiClient).

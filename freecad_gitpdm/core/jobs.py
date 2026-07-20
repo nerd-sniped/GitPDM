@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 """
 GitPDM Jobs Module
@@ -11,21 +12,17 @@ from freecad_gitpdm.core import log
 
 def _get_qt_core():
     """
-    Lazy import of QtCore to handle FreeCAD-only availability
+    Lazy import of QtCore to handle FreeCAD-only availability. Goes through
+    FreeCAD's own "PySide" compatibility shim (re-exports whichever binding
+    -- PySide2/PySide6/... -- the running FreeCAD was built against) rather
+    than a hardcoded PySide6/PySide2 fallback chain, so this doesn't need
+    updating on the next Qt major-version bump.
 
     Returns:
         QtCore module
     """
-    try:
-        from PySide6 import QtCore
-    except ImportError:
-        try:
-            from PySide2 import QtCore
-        except ImportError:
-            raise ImportError(
-                "Neither PySide6 nor PySide2 found. "
-                "FreeCAD installation may be incomplete."
-            )
+    from PySide import QtCore
+
     return QtCore
 
 

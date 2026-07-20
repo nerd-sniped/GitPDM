@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 """
 Generic stdlib-only (no `requests` dependency) JSON REST client with retry,

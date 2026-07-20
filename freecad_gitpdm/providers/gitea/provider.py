@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 """
 Gitea/Forgejo provider: self-hosted, PAT-paste auth, GitHub-API-compatible

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 """
 GitHub provider: extends BaseProvider with device flow, repo-creation API,

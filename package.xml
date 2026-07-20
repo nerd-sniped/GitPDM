@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<!-- SPDX-License-Identifier: MIT -->
 <!--
   FreeCAD Addon Manager metadata (Phase G7 / R3.3). Schema verified against
   FreeCAD's own official template (github.com/FreeCAD/Addon-Template) and a
@@ -22,6 +23,18 @@
   issue type (or the Codeberg mirror, or a forum post). That's an external,
   identity-bound action for a maintainer to take, not something done from
   here.
+
+  Audited 2026-07-20 against the actual published Qualities list
+  (Topics/Addon-Index/Index/Qualities.html) ahead of submission: added the
+  <depend> entries below (secretstorage/keyring were real runtime deps in
+  pyproject.toml but invisible to the Addon Manager, which only installs
+  what's declared here — Linux/macOS users installing via the index would
+  otherwise get no auto-install and a silent ImportError in credential
+  storage) and fixed <url type="readme"> to point at raw Markdown per the
+  Manifest guide and the official Addon-Template's own example (was a
+  GitHub blob/HTML view). No platform-conditional syntax exists in this
+  manifest format, hence optional="true" on both — neither is needed on
+  Windows, and an install failure there must not block the whole addon.
 -->
 <package format="1" xmlns="https://wiki.freecad.org/Package_Metadata">
 
@@ -32,6 +45,9 @@
 
     <freecadmin>1.0</freecadmin>
     <pythonmin>3.11</pythonmin>
+
+    <depend type="python" optional="true">secretstorage</depend>
+    <depend type="python" optional="true">keyring</depend>
 
     <tag>version-control</tag>
     <tag>git</tag>
@@ -46,7 +62,7 @@
 
     <url type="repository" branch="main">https://github.com/nerd-sniped/GitPDM</url>
     <url type="bugtracker">https://github.com/nerd-sniped/GitPDM/issues</url>
-    <url type="readme">https://github.com/nerd-sniped/GitPDM/blob/main/README.md</url>
+    <url type="readme">https://raw.githubusercontent.com/nerd-sniped/GitPDM/main/README.md</url>
 
     <content>
         <workbench>

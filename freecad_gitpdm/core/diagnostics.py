@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 """
 GitPDM Diagnostics Module
@@ -43,21 +44,18 @@ def get_diagnostics():
         diagnostics["freecad_version"] = f"Error: {e}"
         diagnostics["freecad_build"] = "Unknown"
 
-    # Qt binding
+    # Qt binding -- go through FreeCAD's own "PySide" compatibility shim
+    # rather than guessing PySide6/PySide2 ourselves. QtCore.__name__ still
+    # reveals the real underlying binding (e.g. "PySide6.QtCore") because
+    # the shim re-exports the same module object, not a copy.
     try:
-        from PySide6 import QtCore
+        from PySide import QtCore
 
-        diagnostics["qt_binding"] = "PySide6"
+        diagnostics["qt_binding"] = getattr(QtCore, "__name__", "PySide").split(".")[0]
         diagnostics["qt_version"] = QtCore.qVersion()
     except ImportError:
-        try:
-            from PySide2 import QtCore
-
-            diagnostics["qt_binding"] = "PySide2"
-            diagnostics["qt_version"] = QtCore.qVersion()
-        except ImportError:
-            diagnostics["qt_binding"] = "None"
-            diagnostics["qt_version"] = "None"
+        diagnostics["qt_binding"] = "None"
+        diagnostics["qt_version"] = "None"
 
     # Git availability
     try:
