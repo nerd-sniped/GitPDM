@@ -18,13 +18,34 @@ git operations go through there.
 
 from __future__ import annotations
 
+import json
+import os
+import shutil
 import signal
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Optional
 
 from freecad_gitpdm.core import log, settings, storage_mode
-from freecad_gitpdm.git.client import RECOVERY_REF, CmdResult
+from freecad_gitpdm.git.client import RECOVERY_REF, CmdResult, RecoveryCheckpointEntry
+
+# Folder (inside .git/, never walked by `git add`/checked in by any commit,
+# so it can never recursively capture itself into a later checkpoint)
+# non-destructive recovery exports land in -- see export_recovery_snapshot.
+RECOVERY_EXPORT_DIRNAME = "gitpdm-recovery"
+
+# Each export folder is a full checked-out copy of the tracked files, not a
+# diff -- unbounded growth across a long editing session could add up fast
+# for a large CAD file, so only the most recent this many are kept (oldest
+# pruned first). All of them are cleared outright once a real commit
+# supersedes the whole recovery history anyway -- see prune_recovery_branch.
+MAX_RETAINED_RECOVERY_EXPORTS = 30
+
+# Marker file (also inside .git/) recording which document the most recent
+# checkpoint actually saved -- see note_last_checkpoint_file/
+# load_last_checkpoint_file below for why this can't live in FreeCAD's own
+# parameter store.
+_LAST_CHECKPOINT_FILENAME = "gitpdm-last-checkpoint.json"
 
 # Idle-debounce: a checkpoint fires once the document has been dirty and
 # untouched for this long (within R2.5's 30-60s band).
@@ -68,6 +89,14 @@ class CheckpointResult:
     pushed: bool = False
     skipped_reason: str = ""
     message: str = ""
+    # False only when save_if_dirty() was invoked and actually raised, i.e.
+    # a checkpoint commit still landed on gitpdm/recovery but it's a no-op
+    # re-snapshot of whatever was already on disk, NOT a capture of the
+    # edit the user was making -- distinct from "nothing needed saving".
+    # Surfaced so a caller (ui/panel.py) can tell "this checkpoint really
+    # has your latest edit" apart from false confidence that it does just
+    # because a new commit exists (see the seamless-recovery follow-up).
+    save_ok: bool = True
 
 
 @dataclass
@@ -143,7 +172,7 @@ def run_checkpoint(
     git_client,
     repo_root: str,
     is_busy: Callable[[], bool],
-    save_if_dirty: Callable[[], None],
+    save_if_dirty: Callable[[], bool],
     respect_busy_guard: bool = True,
 ) -> CheckpointResult:
     """
@@ -155,7 +184,15 @@ def run_checkpoint(
     retry on its next tick). `save_if_dirty` performs FreeCAD's actual
     blocking whole-document save when there are in-memory unsaved changes;
     only after that has the working tree changed on disk for the recovery
-    commit to capture.
+    commit to capture. It must return True when there was nothing to save
+    or the save succeeded, and False only if a save was attempted and
+    failed -- the commit below still runs either way (a stale checkpoint is
+    still better than none), but the caller needs to know which case it got
+    (see `CheckpointResult.save_ok`): a commit can succeed as pure git
+    plumbing while re-snapshotting stale, pre-edit disk content if the
+    actual document save silently failed, which would otherwise look
+    identical to a real, edit-capturing checkpoint from the outside (both
+    just look like "a new commit landed on gitpdm/recovery").
 
     `respect_busy_guard=False` is for the shutdown path (see
     run_shutdown_checkpoint): the process is exiting regardless, so there is
@@ -164,7 +201,7 @@ def run_checkpoint(
     if respect_busy_guard and is_busy():
         return CheckpointResult(ok=False, skipped_reason="busy")
 
-    save_if_dirty()
+    save_ok = save_if_dirty()
 
     commit_result = git_client.commit_recovery_checkpoint(
         repo_root, _checkpoint_message()
@@ -181,7 +218,9 @@ def run_checkpoint(
         if not pushed:
             log.warning(f"Recovery-branch push failed: {push_result.stderr}")
 
-    return CheckpointResult(ok=True, sha=commit_result.stdout, pushed=pushed)
+    return CheckpointResult(
+        ok=True, sha=commit_result.stdout, pushed=pushed, save_ok=bool(save_ok)
+    )
 
 
 def run_shutdown_checkpoint(
@@ -231,10 +270,68 @@ def recovery_branch_status(git_client, repo_root: str) -> RecoveryStatus:
     )
 
 
+def list_recovery_checkpoints(
+    git_client, repo_root: str, limit: int = 50
+) -> list[RecoveryCheckpointEntry]:
+    """
+    Full gitpdm/recovery history, newest first -- for browsing/restoring
+    any past checkpoint, not only ever the latest tip. A user report made
+    this necessary: the checkpoint's real save is periodic and does touch
+    the actual working file (that's the whole point -- see should_checkpoint's
+    idle-debounce), so "restore the latest" alone is often a no-op once the
+    working file already matches it; being able to go back to an earlier
+    point in the session is what makes the recovery branch's continuous
+    history actually useful rather than just a single redundant backup.
+    """
+    return git_client.list_recovery_checkpoints(repo_root, limit=limit)
+
+
 def prune_recovery_branch(git_client, repo_root: str):
-    """Delete the recovery branch once superseded by a real commit (R2.5's
-    "prune/reset offer on next real commit"). Returns a CmdResult."""
-    return git_client.delete_recovery_branch(repo_root)
+    """
+    Delete the recovery branch once superseded by a real commit (R2.5's
+    "prune/reset offer on next real commit"). Also clears the entire
+    exported checkpoint-history folder tree (.git/gitpdm-recovery/) -- a
+    real commit supersedes every earlier checkpoint by definition (it
+    captures the current working tree, at least as up to date as any prior
+    checkpoint of that same tree), so the accumulated per-checkpoint
+    folders stop meaning anything either. Returns a CmdResult for the
+    branch deletion; the folder cleanup is best-effort and doesn't affect
+    the return value.
+    """
+    result = git_client.delete_recovery_branch(repo_root)
+    _clear_all_recovery_exports(repo_root)
+    return result
+
+
+def _recovery_export_root(repo_root: str) -> str:
+    return os.path.join(repo_root, ".git", RECOVERY_EXPORT_DIRNAME)
+
+
+def _clear_all_recovery_exports(repo_root: str) -> None:
+    shutil.rmtree(_recovery_export_root(repo_root), ignore_errors=True)
+
+
+def _prune_old_recovery_exports(repo_root: str) -> None:
+    """
+    Keep only the most recent MAX_RETAINED_RECOVERY_EXPORTS export folders,
+    deleting the rest. Safe because folder names are `<timestamp>-<sha8>`
+    (see export_recovery_snapshot), so plain lexicographic sort is
+    chronological order -- oldest names sort first.
+    """
+    export_root = _recovery_export_root(repo_root)
+    try:
+        names = sorted(
+            name
+            for name in os.listdir(export_root)
+            if os.path.isdir(os.path.join(export_root, name))
+        )
+    except OSError:
+        return
+    excess = len(names) - MAX_RETAINED_RECOVERY_EXPORTS
+    if excess <= 0:
+        return
+    for name in names[:excess]:
+        shutil.rmtree(os.path.join(export_root, name), ignore_errors=True)
 
 
 def restore_recovery_checkpoint(
@@ -250,3 +347,99 @@ def restore_recovery_checkpoint(
     if not sha:
         return CmdResult(False, "", "No recovery snapshot available", "NO_RECOVERY_SHA")
     return git_client.restore_from_recovery(repo_root, sha)
+
+
+def export_recovery_snapshot(
+    git_client, repo_root: str, recovery_sha: Optional[str] = None
+) -> CmdResult:
+    """
+    Extract the recovery branch's snapshot into a dated, browsable folder
+    under `.git/gitpdm-recovery/` instead of (in addition to, from the
+    caller's point of view) overwriting the working tree -- gives the user
+    a concrete artifact to open/compare/copy from by hand, addressing a
+    real report where an in-place-only restore left no visible proof of
+    what, if anything, actually happened. Safe to call regardless of
+    whether any documents are open (never touches repo_root's real working
+    tree, index, or HEAD -- see GitClient.export_recovery_snapshot).
+    On success, `.stdout` holds the destination folder's absolute path.
+
+    The folder is named `<timestamp>-<sha8>`, where the timestamp is the
+    checkpoint commit's own commit time (via GitClient.commit_timestamp),
+    NOT wall-clock "now" -- exporting can happen long after the checkpoint
+    it's exporting (e.g. this function is also called automatically right
+    after every checkpoint by ui/panel.py's _on_checkpoint_timer_tick, but
+    ALSO on demand for an arbitrary older entry picked from the
+    checkpoint-history browser), so using "now" would make folder names
+    reflect when someone looked, not when the checkpoint actually happened
+    -- exactly the "hard to chronologically track changes" problem a user
+    report called out. Timestamp-first naming also means a plain
+    alphabetical folder listing (Explorer's default) already sorts
+    chronologically, no extra tooling needed. Prunes older exports down to
+    MAX_RETAINED_RECOVERY_EXPORTS after a successful export (see
+    _prune_old_recovery_exports) -- best-effort, doesn't affect the return
+    value.
+    """
+    sha = recovery_sha or git_client.rev_parse(repo_root, RECOVERY_REF)
+    if not sha:
+        return CmdResult(False, "", "No recovery snapshot available", "NO_RECOVERY_SHA")
+
+    commit_at = git_client.commit_timestamp(repo_root, sha)
+    stamp = _folder_timestamp(commit_at)
+    dest_dir = os.path.join(
+        repo_root, ".git", RECOVERY_EXPORT_DIRNAME, f"{stamp}-{sha[:8]}"
+    )
+    result = git_client.export_recovery_snapshot(repo_root, sha, dest_dir)
+    if result.ok:
+        _prune_old_recovery_exports(repo_root)
+    return result
+
+
+def _folder_timestamp(commit_iso_at: Optional[str]) -> str:
+    """Filename-safe, lexicographically-sortable timestamp derived from a
+    checkpoint's own commit time; falls back to wall-clock "now" only if
+    that timestamp couldn't be resolved at all (e.g. commit_timestamp()
+    failed), so a folder is still produced rather than blocking export."""
+    if commit_iso_at:
+        try:
+            return datetime.fromisoformat(commit_iso_at).strftime("%Y%m%d-%H%M%S")
+        except ValueError:
+            pass
+    return datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+def _last_checkpoint_marker_path(repo_root: str) -> str:
+    return os.path.join(repo_root, ".git", _LAST_CHECKPOINT_FILENAME)
+
+
+def note_last_checkpoint_file(repo_root: str, file_path: str) -> None:
+    """
+    Record which document a checkpoint just saved, so a later session's
+    restore knows which file to reopen. Written directly to a plain JSON
+    file under `.git/` -- deliberately NOT through FreeCAD's parameter
+    store (core/settings.py) -- because FreeCAD's parameter tree is only
+    guaranteed to reach disk on a clean shutdown, and surviving an unclean
+    one (crash/force-quit) is the entire point of this feature; a user
+    report confirmed the parameter-store version of this (this function's
+    predecessor) came back empty after a force-quit, exactly the scenario
+    it exists for. Mirrors core/session_lock.py's own reasoning for using
+    a plain file instead of the parameter store. Best-effort: a failure
+    here should never block the checkpoint itself.
+    """
+    try:
+        path = _last_checkpoint_marker_path(repo_root)
+        payload = {"file": file_path, "at": datetime.now(timezone.utc).isoformat()}
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+    except OSError as e:
+        log.warning(f"Could not persist last-checkpoint-file marker: {e}")
+
+
+def load_last_checkpoint_file(repo_root: str) -> str:
+    """Load the path recorded by note_last_checkpoint_file(), or "" if
+    none is recorded (or repo_root doesn't look like a repo yet)."""
+    try:
+        with open(_last_checkpoint_marker_path(repo_root), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return str(data.get("file", "") or "")
+    except (FileNotFoundError, OSError, ValueError, KeyError, TypeError):
+        return ""

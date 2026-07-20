@@ -191,8 +191,12 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         super().__init__()
         self.setObjectName("GitPDM_DockWidget")
         self.setWindowTitle("Git PDM")
-        # Bottom-docked strip, not a sidebar: no minimum width constraint,
-        # just enough height for the three compact rows.
+        # No minimum width constraint -- just enough height to stay usable,
+        # whether docked as a short strip along the bottom or as a narrow
+        # column in the left dock (the default location as of 2026-07-19;
+        # see commands._find_or_create_dock). The responsive QBoxLayouts
+        # wired up in resizeEvent/_apply_layout_orientation handle the
+        # reflow between those two shapes.
         self.setMinimumHeight(120)
 
         # Service container (Sprint 3)
@@ -263,11 +267,19 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._current_storage_mode = storage_mode.DEFAULT_MODE
         self._group_git_check = None
         self._group_repo_selector = None
-        self._group_status = None
         self._group_branch = None
         self._group_actions = None
         self._actions_extra_container = None
         self._branch_combo_updating = False  # Prevent recursive combo change events
+
+        # Layout direction of the panel's toolbar-like rows (columns_row,
+        # switch_row, the fetch/pull row) flips between side-by-side
+        # (horizontal dock, top/bottom) and stacked (vertical dock,
+        # left/right) so the same widgets stay usable in either dock area
+        # instead of overflowing a narrow sidebar -- see resizeEvent /
+        # _apply_layout_orientation.
+        self._layout_is_vertical = False
+        self._responsive_layouts = []
 
         # Font sizes for labels
         self._meta_font_size = 9
@@ -285,20 +297,23 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._build_git_check_section(main_layout)
         self._build_branch_section(main_layout)
 
-        # Repository / Status / Actions share a single row of columns
-        # instead of stacking as full-width blocks, so the panel stays
-        # short when docked at the bottom.
-        columns_row = QtWidgets.QHBoxLayout()
+        # Repository (name + status, sharing one row so status doesn't cost
+        # its own column) and Actions share a single row of columns instead
+        # of stacking as full-width blocks, so the panel stays short when
+        # docked at the bottom -- a QBoxLayout rather than a fixed QHBoxLayout
+        # so its direction can flip to stacked when the dock is narrow and
+        # tall (left/right dock area) instead of overflowing sideways. See
+        # resizeEvent / _apply_layout_orientation.
+        columns_row = QtWidgets.QBoxLayout(QtWidgets.QBoxLayout.LeftToRight)
         columns_row.setSpacing(8)
         self._build_repo_selector(columns_row)
-        self._build_status_section(columns_row)
         self._build_changes_section(main_layout)
         self._wire_changes_popup()
         self._build_buttons_section(columns_row)
-        columns_row.setStretchFactor(self._group_repo_selector, 3)
-        columns_row.setStretchFactor(self._group_status, 2)
+        columns_row.setStretchFactor(self._group_repo_selector, 5)
         columns_row.setStretchFactor(self._group_actions, 4)
         main_layout.addLayout(columns_row)
+        self._responsive_layouts.append(columns_row)
 
         # Add stretch at bottom to push everything up
         main_layout.addStretch()
@@ -388,6 +403,44 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 lambda: self._set_freecad_working_directory(self._current_repo_root),
             )
 
+    def resizeEvent(self, event):
+        """
+        Flip the toolbar-like rows (columns_row, switch_row, the fetch/pull
+        row) between side-by-side and stacked as the dock's own aspect ratio
+        changes, so the same widgets stay usable whether GitPDM is docked
+        along the bottom (wide, short) or the side (narrow, tall) instead of
+        overflowing sideways in the narrow case. QDockWidget's own size *is*
+        the available space in either dock area, so aspect ratio here is a
+        reliable, signal-free proxy for dock orientation -- no need to hook
+        dockLocationChanged separately, and it also covers floating/undocked
+        resizing for free.
+        """
+        super().resizeEvent(event)
+        self._maybe_update_layout_orientation()
+
+    def _maybe_update_layout_orientation(self):
+        width = max(self.width(), 1)
+        height = max(self.height(), 1)
+        # Hysteresis around the switch point so a dock sitting near-square
+        # doesn't flap direction on every pixel of resize.
+        if self._layout_is_vertical:
+            vertical = height > width * 0.9
+        else:
+            vertical = height > width * 1.3
+        self._apply_layout_orientation(vertical)
+
+    def _apply_layout_orientation(self, vertical):
+        if vertical == self._layout_is_vertical:
+            return
+        self._layout_is_vertical = vertical
+        direction = (
+            QtWidgets.QBoxLayout.TopToBottom
+            if vertical
+            else QtWidgets.QBoxLayout.LeftToRight
+        )
+        for box_layout in self._responsive_layouts:
+            box_layout.setDirection(direction)
+
     def closeEvent(self, event):
         """Handle dock widget close - cleanup observers."""
         if self._doc_observer is not None:
@@ -447,16 +500,67 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
             )
             if result.ok:
                 self._checkpoint_state.note_checkpoint(now)
-                log.debug(
-                    f"Checkpoint committed {result.sha[:8]}"
-                    + (" (pushed)" if result.pushed else "")
+                # Export this checkpoint into .git/gitpdm-recovery/ right
+                # away, not only when a restore is later requested -- a
+                # user report specifically wanted every checkpoint to show
+                # up in the recovery folder as it happens, building a
+                # browsable chronological history in Explorer automatically
+                # rather than only ever materializing the one checkpoint a
+                # restore action happens to pick. Silent/best-effort: this
+                # is a convenience on top of an already-successful
+                # checkpoint, not something that should surface its own
+                # error UI on every tick.
+                export_result = checkpoint.export_recovery_snapshot(
+                    self._git_client, self._current_repo_root, result.sha
                 )
+                if not export_result.ok:
+                    log.debug(
+                        f"Recovery export failed for {result.sha[:8]}: "
+                        f"{export_result.stderr}"
+                    )
+                if result.save_ok:
+                    log.debug(
+                        f"Checkpoint committed {result.sha[:8]}"
+                        + (" (pushed)" if result.pushed else "")
+                    )
+                    self._show_checkpoint_feedback(
+                        f"Checkpoint saved {time.strftime('%H:%M:%S')}", ok=True
+                    )
+                else:
+                    # Commit still landed on gitpdm/recovery, but the actual
+                    # document save failed -- see
+                    # _save_active_document_if_dirty's docstring for why
+                    # this still needs a visible, non-debug warning rather
+                    # than looking like a normal successful checkpoint.
+                    log.warning(
+                        f"Checkpoint {result.sha[:8]} committed, but the "
+                        "document save step failed -- it may not contain "
+                        "your latest edits"
+                    )
+                    self._show_checkpoint_feedback(
+                        "Checkpoint save issue — see Report View", ok=False
+                    )
             elif result.skipped_reason == "busy":
                 log.debug("Checkpoint deferred: FreeCAD is mid-edit")
             else:
                 log.debug(f"Checkpoint failed: {result.message}")
         except Exception as e:
             log.debug(f"Checkpoint tick failed: {e}")
+
+    def _show_checkpoint_feedback(self, text, ok=True):
+        """
+        Surface checkpoint activity in the operation-status chip (the small
+        "Ready"/sync indicator next to the repo name) so a user waiting for
+        a checkpoint to fire has visible, timestamped proof it actually
+        happened -- and whether it genuinely captured a fresh save -- rather
+        than guessing from elapsed time. Self-clears back to "Ready" after a
+        few seconds via the same mechanism other transient operations use.
+        """
+        self.operation_status_label.setText(text)
+        self.operation_status_label.setStyleSheet(
+            f"color: {'green' if ok else 'red'}; font-size: 9px;"
+        )
+        self._set_ready_later(delay_ms=4000)
 
     def _is_freecad_busy(self):
         """
@@ -489,25 +593,70 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
     def _save_active_document_if_dirty(self):
         """
-        Perform FreeCAD's blocking whole-document save, but only if there
-        are unsaved changes to a document that has already been saved once
-        (a never-saved document has nothing on disk yet for a checkpoint to
-        capture, and forcing a first Save-As dialog would defeat the point
-        of a background checkpoint). NOTE: not live-verified (same caveat
-        as _is_freecad_busy above).
+        Perform FreeCAD's blocking whole-document save whenever there's an
+        active document that's already been saved once (a never-saved
+        document has nothing on disk yet for a checkpoint to capture, and
+        forcing a first Save-As dialog would defeat the point of a
+        background checkpoint).
+
+        Deliberately does NOT gate on `Document.isTouched()` any more --
+        that was this function's original design, and it was wrong.
+        `App::Document.isTouched()` reflects FreeCAD's *recompute*
+        dependency graph (whether any object still needs recomputing), not
+        "has changes since the file on disk was last written." FreeCAD
+        settles its recompute state almost immediately after an edit --
+        essentially always well before the checkpoint scheduler's 45s
+        idle-debounce window elapses (see core/checkpoint.py's
+        DEFAULT_IDLE_SECONDS) -- so by the time a checkpoint tick actually
+        runs, `isTouched()` was very often already False again despite the
+        document genuinely having unsaved changes. That made this function
+        silently skip the real `doc.save()` on the vast majority of real
+        checkpoints: a clean early return, not an exception, so it looked
+        identical to "nothing needed saving" from every angle, including
+        `CheckpointResult.save_ok` (which this function itself reports --
+        see below). Found live via a real user report: a genuinely edited
+        part's checkpoint -- and its non-destructive export (see
+        core/checkpoint.py's export_recovery_snapshot) -- both still
+        contained the pre-edit version with no error anywhere in the
+        pipeline, because the save step had simply never run. The
+        surrounding scheduler (core/checkpoint.py's should_checkpoint())
+        already gates *whether* this function runs at all on real recent
+        activity (CheckpointState.dirty, set by slotChangedObject on any
+        property change -- separately, correctly, live-verified 2026-07-19),
+        so an extra "is it really dirty" check in here on top of that was
+        both redundant and, it turns out, actively wrong.
+
+        Returns True if there was nothing to save (no active/never-saved
+        document) or the save succeeded, False only if a save was
+        attempted and raised -- core/checkpoint.py's run_checkpoint() still
+        commits a recovery snapshot either way (a stale checkpoint beats
+        none), but needs to know which case it got: a failed save here
+        means the commit that follows just re-snapshots stale, pre-edit
+        disk content, which otherwise looks identical from the outside to
+        a real checkpoint (both are just "a new commit on gitpdm/recovery").
+        Logged at warning (not debug) for the same reason -- a silently
+        swallowed save failure is exactly what would make a checkpoint
+        look like it worked when it didn't.
         """
         try:
             import FreeCAD
 
             doc = FreeCAD.ActiveDocument
             if doc is None or not doc.FileName:
-                return
-            if hasattr(doc, "isTouched") and not doc.isTouched():
-                return
+                return True
             doc.save()
+            # Persisted directly to a plain file under .git/ (not FreeCAD's
+            # parameter store -- that's only reliably flushed to disk on a
+            # clean shutdown, exactly what a crash/force-quit isn't) so a
+            # later session's restore reliably knows which file to reopen.
+            # See core/checkpoint.py's note_last_checkpoint_file and
+            # RepoValidationHandler.offer_recovery_restore.
+            checkpoint.note_last_checkpoint_file(self._current_repo_root, doc.FileName)
             log.debug("Checkpoint triggered a document save")
+            return True
         except Exception as e:
-            log.debug(f"Checkpoint save-if-dirty failed: {e}")
+            log.warning(f"Checkpoint save-if-dirty failed: {e}")
+            return False
 
     def _clear_recovery_checkpoint_clicked(self):
         """GitPDM menu entry: manually clear the recovery branch (Phase G6 /
@@ -536,6 +685,24 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         if reply == QtWidgets.QMessageBox.Yes:
             checkpoint.prune_recovery_branch(self._git_client, self._current_repo_root)
             log.info("Recovery checkpoint cleared via GitPDM menu")
+
+    def _restore_recovery_checkpoint_clicked(self):
+        """GitPDM menu entry: manually check for and restore a recovery
+        checkpoint on demand (Phase G6 / R2.5 follow-up), rather than only
+        relying on the one-shot offer that fires right after a repo opens
+        -- see RepoValidationHandler.offer_recovery_restore for why that
+        prompt alone isn't enough to reliably get a user back to work after
+        losing an unsaved edit (e.g. a force-quit)."""
+        if not self._current_repo_root:
+            QtWidgets.QMessageBox.information(
+                self,
+                "No Repository Selected",
+                "Select a repository first.",
+            )
+            return
+        self._repo_validator.offer_recovery_restore(
+            self._current_repo_root, interactive_when_unavailable=True
+        )
 
     def _schedule_auto_preview_generation(self, filename):
         """Best-effort automatic preview export after a save/close."""
@@ -654,7 +821,16 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
     def _build_repo_selector(self, layout):
         """
-        Build the repository selector section
+        Build the combined Repository + Status section: repo name and the
+        pending-changes/sync-status chips share one row instead of separate
+        columns, so status doesn't cost a whole column of its own (see
+        header_row below). Everything denser (branch, upstream ref,
+        last-checked time, storage mode) still gets built and kept
+        live-updated by the exact same code paths as before
+        (repo_validator.py / fetch_pull.py / branch_ops.py / commit_push.py
+        all still call .setText() on these widgets by name), it's just not
+        laid out on screen any more -- it surfaces as tooltip text on the
+        two visible chips instead (see _refresh_status_chip_tooltips).
 
         Args:
             layout: Parent layout to add widgets to
@@ -681,11 +857,40 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self._first_run_hint.setVisible(False)
         group_layout.addWidget(self._first_run_hint)
 
-        # Repo name (bold header) on its own line.
-        self.repo_name_label = QtWidgets.QLabel("No repository selected")
-        self._set_strong_label(self.repo_name_label, "black")
-        self.repo_name_label.setWordWrap(True)
-        group_layout.addWidget(self.repo_name_label)
+        # Header row: repo name (elided, not wrapped, so a long name costs
+        # one line instead of two) + the pending-changes/sync-status chips,
+        # right-aligned operation status trailing. The name uses a legible
+        # accent color instead of the hardcoded black it used to have --
+        # black text is invisible against FreeCAD's dark theme, and reads as
+        # low-priority even on light theme.
+        header_row = QtWidgets.QHBoxLayout()
+        header_row.setSpacing(6)
+
+        self.repo_name_label = label_style.ElidedLabel("No repository selected")
+        self._set_strong_label(self.repo_name_label, label_style.REPO_NAME_ACCENT)
+        header_row.addWidget(self.repo_name_label, 1)
+
+        self.working_tree_label = QtWidgets.QToolButton()
+        self.working_tree_label.setText("—")
+        self.working_tree_label.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
+        self.working_tree_label.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        self.working_tree_label.setAutoRaise(True)
+        self._set_strong_label(self.working_tree_label, "black")
+        header_row.addWidget(self.working_tree_label)
+
+        self.ahead_behind_label = QtWidgets.QLabel("—")
+        self.ahead_behind_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        self._set_strong_label(self.ahead_behind_label, "black")
+        header_row.addWidget(self.ahead_behind_label)
+
+        header_row.addStretch()
+
+        self.operation_status_label = QtWidgets.QLabel("Ready")
+        self.operation_status_label.setStyleSheet("color: gray; font-size: 9px;")
+        self.operation_status_label.setAlignment(QtCore.Qt.AlignRight)
+        header_row.addWidget(self.operation_status_label)
+
+        group_layout.addLayout(header_row)
 
         # Path field on its own line -- still the real, editable field
         # (programmatic .setText()/.text() used throughout the codebase),
@@ -705,8 +910,10 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
 
         # Browse / Join / Start New: three separate, always-visible buttons
         # (not nested behind a dropdown) since switching/starting projects
-        # is something people reach for often.
-        switch_row = QtWidgets.QHBoxLayout()
+        # is something people reach for often. QBoxLayout (not a fixed
+        # QHBoxLayout) so it can stack vertically instead of overflowing
+        # when the panel is docked narrow -- see _apply_layout_orientation.
+        switch_row = QtWidgets.QBoxLayout(QtWidgets.QBoxLayout.LeftToRight)
         switch_row.setSpacing(4)
 
         browse_btn = QtWidgets.QPushButton("Browse…")
@@ -734,6 +941,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         switch_row.addWidget(new_repo_btn)
 
         group_layout.addLayout(switch_row)
+        self._responsive_layouts.append(switch_row)
 
         # Shallow-clone banner (Phase G5 / R2.4) - hidden unless the active
         # repo is a shallow clone, so history-truncated state is visible
@@ -836,60 +1044,12 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         self.validate_label.setVisible(False)
         group_layout.addLayout(validation_layout)
 
-        layout.addWidget(group)
-        self._group_repo_selector = group
-
-    def _build_status_section(self, layout):
-        """
-        Build the simple status row: pending changes + sync status only.
-
-        Everything denser (branch, upstream ref, last-checked time, storage
-        mode) still gets built and kept live-updated by the exact same code
-        paths as before (repo_validator.py / fetch_pull.py / branch_ops.py /
-        commit_push.py all still call .setText() on these widgets by name),
-        it's just not laid out on screen any more -- it surfaces as tooltip
-        text on the two visible chips instead (see
-        _refresh_status_chip_tooltips), consistent with "simple status bar
-        that only shows pending changes and sync status".
-        """
-        group = QtWidgets.QGroupBox("Status")
-        group_layout = QtWidgets.QVBoxLayout()
-        group_layout.setContentsMargins(6, 4, 6, 4)
-        group_layout.setSpacing(4)
-        group.setLayout(group_layout)
-
-        # Compact row: pending-changes chip (clickable, pops the changes
-        # list -- see _wire_changes_popup) + sync-status chip + operation
-        # status, right-aligned.
-        chip_row = QtWidgets.QHBoxLayout()
-        chip_row.setSpacing(8)
-
-        self.working_tree_label = QtWidgets.QToolButton()
-        self.working_tree_label.setText("—")
-        self.working_tree_label.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
-        self.working_tree_label.setPopupMode(QtWidgets.QToolButton.InstantPopup)
-        self.working_tree_label.setAutoRaise(True)
-        self._set_strong_label(self.working_tree_label, "black")
-        chip_row.addWidget(self.working_tree_label)
-
-        self.ahead_behind_label = QtWidgets.QLabel("—")
-        self.ahead_behind_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        self._set_strong_label(self.ahead_behind_label, "black")
-        chip_row.addWidget(self.ahead_behind_label)
-
-        chip_row.addStretch()
-
-        self.operation_status_label = QtWidgets.QLabel("Ready")
-        self.operation_status_label.setStyleSheet("color: gray; font-size: 9px;")
-        self.operation_status_label.setAlignment(QtCore.Qt.AlignRight)
-        chip_row.addWidget(self.operation_status_label)
-
-        group_layout.addLayout(chip_row)
-
-        # Dense fields (branch/upstream/last-checked/storage mode): built
-        # exactly as before, wrapped in a hidden container instead of a
-        # visible grid. Their update call sites elsewhere in the codebase
-        # are untouched.
+        # Dense status fields (branch/upstream/last-checked/storage mode):
+        # built as before, wrapped in a hidden container instead of a
+        # visible grid -- surfaced as tooltip text on the header row's chips
+        # instead (see _refresh_status_chip_tooltips). Their update call
+        # sites elsewhere in the codebase (repo_validator.py / fetch_pull.py
+        # / branch_ops.py / commit_push.py) are untouched.
         dense_container = QtWidgets.QWidget()
         dense_layout = QtWidgets.QGridLayout()
         dense_layout.setContentsMargins(0, 0, 0, 0)
@@ -924,7 +1084,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         group_layout.addWidget(self.status_message_label)
 
         layout.addWidget(group)
-        self._group_status = group
+        self._group_repo_selector = group
 
     def _refresh_status_chip_tooltips(self):
         """Compose the dense branch/upstream/storage info (no longer laid
@@ -1077,7 +1237,10 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         group_layout.setSpacing(4)
         group.setLayout(group_layout)
 
-        row1_layout = QtWidgets.QHBoxLayout()
+        # QBoxLayout (not a fixed QHBoxLayout) so Check for Updates / Get
+        # Updates / the checkbox can stack vertically instead of overflowing
+        # when the panel is docked narrow -- see _apply_layout_orientation.
+        row1_layout = QtWidgets.QBoxLayout(QtWidgets.QBoxLayout.LeftToRight)
         row1_layout.setSpacing(4)
         self.fetch_btn = QtWidgets.QPushButton("Check for Updates")
         self.fetch_btn.setEnabled(False)
@@ -1110,6 +1273,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
         row1_layout.addWidget(self.stage_all_checkbox)
 
         group_layout.addLayout(row1_layout)
+        self._responsive_layouts.append(row1_layout)
 
         # Extra actions are grouped for easy hide/show in compact mode
         self._actions_extra_container = QtWidgets.QWidget()
@@ -1806,6 +1970,28 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 "Cannot Open Folder",
                 f"Could not open folder in file explorer:\n{e}",
             )
+
+    def _open_folder_in_explorer_selecting(self, file_path: str):
+        """
+        Open Explorer with file_path pre-selected/highlighted, rather than
+        just landing in its parent folder -- for pointing at exactly one
+        recovered file among what could be several in a recovery export,
+        instead of leaving the user to guess which one (Windows only; other
+        platforms fall back to just opening the containing folder, same as
+        _open_folder_in_explorer).
+        """
+        import sys
+        import subprocess
+
+        if sys.platform != "win32":
+            self._open_folder_in_explorer(os.path.dirname(file_path))
+            return
+        try:
+            subprocess.Popen(["explorer", f"/select,{file_path}"])
+            log.info(f"Opened explorer selecting: {file_path}")
+        except Exception as e:
+            log.warning(f"Could not open explorer selecting file, falling back: {e}")
+            self._open_folder_in_explorer(os.path.dirname(file_path))
 
     def _check_for_wrong_folder_editing(self):
         """Check if user has FreeCAD documents open from a different folder than current repo root."""

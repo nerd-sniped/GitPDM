@@ -48,11 +48,24 @@ outstanding item is actually submitting to the FreeCAD Addon Manager index
 against `FreeCAD/Addons`) needs a maintainer's real contact email and an
 icon GitPDM has never had, both flagged in `package.xml`. G6's FreeCAD
 busy/dirty API surface was live-verified 2026-07-19 in a real user session
-— `slotChangedObject`/`Document.isTouched()` both work as designed, and a
-real bug was found and fixed: `FreeCADGui.Control.activeDialog()` returns a
-**bool**, not the dialog object or `None`, so checking it with `is not
-None` made `_is_freecad_busy()` permanently report "busy" and silently
-block every checkpoint (fixed: check truthiness directly). Two items
+— `slotChangedObject` fires correctly, and a real bug was found and fixed:
+`FreeCADGui.Control.activeDialog()` returns a **bool**, not the dialog
+object or `None`, so checking it with `is not None` made `_is_freecad_busy()`
+permanently report "busy" and silently block every checkpoint (fixed:
+check truthiness directly). A second, more serious bug in the same area
+was found later the same day via a further real-world test:
+`Document.isTouched()` had originally been claimed to "work as designed"
+alongside the fix above, but that was never actually exercised by the
+session that found the `activeDialog()` bug — `isTouched()` tracks
+FreeCAD's recompute dependency graph, not "unsaved relative to disk," and
+since recompute settles almost immediately (well inside the checkpoint
+scheduler's 45s idle window), this made `_save_active_document_if_dirty()`
+silently skip the real `doc.save()` on the vast majority of genuine edits,
+with no exception and no visible symptom — every checkpoint still
+committed *something* to `gitpdm/recovery`, just a re-snapshot of
+already-stale disk content. Removed outright rather than replaced; see
+`core/checkpoint.py`'s entry below and `GITPDM_DEV_PLAN.md`'s
+seamless-recovery follow-ups for the full trail. Two items
 remain flagged as needing a real-environment verification pass: SourceHut's
 GraphQL schema (unverified live) and the embedded-thumbnail zip path/casing
 (unverified against a live FreeCAD save — the checkpoint fix above at least
@@ -182,7 +195,122 @@ when running tests or scripts outside the app.
   (`is_busy`/`save_if_dirty`) as injected callables rather than importing
   FreeCAD themselves — `ui/panel.py` supplies the real ones. The git
   plumbing itself lives on `GitClient`, not here (see `git/client.py`
-  above).
+  above). `save_if_dirty` returns a `bool` (True = nothing to do or saved
+  fine, False = a save was attempted and raised), carried into
+  `CheckpointResult.save_ok` (added 2026-07-19): `commit_recovery_checkpoint()`
+  is pure git plumbing that snapshots *whatever's currently on disk*
+  regardless of whether the save that was supposed to put fresh content
+  there actually worked, so a commit landing on `gitpdm/recovery` was
+  previously indistinguishable from the outside between "genuinely captured
+  the edit" and "no-op re-commit of stale pre-edit content because the
+  document save silently failed" — exactly what a 2026-07-19 user report
+  described (checkpoint visibly reached GitHub, but the restored file was
+  the pre-edit version). `_save_active_document_if_dirty` also now logs a
+  failed `doc.save()` at `warning`, not `debug`, so it's visible in Report
+  View by default instead of silently swallowed. **That `save_ok` machinery
+  turned out to be necessary but not sufficient** — a further real-world
+  test (same day) showed `_save_active_document_if_dirty()` was silently
+  skipping `doc.save()` entirely (a clean early return, not a raise, so
+  invisible to `save_ok`) via a `Document.isTouched()` gate that assumed
+  "not touched" meant "no unsaved changes." It doesn't:
+  `App::Document.isTouched()` is about FreeCAD's recompute dependency
+  graph, and recompute settles almost immediately after an edit — well
+  inside the 45s idle-debounce window `should_checkpoint()` waits before a
+  tick even fires — so this gate was very likely wrong on close to every
+  real checkpoint, not just this one report. Removed outright; the
+  function now calls `doc.save()` unconditionally whenever there's an
+  active, already-saved document, relying entirely on the outer
+  scheduler's `CheckpointState.dirty` (set by `slotChangedObject`, which
+  *was* genuinely live-verified) to gate whether it runs at all.
+
+  `note_last_checkpoint_file()`/`load_last_checkpoint_file()` (added
+  2026-07-19, seamless-recovery follow-up) persist the absolute path of
+  whichever document a checkpoint's `save_if_dirty()` just saved, so a
+  later session's restore knows which file to reopen — needed because the
+  in-memory `ActiveDocument` is gone after a crash. Written directly to a
+  plain JSON file at `.git/gitpdm-last-checkpoint.json`, **not** through
+  `core/settings.py`'s FreeCAD-parameter-store (that was this function's
+  first version, same day — a *second* user report showed it came back
+  empty after a force-quit: FreeCAD's parameter tree is only reliably
+  flushed to disk on a clean shutdown, exactly the condition a crash
+  violates). Mirrors `core/session_lock.py`'s own reasoning for the same
+  choice. `export_recovery_snapshot()` (same follow-up) is the
+  non-destructive companion to `restore_recovery_checkpoint()`: instead of
+  (in `ui/repo_validator.py`, in addition to) overwriting the working tree
+  in place, it extracts the recovery tree into a dated, browsable folder at
+  `.git/gitpdm-recovery/<sha8>-<timestamp>/` via `GitClient.
+  export_recovery_snapshot()` — a throwaway `GIT_INDEX_FILE` plus an
+  alternate `--work-tree` so `git checkout` (binary-safe by construction,
+  since git itself writes the bytes — no Python-side text decoding of file
+  content is ever involved) lands there instead of `repo_root`, without
+  touching the real working tree, index, or HEAD. Lives under `.git/`
+  specifically so it can never be walked by `git add -A`/recursively
+  capture itself into a later checkpoint, without depending on any
+  `.gitignore` entry existing. `ui/repo_validator.py`'s
+  `_finish_recovery_restore()` uses both, but asymmetrically: reopening the
+  exact file automatically (via `load_last_checkpoint_file()`) is the
+  success path and involves no Explorer at all — an initial version of
+  this always surfaced (or auto-opened) the export folder too, as a
+  "here's proof it worked" safety net from back when the reopened content
+  itself couldn't be fully trusted (before the `isTouched()` fix below); a
+  direct user report once that was fixed called the Explorer popup out as
+  pure friction once the native reopened view already shows the right
+  thing, so it's gone from the success path. `export_recovery_snapshot()`
+  still runs every time (cheap, no UI) and its folder is still the
+  fallback — via `ui/panel.py`'s `_open_folder_in_explorer_selecting()`,
+  Explorer-with-file-preselected — for the one case that still needs it:
+  the exact file can't be reopened automatically.
+
+  `GitClient.list_recovery_checkpoints()` (added 2026-07-19, same day)
+  lists every commit on `gitpdm/recovery` newest-first via `git log
+  <ref> --not HEAD` — the `--not HEAD` matters: without it, the log walk
+  includes whatever commit the recovery branch forked from (see
+  `commit_recovery_checkpoint()`'s `parent_sha`), not just the
+  checkpoint-specific commits (caught by the tests for this, which counted
+  one extra entry before the fix). `core/checkpoint.py`'s
+  `list_recovery_checkpoints()` wraps it for the usual testability reason.
+  Exists because "restore the latest" is often a no-op once checkpoints
+  correctly auto-save the real working file too (see the `isTouched()` fix
+  above) — the working file and the latest checkpoint end up identical in
+  the common case, so recovering an *older* point in the session is what
+  actually uses the branch's continuous history rather than restoring
+  something already on disk. `ui/dialogs.py`'s new `RecoveryHistoryDialog`
+  (a `QListWidget` of timestamp+short-SHA entries) surfaces this, wired
+  into `ui/repo_validator.py`'s `_pick_recovery_checkpoint()` — but **only**
+  for the on-demand "Restore Recovery Checkpoint" menu command
+  (`interactive_when_unavailable=True`); the automatic restore-on-start
+  offer stays a fast single Yes/No on the latest tip, since browsing
+  history isn't the right friction for the "just crashed, want my work
+  back" moment.
+
+  Same-day follow-up, per a further user report: history browsing alone
+  still required opening GitPDM's UI and explicitly restoring to see a
+  past checkpoint. `export_recovery_snapshot()` now runs automatically
+  after *every* successful checkpoint (`ui/panel.py`'s
+  `_on_checkpoint_timer_tick()`, silent/best-effort — a convenience on top
+  of an already-successful checkpoint, not something that should surface
+  its own error UI on every tick), so `.git/gitpdm-recovery/` builds a
+  standing, self-populating history in Explorer with zero GitPDM
+  interaction needed, not just a one-off export at restore time. Two
+  things had to change to make that folder actually useful as a
+  chronological trail: (1) export folders are now named
+  `<timestamp>-<sha8>` (timestamp first, was `<sha8>-<timestamp>`) so
+  Explorer's default alphabetical sort is chronological order for free;
+  (2) that timestamp comes from `GitClient.commit_timestamp()` — the
+  checkpoint commit's own `%cI` committer date — not wall-clock "now" at
+  export time, since those two can differ arbitrarily (restoring an old
+  entry from the history browser exports it long after it was made) and a
+  user report specifically called out that using export-time made
+  chronological tracking impossible. Unbounded folder-per-checkpoint
+  growth over a long session is a real disk-usage risk (each export is a
+  full checked-out copy, not a diff) — `_prune_old_recovery_exports()`
+  caps retained exports at `MAX_RETAINED_RECOVERY_EXPORTS` (30), safe to
+  prune by plain lexicographic name sort given the timestamp-first naming.
+  `prune_recovery_branch()` (already called after every real commit, and
+  from "Clear Recovery Checkpoint") now also wipes the entire export
+  folder tree via `shutil.rmtree(..., ignore_errors=True)`, on the same
+  logic as clearing the branch itself: a real commit supersedes every
+  earlier checkpoint, so the accumulated folders stop meaning anything.
 - `ui/` — the dockable panel (`panel.py`, the largest file in the codebase)
   and its feature handlers: `branch_ops.py`, `commit_push.py`,
   `fetch_pull.py`, `github_auth.py` (GitHub's OAuth
@@ -192,11 +320,36 @@ when running tests or scripts outside the app.
   takes an explicit `provider_id` since more than one of these can be
   connected at once), `repo_picker.py`, `repo_validator.py`,
   `new_repo_wizard.py`, `dialogs.py`, `connections_dialog.py`,
-  `label_style.py`. `GitPDMDockWidget` (`panel.py`) docks at the *bottom*
-  of the FreeCAD window (tabbed with Report view/Python console), not the
-  side — its content is three columns sharing one row (Repository / Status
-  / Actions), not stacked group boxes, so the whole thing stays short. The
-  GitHub Account and Other Git Hosts connect/disconnect UI lives in
+  `label_style.py`. `GitPDMDockWidget` (`panel.py`) is a plain `QDockWidget`
+  with no fixed home area -- `commands._find_or_create_dock()` (also used by
+  `InitGui.py`'s auto-open) is the single place that decides where it lands
+  on first creation: **left dock area**, tabbed with Report view/Python
+  console when either is present, as of a second 2026-07-19 pass that moved
+  it there from the bottom per an explicit user screenshot showing that spot
+  (bottom-left corner of the left dock, tabbed alongside those two) using
+  the least screen space. Its layout isn't tied to either shape though: as of
+  the same day's earlier toolbar-consolidation pass, `columns_row` and a handful of
+  button rows inside it (`switch_row` in `_build_repo_selector`, `row1_layout`
+  in `_build_buttons_section`) are built as `QBoxLayout` rather than a fixed
+  `QHBoxLayout`, and `GitPDMDockWidget.resizeEvent()` flips their
+  `.setDirection()` between `LeftToRight` and `TopToBottom` based on the
+  dock's own aspect ratio (with hysteresis, so it doesn't flap near-square)
+  — see `_maybe_update_layout_orientation()`/`_apply_layout_orientation()`.
+  This is what makes the panel usable when a user drags it to a side dock
+  (narrow/tall) instead of only the bottom (wide/short); any new
+  toolbar-like row of buttons should follow the same pattern (build as
+  `QBoxLayout`, append to `self._responsive_layouts`) rather than a fixed
+  `QHBoxLayout`. The same pass also merged the old separate "Repository"
+  and "Status" group boxes/columns into one — `working_tree_label`/
+  `ahead_behind_label`/`operation_status_label` now sit in a header row
+  alongside `repo_name_label` inside `_build_repo_selector` instead of
+  costing their own column — and replaced `repo_name_label`'s hardcoded
+  black, word-wrapped text with `label_style.ElidedLabel` (single line,
+  `...`-truncated, full name in the tooltip) styled in
+  `label_style.REPO_NAME_ACCENT`, a legible accent distinct from the
+  green/orange/red/gray/`#4db6ac` semantic status colors used elsewhere so
+  the name is never mistaken for a status signal. The GitHub Account and
+  Other Git Hosts connect/disconnect UI lives in
   `connections_dialog.py`'s `ConnectionsDialog` (opened from the "Git PDM"
   menu, not embedded inline) — constructed eagerly and hidden alongside the
   panel so `GitHubAuthHandler`'s startup checks keep running regardless of

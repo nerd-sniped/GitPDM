@@ -127,6 +127,14 @@ class CmdResult:
     error_code: Optional[str] = None
 
 
+@dataclass
+class RecoveryCheckpointEntry:
+    """One commit on the recovery branch -- see list_recovery_checkpoints()."""
+
+    sha: str
+    at: str  # ISO 8601 commit timestamp
+
+
 def _find_git_executable():
     """
     Find git executable, checking common platform-specific locations.
@@ -1521,6 +1529,27 @@ class GitClient:
         )
         return result.stdout.strip() if result.ok and result.stdout.strip() else None
 
+    def commit_timestamp(self, repo_root, sha):
+        """
+        ISO 8601 committer date (with offset, e.g. `2026-07-19T14:32:10-04:00`)
+        for a single commit, or None if it can't be resolved. Read-only.
+        Used to name a recovery export folder after when the checkpoint was
+        actually made, not whenever someone happened to export it -- those
+        can differ arbitrarily (e.g. picking an old entry from the
+        checkpoint-history browser long after it was created).
+        """
+        if not self.is_git_available():
+            return None
+        if not repo_root or not os.path.isdir(repo_root) or not sha:
+            return None
+
+        git_cmd = self._get_git_command()
+        result = self._run_command(
+            [git_cmd, "-C", repo_root, "log", "-1", "--format=%cI", sha],
+            timeout=15,
+        )
+        return result.stdout.strip() if result.ok and result.stdout.strip() else None
+
     def commit_recovery_checkpoint(self, repo_root, message, branch_ref=RECOVERY_REF):
         """
         Phase G6 (R2.5): snapshot the current working tree onto `branch_ref`
@@ -1685,6 +1714,127 @@ class GitClient:
             [git_cmd, "-C", repo_root, "checkout", recovery_sha, "--", "."],
             timeout=60,
         )
+
+    def export_recovery_snapshot(self, repo_root, recovery_sha, dest_dir):
+        """
+        Materialize `recovery_sha`'s tree into `dest_dir` -- a plain,
+        ordinary folder outside the working tree, browsable in Explorer/
+        Finder -- WITHOUT touching repo_root's real working tree, index, or
+        HEAD. This is the non-destructive companion to restore_from_recovery
+        above: that method overwrites your real files in place (proven
+        correct by TestRestoreAndPrune, but gives a user no visible artifact
+        to point at if something about the restore is ever in doubt); this
+        one leaves the real files alone and gives back a concrete, dated
+        folder they can browse, open a specific file from, or compare
+        against by hand -- addressing a real user report where the
+        "did this even do anything" ambiguity of an in-place-only restore
+        was itself the problem.
+
+        Uses the same throwaway-index trick as commit_recovery_checkpoint,
+        combined with an alternate --work-tree, so `git checkout` -- which
+        writes file bytes itself, binary-safe by construction, no Python-side
+        text decoding involved -- lands its output in dest_dir instead of
+        repo_root, and the real .git/index is never touched (a checkout
+        against a *different* work-tree while updating the real index would
+        otherwise leave `git status` on the real repo lying about which
+        files are modified).
+        """
+        if not self.is_git_available():
+            return CmdResult(False, "", "Git not available", "NO_GIT")
+        if not repo_root or not os.path.isdir(repo_root):
+            return CmdResult(False, "", "Invalid repository", "INVALID_REPO")
+        if not recovery_sha:
+            return CmdResult(
+                False, "", "No recovery snapshot to export", "NO_RECOVERY_SHA"
+            )
+
+        try:
+            os.makedirs(dest_dir, exist_ok=True)
+        except OSError as e:
+            return CmdResult(False, "", str(e), "DEST_DIR_FAILED")
+
+        git_cmd = self._get_git_command()
+        git_dir = os.path.join(repo_root, ".git")
+        fd, tmp_index = tempfile.mkstemp(prefix="gitpdm-export-", dir=git_dir)
+        os.close(fd)
+        os.remove(tmp_index)
+        try:
+            env = dict(os.environ)
+            env["GIT_INDEX_FILE"] = tmp_index
+            result = self._run_command(
+                [
+                    git_cmd,
+                    "--git-dir",
+                    git_dir,
+                    "--work-tree",
+                    dest_dir,
+                    "checkout",
+                    recovery_sha,
+                    "--",
+                    ".",
+                ],
+                timeout=120,
+                env=env,
+            )
+            if result.ok:
+                result.stdout = dest_dir
+            return result
+        finally:
+            try:
+                os.remove(tmp_index)
+            except OSError:
+                pass
+
+    def list_recovery_checkpoints(self, repo_root, branch_ref=RECOVERY_REF, limit=50):
+        """
+        List every checkpoint commit on branch_ref, newest first -- the
+        full history a "restore/export the latest tip" action alone never
+        surfaces. Every checkpoint this session ever committed is still
+        here to browse: git never overwrites a commit object, the branch
+        ref only ever moves forward (see commit_recovery_checkpoint()).
+        Read-only, safe to call any time. Returns an empty list on any
+        failure (no git, invalid repo, ref doesn't exist yet) rather than
+        raising -- callers treat "nothing to browse" as the normal
+        not-available case, not an error.
+        """
+        if not self.is_git_available():
+            return []
+        if not repo_root or not os.path.isdir(repo_root):
+            return []
+
+        git_cmd = self._get_git_command()
+        result = self._run_command(
+            [
+                git_cmd,
+                "-C",
+                repo_root,
+                "log",
+                branch_ref,
+                # branch_ref's ancestry includes whatever commit it branched
+                # off of (see commit_recovery_checkpoint()'s parent_sha) --
+                # excluding anything already reachable from HEAD keeps this
+                # to just the checkpoint-specific commits, not the shared
+                # mainline history underneath them.
+                "--not",
+                "HEAD",
+                "--format=%H%x1f%cI",
+                "-n",
+                str(limit),
+            ],
+            timeout=30,
+        )
+        if not result.ok:
+            return []
+
+        entries = []
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if "\x1f" not in line:
+                continue
+            sha, _, at = line.partition("\x1f")
+            if sha:
+                entries.append(RecoveryCheckpointEntry(sha=sha, at=at))
+        return entries
 
     def delete_recovery_branch(
         self, repo_root, branch_ref=RECOVERY_REF, remote="origin"

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -252,6 +253,276 @@ class TestRestoreAndPrune:
         assert status.recovery_sha == cp.stdout
 
 
+class TestExportRecoverySnapshot:
+    def test_export_writes_checkpointed_content_to_dest_dir(self, tmp_path, git_client):
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        _init_repo_with_commit(git_client, repo_root)
+
+        (repo_root / "part.txt").write_text("checkpointed content\n", encoding="utf-8")
+        cp = git_client.commit_recovery_checkpoint(str(repo_root), "cp")
+        assert cp.ok, cp.stderr
+
+        dest_dir = tmp_path / "export"
+        result = git_client.export_recovery_snapshot(
+            str(repo_root), cp.stdout, str(dest_dir)
+        )
+
+        assert result.ok, result.stderr
+        assert result.stdout == str(dest_dir)
+        assert (dest_dir / "part.txt").read_text(encoding="utf-8") == (
+            "checkpointed content\n"
+        )
+
+    def test_export_preserves_binary_content_byte_for_byte(self, tmp_path, git_client):
+        """FCStd files are binary zip archives -- this is the case a naive
+        `git show <sha>:<path>` (text-decoded stdout capture) would corrupt;
+        export_recovery_snapshot must not go anywhere near that path."""
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        _init_repo_with_commit(git_client, repo_root)
+
+        binary_content = bytes(range(256)) * 4  # includes \x00, \r, \n, high bytes
+        (repo_root / "model.fcstd").write_bytes(binary_content)
+        cp = git_client.commit_recovery_checkpoint(str(repo_root), "cp")
+        assert cp.ok, cp.stderr
+
+        dest_dir = tmp_path / "export"
+        result = git_client.export_recovery_snapshot(
+            str(repo_root), cp.stdout, str(dest_dir)
+        )
+
+        assert result.ok, result.stderr
+        assert (dest_dir / "model.fcstd").read_bytes() == binary_content
+
+    def test_export_does_not_touch_real_working_tree_index_or_head(
+        self, tmp_path, git_client
+    ):
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        _init_repo_with_commit(git_client, repo_root)
+
+        (repo_root / "part.txt").write_text("checkpointed content\n", encoding="utf-8")
+        cp = git_client.commit_recovery_checkpoint(str(repo_root), "cp")
+        assert cp.ok, cp.stderr
+
+        # Revert on disk, same as a "crash lost the edit" scenario -- the
+        # real working tree/index/HEAD must stay exactly like this.
+        (repo_root / "part.txt").write_text("revision 1\n", encoding="utf-8")
+        before = _snapshot(repo_root)
+
+        dest_dir = tmp_path / "export"
+        result = git_client.export_recovery_snapshot(
+            str(repo_root), cp.stdout, str(dest_dir)
+        )
+
+        assert result.ok, result.stderr
+        after = _snapshot(repo_root)
+        assert before == after, "export must not touch HEAD, index, or working tree"
+        # And the real file must still be the reverted (pre-recovery) content.
+        assert (repo_root / "part.txt").read_text(encoding="utf-8") == "revision 1\n"
+
+    def test_export_fails_cleanly_with_no_recovery_sha(self, tmp_path, git_client):
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        _init_repo_with_commit(git_client, repo_root)
+
+        result = git_client.export_recovery_snapshot(
+            str(repo_root), "", str(tmp_path / "export")
+        )
+
+        assert result.ok is False
+        assert result.error_code == "NO_RECOVERY_SHA"
+
+
+class TestListRecoveryCheckpoints:
+    def test_lists_every_checkpoint_newest_first(self, tmp_path, git_client):
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        _init_repo_with_commit(git_client, repo_root)
+
+        (repo_root / "part.txt").write_text("dirty 1\n", encoding="utf-8")
+        first = git_client.commit_recovery_checkpoint(str(repo_root), "cp1")
+        assert first.ok, first.stderr
+
+        (repo_root / "part.txt").write_text("dirty 2\n", encoding="utf-8")
+        second = git_client.commit_recovery_checkpoint(str(repo_root), "cp2")
+        assert second.ok, second.stderr
+
+        (repo_root / "part.txt").write_text("dirty 3\n", encoding="utf-8")
+        third = git_client.commit_recovery_checkpoint(str(repo_root), "cp3")
+        assert third.ok, third.stderr
+
+        entries = checkpoint.list_recovery_checkpoints(git_client, str(repo_root))
+
+        assert [e.sha for e in entries] == [third.stdout, second.stdout, first.stdout]
+        # Every entry carries a real, parseable timestamp.
+        for entry in entries:
+            assert entry.at
+
+    def test_older_checkpoints_are_individually_extractable(self, tmp_path, git_client):
+        """The whole point: a checkpoint isn't overwritten by the next one
+        -- each is its own commit, independently restorable/exportable."""
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        _init_repo_with_commit(git_client, repo_root)
+
+        (repo_root / "part.txt").write_text("first edit\n", encoding="utf-8")
+        first = git_client.commit_recovery_checkpoint(str(repo_root), "cp1")
+        assert first.ok, first.stderr
+
+        (repo_root / "part.txt").write_text("second edit\n", encoding="utf-8")
+        second = git_client.commit_recovery_checkpoint(str(repo_root), "cp2")
+        assert second.ok, second.stderr
+
+        entries = checkpoint.list_recovery_checkpoints(git_client, str(repo_root))
+        assert len(entries) == 2
+
+        dest_dir = tmp_path / "export-older"
+        result = git_client.export_recovery_snapshot(
+            str(repo_root),
+            entries[1].sha,
+            str(dest_dir),  # the older one
+        )
+
+        assert result.ok, result.stderr
+        assert (dest_dir / "part.txt").read_text(encoding="utf-8") == "first edit\n"
+
+    def test_empty_when_no_recovery_branch_exists(self, tmp_path, git_client):
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        _init_repo_with_commit(git_client, repo_root)
+
+        assert checkpoint.list_recovery_checkpoints(git_client, str(repo_root)) == []
+
+    def test_respects_limit(self, tmp_path, git_client):
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        _init_repo_with_commit(git_client, repo_root)
+
+        for i in range(5):
+            (repo_root / "part.txt").write_text(f"edit {i}\n", encoding="utf-8")
+            result = git_client.commit_recovery_checkpoint(str(repo_root), f"cp{i}")
+            assert result.ok, result.stderr
+
+        entries = checkpoint.list_recovery_checkpoints(
+            git_client, str(repo_root), limit=2
+        )
+
+        assert len(entries) == 2
+
+
+class TestCheckpointExportWrapperAndPruning:
+    """core/checkpoint.py's export_recovery_snapshot() wrapper: folder
+    naming (timestamp-first, from the checkpoint's own commit time -- not
+    whenever someone happens to export it) and the retention/pruning
+    policy on top of GitClient.export_recovery_snapshot()."""
+
+    def test_folder_name_is_timestamp_first_for_chronological_sort(
+        self, tmp_path, git_client
+    ):
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        _init_repo_with_commit(git_client, repo_root)
+        (repo_root / "part.txt").write_text("dirty\n", encoding="utf-8")
+        cp = git_client.commit_recovery_checkpoint(str(repo_root), "cp")
+        assert cp.ok, cp.stderr
+
+        result = checkpoint.export_recovery_snapshot(
+            git_client, str(repo_root), cp.stdout
+        )
+
+        assert result.ok, result.stderr
+        folder_name = os.path.basename(result.stdout)
+        # <timestamp>-<sha8>, e.g. "20260719-143210-a1b2c3d4"
+        stamp, _, sha8 = folder_name.rpartition("-")
+        assert sha8 == cp.stdout[:8]
+        assert len(stamp) == len("YYYYMMDD-HHMMSS")
+
+    def test_folder_name_uses_the_commits_own_time_not_export_time(
+        self, tmp_path, git_client
+    ):
+        """The whole point of this pass: exporting can happen long after
+        the checkpoint it's exporting (e.g. picking an old entry from the
+        history browser), so the folder name must reflect when the
+        checkpoint was made, not when someone happened to export it."""
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        _init_repo_with_commit(git_client, repo_root)
+        (repo_root / "part.txt").write_text("dirty\n", encoding="utf-8")
+        cp = git_client.commit_recovery_checkpoint(str(repo_root), "cp")
+        assert cp.ok, cp.stderr
+        commit_at = git_client.commit_timestamp(str(repo_root), cp.stdout)
+        assert commit_at
+
+        # Force a real gap between the checkpoint's commit time and when
+        # it's actually exported -- git timestamps are second-resolution,
+        # so a >1s sleep guarantees "now" would differ from commit_at.
+        time.sleep(1.1)
+
+        result = checkpoint.export_recovery_snapshot(
+            git_client, str(repo_root), cp.stdout
+        )
+
+        assert result.ok, result.stderr
+        folder_name = os.path.basename(result.stdout)
+        stamp = folder_name.rsplit("-", 1)[0]
+        from datetime import datetime
+
+        expected = datetime.fromisoformat(commit_at).strftime("%Y%m%d-%H%M%S")
+        assert stamp == expected
+
+    def test_pruning_keeps_only_the_most_recent_n(
+        self, tmp_path, git_client, monkeypatch
+    ):
+        monkeypatch.setattr(checkpoint, "MAX_RETAINED_RECOVERY_EXPORTS", 2)
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        _init_repo_with_commit(git_client, repo_root)
+
+        shas = []
+        for i in range(4):
+            (repo_root / "part.txt").write_text(f"edit {i}\n", encoding="utf-8")
+            cp = git_client.commit_recovery_checkpoint(str(repo_root), f"cp{i}")
+            assert cp.ok, cp.stderr
+            shas.append(cp.stdout)
+            result = checkpoint.export_recovery_snapshot(
+                git_client, str(repo_root), cp.stdout
+            )
+            assert result.ok, result.stderr
+            time.sleep(1.1)  # keep folder names (second-resolution) distinct
+
+        export_root = os.path.join(
+            str(repo_root), ".git", checkpoint.RECOVERY_EXPORT_DIRNAME
+        )
+        remaining = sorted(os.listdir(export_root))
+
+        assert len(remaining) == 2
+        # The two most recent (last-created) checkpoints survived pruning.
+        assert remaining[0].endswith(shas[2][:8])
+        assert remaining[1].endswith(shas[3][:8])
+
+    def test_prune_recovery_branch_clears_the_export_folder(self, tmp_path, git_client):
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        _init_repo_with_commit(git_client, repo_root)
+        (repo_root / "part.txt").write_text("dirty\n", encoding="utf-8")
+        cp = git_client.commit_recovery_checkpoint(str(repo_root), "cp")
+        assert cp.ok, cp.stderr
+        result = checkpoint.export_recovery_snapshot(
+            git_client, str(repo_root), cp.stdout
+        )
+        assert result.ok, result.stderr
+        export_root = os.path.join(
+            str(repo_root), ".git", checkpoint.RECOVERY_EXPORT_DIRNAME
+        )
+        assert os.path.isdir(export_root)
+
+        checkpoint.prune_recovery_branch(git_client, str(repo_root))
+
+        assert not os.path.exists(export_root)
+
+
 # --- Pure scheduling/policy tests (no FreeCAD, no real git) -------------
 
 
@@ -402,6 +673,52 @@ class TestCheckpointAutoPushOverrideSetting:
         assert settings.load_checkpoint_auto_push_override() is None
 
 
+class TestLastCheckpointFileMarker:
+    """note_last_checkpoint_file/load_last_checkpoint_file: a plain file
+    under .git/, deliberately NOT FreeCAD's parameter store (settings.py) --
+    see their docstrings for why a crash needs to survive this specific
+    write, which the parameter store isn't guaranteed to."""
+
+    def test_round_trips_through_a_plain_file(self, tmp_path):
+        repo_root = tmp_path / "repo"
+        (repo_root / ".git").mkdir(parents=True)
+
+        checkpoint.note_last_checkpoint_file(str(repo_root), r"C:\proj\part.FCStd")
+
+        assert checkpoint.load_last_checkpoint_file(str(repo_root)) == (
+            r"C:\proj\part.FCStd"
+        )
+
+    def test_load_returns_empty_string_when_nothing_recorded_yet(self, tmp_path):
+        repo_root = tmp_path / "repo"
+        (repo_root / ".git").mkdir(parents=True)
+
+        assert checkpoint.load_last_checkpoint_file(str(repo_root)) == ""
+
+    def test_load_returns_empty_string_for_a_missing_or_malformed_repo(self, tmp_path):
+        assert checkpoint.load_last_checkpoint_file(str(tmp_path / "nonexistent")) == ""
+
+    def test_later_note_overwrites_the_earlier_one(self, tmp_path):
+        repo_root = tmp_path / "repo"
+        (repo_root / ".git").mkdir(parents=True)
+
+        checkpoint.note_last_checkpoint_file(str(repo_root), "first.FCStd")
+        checkpoint.note_last_checkpoint_file(str(repo_root), "second.FCStd")
+
+        assert checkpoint.load_last_checkpoint_file(str(repo_root)) == "second.FCStd"
+
+    def test_load_survives_a_corrupted_marker_file(self, tmp_path):
+        """Simulates the exact failure mode this replaced: an incomplete/
+        unreadable write left over from an interrupted process -- must
+        degrade to "nothing recorded" rather than raising."""
+        repo_root = tmp_path / "repo"
+        (repo_root / ".git").mkdir(parents=True)
+        marker = repo_root / ".git" / "gitpdm-last-checkpoint.json"
+        marker.write_text("{not valid json", encoding="utf-8")
+
+        assert checkpoint.load_last_checkpoint_file(str(repo_root)) == ""
+
+
 class TestRunCheckpoint:
     def _fake_git_client(self, commit_ok=True, push_ok=True):
         client = MagicMock()
@@ -417,11 +734,15 @@ class TestRunCheckpoint:
         client = self._fake_git_client()
         save_calls = []
 
+        def fake_save():
+            save_calls.append(1)
+            return True
+
         result = checkpoint.run_checkpoint(
             client,
             "/repo",
             is_busy=lambda: True,
-            save_if_dirty=lambda: save_calls.append(1),
+            save_if_dirty=fake_save,
         )
 
         assert result.ok is False
@@ -433,23 +754,46 @@ class TestRunCheckpoint:
         client = self._fake_git_client()
         save_calls = []
 
+        def fake_save():
+            save_calls.append(1)
+            return True
+
         result = checkpoint.run_checkpoint(
             client,
             "/repo",
             is_busy=lambda: False,
-            save_if_dirty=lambda: save_calls.append(1),
+            save_if_dirty=fake_save,
         )
 
         assert result.ok is True
         assert result.sha == "abc123"
+        assert result.save_ok is True
         assert save_calls == [1]
+        client.commit_recovery_checkpoint.assert_called_once()
+
+    def test_save_failure_still_commits_but_flags_save_ok_false(self):
+        """A checkpoint commit is still made (a stale checkpoint beats none),
+        but result.save_ok tells the caller this one didn't actually capture
+        the in-progress edit -- see CheckpointResult.save_ok's docstring for
+        why that distinction matters for the restore-on-start prompt."""
+        client = self._fake_git_client()
+
+        result = checkpoint.run_checkpoint(
+            client,
+            "/repo",
+            is_busy=lambda: False,
+            save_if_dirty=lambda: False,
+        )
+
+        assert result.ok is True
+        assert result.save_ok is False
         client.commit_recovery_checkpoint.assert_called_once()
 
     def test_commit_failure_propagates(self):
         client = self._fake_git_client(commit_ok=False)
 
         result = checkpoint.run_checkpoint(
-            client, "/repo", is_busy=lambda: False, save_if_dirty=lambda: None
+            client, "/repo", is_busy=lambda: False, save_if_dirty=lambda: True
         )
 
         assert result.ok is False
@@ -460,7 +804,7 @@ class TestRunCheckpoint:
         monkeypatch.setattr(checkpoint, "should_auto_push_recovery", lambda: False)
 
         result = checkpoint.run_checkpoint(
-            client, "/repo", is_busy=lambda: False, save_if_dirty=lambda: None
+            client, "/repo", is_busy=lambda: False, save_if_dirty=lambda: True
         )
 
         assert result.ok is True
@@ -472,7 +816,7 @@ class TestRunCheckpoint:
         monkeypatch.setattr(checkpoint, "should_auto_push_recovery", lambda: True)
 
         result = checkpoint.run_checkpoint(
-            client, "/repo", is_busy=lambda: False, save_if_dirty=lambda: None
+            client, "/repo", is_busy=lambda: False, save_if_dirty=lambda: True
         )
 
         assert result.ok is True
@@ -483,11 +827,15 @@ class TestRunCheckpoint:
         client = self._fake_git_client()
         save_calls = []
 
+        def fake_save():
+            save_calls.append(1)
+            return True
+
         # No is_busy is even accepted -- run_shutdown_checkpoint hardcodes
         # is_busy=lambda: False and respect_busy_guard=False, so a "busy"
         # document doesn't block the shutdown path.
         result = checkpoint.run_shutdown_checkpoint(
-            client, "/repo", save_if_dirty=lambda: save_calls.append(1)
+            client, "/repo", save_if_dirty=fake_save
         )
 
         assert result.ok is True

@@ -15,6 +15,8 @@ except ImportError:
             "Neither PySide6 nor PySide2 found. FreeCAD installation may be incomplete."
         ) from e
 
+from datetime import datetime
+
 from freecad_gitpdm.core import log
 
 
@@ -468,9 +470,83 @@ class NewBranchDialog(QtWidgets.QDialog):
         self.accept()
 
 
+class RecoveryHistoryDialog(QtWidgets.QDialog):
+    """
+    Lets the user pick any past checkpoint from the gitpdm/recovery
+    branch's full history to restore, instead of always silently landing
+    on the latest tip. Added per a direct user report: checkpoints save
+    the real working file too (by design -- the "walk away, lose at most
+    ~a minute" guarantee), so once the working file already matches the
+    latest checkpoint, "restore the latest" alone is often a no-op; going
+    back to an earlier point in the session is what actually makes the
+    branch's continuous history (see core/checkpoint.py's
+    list_recovery_checkpoints) useful. Every entry is a real, independently
+    restorable/exportable commit -- git never overwrites one; the branch
+    ref only ever moves forward.
+    """
+
+    def __init__(self, entries, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Checkpoint History")
+        self.setModal(True)
+        self.setMinimumWidth(420)
+        self.selected_sha = entries[0].sha if entries else ""
+
+        layout = QtWidgets.QVBoxLayout()
+        self.setLayout(layout)
+
+        info = QtWidgets.QLabel(
+            "GitPDM checkpoints your work automatically every ~45 seconds "
+            "to a few minutes while you're editing. Pick a point in time "
+            "to restore from -- the most recent is selected by default."
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        self.list_widget = QtWidgets.QListWidget()
+        for entry in entries:
+            item = QtWidgets.QListWidgetItem(self._format_entry(entry))
+            item.setData(QtCore.Qt.UserRole, entry.sha)
+            self.list_widget.addItem(item)
+        if self.list_widget.count():
+            self.list_widget.setCurrentRow(0)
+        self.list_widget.itemDoubleClicked.connect(self.accept)
+        layout.addWidget(self.list_widget)
+
+        btn_layout = QtWidgets.QHBoxLayout()
+        btn_layout.addStretch()
+        cancel_btn = QtWidgets.QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(cancel_btn)
+        restore_btn = QtWidgets.QPushButton("Restore Selected")
+        restore_btn.setDefault(True)
+        restore_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(restore_btn)
+        layout.addLayout(btn_layout)
+
+    @staticmethod
+    def _format_entry(entry):
+        return f"{RecoveryHistoryDialog._humanize(entry.at)}   ({entry.sha[:8]})"
+
+    @staticmethod
+    def _humanize(iso_timestamp):
+        try:
+            dt = datetime.fromisoformat(iso_timestamp)
+            return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        except (ValueError, TypeError):
+            return iso_timestamp or "unknown time"
+
+    def accept(self):
+        item = self.list_widget.currentItem()
+        if item is not None:
+            self.selected_sha = item.data(QtCore.Qt.UserRole)
+        super().accept()
+
+
 __all__ = [
     "UncommittedChangesWarningDialog",
     "PullErrorDialog",
     "PushErrorDialog",
     "NewBranchDialog",
+    "RecoveryHistoryDialog",
 ]

@@ -50,8 +50,8 @@ GitPDM is a FreeCAD workbench addon that brings Git version control and GitHub c
 
 ### 2) Create a repository
 
-1. In the Git PDM toolbar, click **Toggle GitPDM Panel**. The panel docks at
-   the bottom of the window (tabbed with Report view/Python console).
+1. In the Git PDM toolbar, click **Toggle GitPDM Panel**. The panel docks in
+   the left dock area (tabbed with Report view/Python console).
 2. In the panel's Repository column, click **Browse…**.
 3. Create/select an empty folder for your project (example: `Documents/FreeCAD Projects/MyFirstProject`).
 4. Once GitPDM notices the folder isn't a Git repository yet, a **Create Repo**

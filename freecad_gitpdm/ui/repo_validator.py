@@ -17,7 +17,7 @@ except ImportError:
             "Neither PySide6 nor PySide2 found. FreeCAD installation may be incomplete."
         ) from e
 
-from freecad_gitpdm.core import log, session_lock, settings, storage_mode, checkpoint
+from freecad_gitpdm.core import log, session_lock, storage_mode, checkpoint
 
 
 class RepoValidationHandler:
@@ -289,25 +289,39 @@ class RepoValidationHandler:
 
         # Phase G6 (R2.5): offer to restore a checkpoint left over from an
         # interrupted previous session, once the rest of activation settles.
-        QtCore.QTimer.singleShot(
-            200, lambda: self._maybe_offer_recovery_restore(repo_root)
-        )
+        QtCore.QTimer.singleShot(200, lambda: self.offer_recovery_restore(repo_root))
 
         log.info(f"Validated repo: {repo_root}")
 
-    def _maybe_offer_recovery_restore(self, repo_root):
+    def offer_recovery_restore(self, repo_root, interactive_when_unavailable=False):
         """
-        Phase G6 (R2.5) restore-on-start: if refs/heads/gitpdm/recovery is
-        ahead of HEAD, offer to restore it. Only offered when no FreeCAD
-        document is currently open -- restoring writes files into the
-        working tree, the same class of operation the "close ALL documents"
-        guard around branch switching exists for (see CLAUDE.md).
+        Phase G6 (R2.5) restore flow: if refs/heads/gitpdm/recovery is ahead
+        of HEAD, offer to restore it. Shared by two entry points --
+        automatic (repo activation, `interactive_when_unavailable=False`,
+        silent if there's nothing to do) and the on-demand "Restore Recovery
+        Checkpoint" GitPDM menu command (`interactive_when_unavailable=True`)
+        -- because the automatic offer only ever fires once, right after a
+        repo opens, and says nothing if a document happens to already be
+        open at that exact moment (restoring writes files into the working
+        tree, the same class of operation the "close ALL documents" guard
+        around branch switching exists for -- see CLAUDE.md) or simply
+        hasn't fired yet. A user who lost work and explicitly asks for
+        recovery needs a way to check on demand rather than being stuck
+        hoping the one-shot prompt catches it.
         """
         try:
             if self._parent._current_repo_root != repo_root:
                 return  # repo was switched again before this fired
             status = checkpoint.recovery_branch_status(self._git_client, repo_root)
             if not status.available:
+                if interactive_when_unavailable:
+                    QtWidgets.QMessageBox.information(
+                        self._parent,
+                        "No Recovery Checkpoint",
+                        "No recovery checkpoint is available -- your local "
+                        "files already match (or are ahead of) the last "
+                        "checkpoint.",
+                    )
                 return
 
             open_docs = self._parent._branch_ops._get_all_open_fcstd_documents()
@@ -316,40 +330,209 @@ class RepoValidationHandler:
                     "Recovery checkpoint available but documents are open; "
                     "not prompting to restore"
                 )
+                if interactive_when_unavailable:
+                    QtWidgets.QMessageBox.warning(
+                        self._parent,
+                        "Close Your Documents First",
+                        "A recovery checkpoint is available, but restoring "
+                        "it writes files into the working tree, which isn't "
+                        "safe while a document from this repository is "
+                        "open.\n\nClose your open documents, then try again.",
+                    )
                 return
 
-            reply = QtWidgets.QMessageBox.question(
-                self._parent,
-                "Recovery Checkpoint Available",
-                "GitPDM found work checkpointed before this session started "
-                "(possibly from a crash or an interrupted shutdown).\n\n"
-                f"Recovery snapshot: {status.recovery_sha[:8]}\n\n"
-                "Restore it into your working files now?",
-                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-                QtWidgets.QMessageBox.No,
-            )
-            if reply != QtWidgets.QMessageBox.Yes:
-                log.info("User declined recovery-checkpoint restore")
-                return
+            if interactive_when_unavailable:
+                # On-demand entry point: let the user pick which checkpoint
+                # to restore from the branch's full history, rather than
+                # always silently landing on the latest tip. The automatic
+                # one-shot offer below stays a fast single Yes/No nudge --
+                # browsing history isn't the right friction to add to the
+                # "just crashed, want your work back" moment.
+                selected_sha = self._pick_recovery_checkpoint(
+                    repo_root, status.recovery_sha
+                )
+                if not selected_sha:
+                    log.info("User cancelled recovery-checkpoint browse/restore")
+                    return
+            else:
+                reply = QtWidgets.QMessageBox.question(
+                    self._parent,
+                    "Recovery Checkpoint Available",
+                    "Your latest file save appears to be older than a "
+                    "recovery version GitPDM checkpointed automatically "
+                    "(possibly from a crash or an interrupted shutdown).\n\n"
+                    f"Recovery snapshot: {status.recovery_sha[:8]}\n\n"
+                    "Restore it into your working files now?",
+                    QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                    QtWidgets.QMessageBox.No,
+                )
+                if reply != QtWidgets.QMessageBox.Yes:
+                    log.info("User declined recovery-checkpoint restore")
+                    return
+                selected_sha = status.recovery_sha
 
             result = checkpoint.restore_recovery_checkpoint(
-                self._git_client, repo_root, status.recovery_sha
+                self._git_client, repo_root, selected_sha
             )
-            if result.ok:
-                QtWidgets.QMessageBox.information(
-                    self._parent,
-                    "Recovery Restored",
-                    "Recovery checkpoint restored into your working files.",
-                )
-                log.info(f"Restored recovery checkpoint {status.recovery_sha[:8]}")
-            else:
+            if not result.ok:
                 QtWidgets.QMessageBox.warning(
                     self._parent,
                     "Restore Failed",
                     f"Could not restore recovery checkpoint:\n{result.stderr}",
                 )
+                return
+
+            log.info(f"Restored recovery checkpoint {selected_sha[:8]}")
+
+            # Non-destructive companion to the in-place restore above:
+            # export the same snapshot to a small, dated, browsable folder
+            # too, so there's always a concrete artifact to point at --
+            # even if the in-place restore or the auto-reopen below doesn't
+            # give the user what they expected, addressing a real report
+            # where an in-place-only restore left no visible proof anything
+            # had actually happened.
+            export_result = checkpoint.export_recovery_snapshot(
+                self._git_client, repo_root, selected_sha
+            )
+            export_dir = export_result.stdout if export_result.ok else ""
+            if not export_result.ok:
+                log.warning(
+                    "Recovery export failed (in-place restore above still "
+                    f"applied): {export_result.stderr}"
+                )
+
+            self._finish_recovery_restore(repo_root, selected_sha, export_dir)
         except Exception as e:
             log.debug(f"Recovery restore check failed: {e}")
+            if interactive_when_unavailable:
+                QtWidgets.QMessageBox.warning(
+                    self._parent,
+                    "Restore Failed",
+                    f"Could not check for a recovery checkpoint:\n{e}",
+                )
+
+    def _pick_recovery_checkpoint(self, repo_root, latest_sha):
+        """
+        Let the user browse the full gitpdm/recovery history and pick a
+        checkpoint to restore, rather than always silently restoring just
+        the latest tip. Every checkpoint ever committed this session is
+        still there to choose from -- git never overwrites a commit, only
+        the branch ref moves forward (see core/checkpoint.py's
+        list_recovery_checkpoints). Only used by the on-demand "Restore
+        Recovery Checkpoint" entry point; returns "" if the user cancels,
+        or the chosen SHA (falling back to latest_sha if listing somehow
+        comes back empty despite recovery_branch_status() reporting one
+        available).
+        """
+        entries = checkpoint.list_recovery_checkpoints(self._git_client, repo_root)
+        if not entries:
+            return latest_sha
+
+        from freecad_gitpdm.ui.dialogs import RecoveryHistoryDialog
+
+        dlg = RecoveryHistoryDialog(entries, parent=self._parent)
+        if dlg.exec() != QtWidgets.QDialog.Accepted:
+            return ""
+        return dlg.selected_sha or latest_sha
+
+    def _finish_recovery_restore(self, repo_root, recovery_sha, export_dir):
+        """
+        Get the user back to work immediately after a restore: reopen
+        whichever document the last checkpoint actually captured directly
+        in FreeCAD's own native view (checkpoint.load_last_checkpoint_file(),
+        written directly to a plain file under .git/ right before every
+        checkpoint's save -- see ui/panel.py's
+        _save_active_document_if_dirty), if it's still inside this repo and
+        present on disk.
+
+        No File Explorer involved when this succeeds. Earlier versions of
+        this flow always surfaced (or auto-opened) export_dir --
+        export_recovery_snapshot's non-destructive copy of the checkpoint
+        -- as a "here's proof it worked" safety net, back when the reopened
+        content itself couldn't be fully trusted (the underlying save bug
+        -- see core/checkpoint.py's _save_active_document_if_dirty history
+        -- meant a checkpoint could silently contain stale, pre-edit
+        content). Now that that's fixed, a direct user report called this
+        out: once the reopened native view already shows the right thing,
+        popping Explorer at a folder is just friction, not reassurance.
+        export_recovery_snapshot() is still called (see
+        offer_recovery_restore above) and still lands in
+        .git/gitpdm-recovery/ as a quiet, no-UI safety net -- inspectable
+        by hand later if ever needed -- it's only the automatic Explorer
+        surfacing in the common, working case that's gone. Explorer is
+        still the *fallback* below, since there's no other way to hand the
+        user their file when the reopen itself doesn't work.
+        """
+        sha_short = recovery_sha[:8] if recovery_sha else "unknown"
+        last_file = checkpoint.load_last_checkpoint_file(repo_root)
+        if (
+            last_file
+            and os.path.isfile(last_file)
+            and os.path.normpath(last_file).startswith(os.path.normpath(repo_root))
+        ):
+            try:
+                import FreeCADGui
+
+                FreeCADGui.openDocument(last_file)
+                QtWidgets.QMessageBox.information(
+                    self._parent,
+                    "Recovery Restored",
+                    f"Recovery checkpoint {sha_short} restored and reopened:\n"
+                    f"{os.path.basename(last_file)}",
+                )
+                log.info(f"Reopened {last_file} after recovery restore")
+                return
+            except Exception as e:
+                log.warning(f"Could not reopen {last_file} after restore: {e}")
+
+        # Couldn't reopen automatically -- land the user directly in the
+        # small, checkpoint-specific export folder instead of repo root.
+        if export_dir:
+            QtWidgets.QMessageBox.information(
+                self._parent,
+                "Recovery Restored",
+                f"Recovery checkpoint {sha_short} restored into your "
+                "working files.\n\nOpening the recovered copy so you can "
+                "pick the file back up.",
+            )
+            self._open_recovered_folder(export_dir, last_file, repo_root)
+            return
+
+        QtWidgets.QMessageBox.information(
+            self._parent,
+            "Recovery Restored",
+            f"Recovery checkpoint {sha_short} restored into your working "
+            "files.\n\nOpening the repository folder so you can pick the "
+            "file back up.",
+        )
+        try:
+            self._parent._open_folder_in_explorer(repo_root)
+        except Exception as e:
+            log.debug(f"Could not open repo folder after restore: {e}")
+
+    def _open_recovered_folder(self, export_dir, last_file, repo_root):
+        """
+        Open export_dir in Explorer, selecting the specific recovered file
+        within it (mirroring last_file's path relative to repo_root) if we
+        can locate it there, else just opening the folder itself -- either
+        way, scoped to this one checkpoint's files, never the whole repo.
+        """
+        target = export_dir
+        if last_file:
+            try:
+                rel = os.path.relpath(last_file, repo_root)
+                candidate = os.path.join(export_dir, rel)
+                if os.path.isfile(candidate):
+                    target = candidate
+            except ValueError:
+                pass  # last_file on a different drive than repo_root, etc.
+        try:
+            if os.path.isfile(target):
+                self._parent._open_folder_in_explorer_selecting(target)
+            else:
+                self._parent._open_folder_in_explorer(target)
+        except Exception as e:
+            log.debug(f"Could not open recovery export folder: {e}")
 
     def _acquire_session_lock(self, repo_root) -> bool:
         """

@@ -31,9 +31,15 @@ except ImportError:
 def _find_or_create_dock():
     """Find the GitPDM dock widget, creating (but not showing) it if needed.
 
-    Docks at the bottom of the main window, tabbed with Report view/Python
-    console when either is present -- same fallback shape already used by
-    InitGui.py's auto-open for Tree view/Tasks.
+    Docks in the left dock area, tabbed with Report view/Python console when
+    either is present -- user-identified as the best default spot (2026-07-19
+    screenshot: bottom-left corner of the left dock, tabbed alongside those
+    two, using the least screen space) after living at the bottom since the
+    original bottom-dock UI simplification pass. If neither Report view nor
+    Python console is present yet (e.g. a fresh install with both hidden),
+    the dock still lands in the left area on its own -- typically as its own
+    split below Tree view -- rather than falling back to the old bottom
+    placement, so the default stays consistent either way.
     """
     from freecad_gitpdm.ui import panel
 
@@ -52,11 +58,9 @@ def _find_or_create_dock():
             if tab_target:
                 break
 
+        mw.addDockWidget(QtCore.Qt.LeftDockWidgetArea, dock)
         if tab_target:
-            mw.addDockWidget(QtCore.Qt.BottomDockWidgetArea, dock)
             mw.tabifyDockWidget(tab_target, dock)
-        else:
-            mw.addDockWidget(QtCore.Qt.BottomDockWidgetArea, dock)
 
     return dock
 
@@ -347,6 +351,32 @@ class GitPDMClearRecoveryCheckpointCommand:
         return bool(settings.load_repo_path())
 
 
+class GitPDMRestoreRecoveryCheckpointCommand:
+    """Manually check for and restore a checkpoint from the recovery branch
+    on demand (G6 follow-up) -- for when the automatic restore-on-start
+    offer didn't catch it (e.g. a document was already open when the repo
+    activated), a user needs a way to ask for recovery explicitly rather
+    than being stuck after losing unsaved work to a crash/force-quit."""
+
+    def GetResources(self):
+        return {
+            "Pixmap": "",
+            "MenuText": "Restore Recovery Checkpoint…",
+            "ToolTip": (
+                "Check for a gitpdm/recovery checkpoint newer than your last "
+                "commit and restore it into your working files"
+            ),
+        }
+
+    def Activated(self):
+        dock = _find_or_create_dock()
+        _show_dock(dock)
+        dock._restore_recovery_checkpoint_clicked()
+
+    def IsActive(self):
+        return bool(settings.load_repo_path())
+
+
 # Register the commands with FreeCAD
 FreeCADGui.addCommand("GitPDM_TogglePanel", GitPDMTogglePanelCommand())
 FreeCADGui.addCommand("GitPDM_SaveIntoRepo", GitPDMSaveIntoRepoCommand())
@@ -358,4 +388,7 @@ FreeCADGui.addCommand("GitPDM_ChangeStorageMode", GitPDMChangeStorageModeCommand
 FreeCADGui.addCommand("GitPDM_DeepenHistory", GitPDMDeepenHistoryCommand())
 FreeCADGui.addCommand(
     "GitPDM_ClearRecoveryCheckpoint", GitPDMClearRecoveryCheckpointCommand()
+)
+FreeCADGui.addCommand(
+    "GitPDM_RestoreRecoveryCheckpoint", GitPDMRestoreRecoveryCheckpointCommand()
 )

@@ -42,6 +42,7 @@ class GitPDMWorkbench(FreeCADGui.Workbench):
             "Separator",
             "GitPDM_ChangeStorageMode",
             "GitPDM_DeepenHistory",
+            "GitPDM_RestoreRecoveryCheckpoint",
             "GitPDM_ClearRecoveryCheckpoint",
         ]
         self.appendMenu("Git PDM", self._menu_commands)
@@ -68,7 +69,7 @@ class GitPDMWorkbench(FreeCADGui.Workbench):
         try:
             from freecad_gitpdm import commands
 
-            # Bottom-docked, tabbed with Report view/Python console when
+            # Left-docked, tabbed with Report view/Python console when
             # present (same fallback shape as commands._find_or_create_dock,
             # reused here so the two entry points never disagree on layout).
             dock = commands._find_or_create_dock()

@@ -31,6 +31,14 @@ Keep this table current — update it in the same PR as the work it describes.
 | Bottom-dock UI simplification (panel layout + GitPDM menu + native thumbnails) | ✅ Implemented & committed | `dev`, 2026-07-18 |
 | G6 continuous checkpointing | ✅ Implemented | `dev`, 2026-07-18 |
 | G7 docs sweep | ✅ Implemented | `dev`, 2026-07-19 |
+| Toolbar consolidation + left-dock default (panel merge, responsive layout, dock area move) | ✅ Implemented | `dev`, 2026-07-19 |
+| Seamless recovery-checkpoint restore (on-demand command, auto-reopen) | ✅ Implemented | `dev`, 2026-07-19 |
+| Checkpoint save_ok tracking + visible checkpoint feedback (root-cause fix for "restored file is pre-edit") | ✅ Implemented | `dev`, 2026-07-19 |
+| Non-destructive recovery export + crash-safe last-checkpoint-file marker (fixes reopen-fell-back-to-repo-root + parameter-store-lost-on-crash) | ✅ Implemented | `dev`, 2026-07-19 |
+| Checkpoint save was silently a no-op (isTouched() misuse) — real root cause of "recovered file is pre-edit" | ✅ Implemented | `dev`, 2026-07-19 |
+| Recovery success path no longer pops Explorer (native reopen is trustworthy now, export stays as a silent fallback) | ✅ Implemented | `dev`, 2026-07-19 |
+| Checkpoint history browsing (restore any past checkpoint, not just the latest tip) | ✅ Implemented | `dev`, 2026-07-19 |
+| Automatic self-populating recovery-export folder, chronologically named + pruned | ✅ Implemented | `dev`, 2026-07-19 |
 | G8 | Not started | — |
 
 Also landed on `dev` (2026-07-17), outside any phase:
@@ -493,6 +501,524 @@ multi-provider hosts work above which it follows directly):
 
 ---
 
+**Toolbar consolidation + left-dock default, as built** (`dev` working
+tree, 2026-07-19, two explicit user requests in the same session, both
+unverified against a real FreeCAD/Qt install since neither PySide6 nor
+PySide2 is importable in this environment — ruff, the architecture guard,
+and the full pytest suite (413 passed) all stayed clean throughout, but a
+real-FreeCAD manual pass on both is still outstanding):
+
+- **Request 1 — shrink the columns further:** the repo name was taking up
+  too much space and rendering in low-contrast black; the Status column
+  cost a whole column for two chips that could sit next to the name; the
+  Actions column was the widest and didn't adapt to a narrow dock.
+  - `ui/label_style.py`: new `ElidedLabel` (single-line, `...`-truncated to
+    whatever width it's given, full text always in the tooltip) and
+    `REPO_NAME_ACCENT` (`#4aa8ff`) — a legible accent distinct from the
+    existing green/orange/red/gray/`#4db6ac` semantic status colors, so the
+    repo name never reads as a status signal.
+  - `ui/panel.py`: `_build_repo_selector` now builds `repo_name_label` as an
+    `ElidedLabel` and folds in a header row with the pending-changes/sync
+    chips (`working_tree_label`, `ahead_behind_label`, `operation_status_label`)
+    right next to it — the standalone `_build_status_section` method and its
+    own `QGroupBox`/`_group_status` are gone, merged into one "Repository"
+    group. `columns_row` is now 2 columns (Repository, Actions; stretch 5/4)
+    instead of 3. Every widget attribute name existing call sites reach into
+    (`repo_validator.py`, `fetch_pull.py`, `branch_ops.py`, `commit_push.py`)
+    is unchanged — only the container/layout changed.
+  - Dynamic reflow: `columns_row`, `switch_row` (Browse…/Join Team…/New
+    Project…), and Actions' `row1_layout` (Check for Updates/Get
+    Updates/checkbox) are built as `QBoxLayout` instead of a fixed
+    `QHBoxLayout`, collected in `self._responsive_layouts`.
+    `GitPDMDockWidget.resizeEvent()` → `_maybe_update_layout_orientation()`
+    compares the dock's own width/height (with hysteresis so it doesn't
+    flap near-square) and `_apply_layout_orientation()` flips all of them
+    between `LeftToRight` (wide/short dock) and `TopToBottom` (narrow/tall
+    dock) via `QBoxLayout.setDirection()` — no widget tree rebuilding
+    needed. Any future toolbar-like button row should follow the same
+    pattern rather than a fixed `QHBoxLayout`.
+- **Request 2 — default dock location:** the user tried the panel in
+  several dock spots and sent a screenshot identifying the left dock area's
+  bottom-left corner (tabbed with Report view/Python console, below Tree
+  view) as the best default — least screen space, good legibility, and the
+  same responsive layout above already handles the narrow-width case.
+  - `commands.py`'s `_find_or_create_dock()` (the single place both it and
+    `InitGui.py`'s auto-open funnel through) now calls
+    `mw.addDockWidget(QtCore.Qt.LeftDockWidgetArea, dock)` instead of
+    `BottomDockWidgetArea`, still tabifying with Report view/Python console
+    by name when either is present. When neither is present the dock still
+    lands in the left area on its own (typically its own split below Tree
+    view) rather than falling back to the old bottom placement.
+  - `docs/README.md`'s Tutorial 1 step 1 updated to say "left dock area"
+    instead of "the bottom of the window."
+
+---
+
+**Seamless recovery-checkpoint restore, as built** (`dev` working tree,
+2026-07-19, per explicit user report: a real-world test — edit a part, wait
+for a checkpoint to fire, force-quit FreeCAD without saving — left the user
+unable to find the recovered work locally even though the `gitpdm/recovery`
+branch on GitHub had it. Not live-verified against a real FreeCAD/Qt install
+for the same reason as the toolbar-consolidation pass above; tests/ruff/the
+architecture guard all stayed clean):
+
+- **Root-cause analysis (code-read, not live-reproduced):** the
+  restore-on-start offer already existed (`_maybe_offer_recovery_restore`,
+  G6/R2.5) but had two gaps that plausibly explain the report. (1) It only
+  ever fires once, ~200ms after a repo is *activated* in the panel, and
+  silently does nothing — no message, no retry later — if a document from
+  the repo happens to already be open at that exact moment (the same
+  "documents must be closed" safety guard branch-switching uses). A user
+  who reopens their file via Recent Files around the same time as FreeCAD
+  auto-loading GitPDM's saved repo path could easily race past the one-shot
+  window with no second chance. (2) Even a successful restore only wrote
+  bytes to disk via `git checkout <sha> -- .`; it never told the user
+  which file to reopen or reopened it for them, so "recovered" still meant
+  hunting through the repo folder manually — the opposite of "seamless."
+- **`ui/repo_validator.py`:** `_maybe_offer_recovery_restore` generalized
+  into `offer_recovery_restore(repo_root, interactive_when_unavailable)`,
+  shared by the automatic one-shot offer (`interactive_when_unavailable=
+  False`, unchanged silent behavior when there's nothing to do) and a new
+  on-demand entry point (`interactive_when_unavailable=True`) that reports
+  *why* nothing happened ("No Recovery Checkpoint" / "Close Your Documents
+  First") instead of doing nothing, so a user who explicitly asks isn't
+  left guessing. Prompt wording changed to the user's own suggested framing
+  ("Your latest file save appears to be older than a recovery version…").
+  New `_reopen_after_recovery_restore()`: after a successful restore, reads
+  `settings.load_last_checkpoint_file()` and, if it's still inside the repo
+  and present on disk, calls `FreeCADGui.openDocument()` on it directly —
+  no precedent for GitPDM programmatically opening a document existed
+  before this (the clone/create flow only ever offers "Open Folder" in
+  Explorer, since it doesn't know which of possibly-several files is
+  relevant); recovery is the one case where the exact file is known, so
+  auto-opening it is the more "seconds, not minutes" behavior the report
+  asked for. Falls back to opening the repo folder in Explorer (reusing
+  `ui/panel.py`'s existing `_open_folder_in_explorer`) if the path is
+  unknown or `openDocument()` itself fails.
+- **`core/settings.py`:** new `save_last_checkpoint_file()` /
+  `load_last_checkpoint_file()`, following the existing single-value
+  global-setting pattern (`save_last_preview_at` etc.). Persisted rather
+  than kept in memory because the whole point is surviving the crash the
+  feature exists for — FreeCAD's in-memory `ActiveDocument` is gone by the
+  time the next session needs to know what to reopen.
+- **`ui/panel.py`:** `_save_active_document_if_dirty()` (the checkpoint
+  scheduler's injected save step) now calls `settings.save_last_checkpoint_
+  file(doc.FileName)` right after `doc.save()` succeeds, so the path is
+  always fresh as of the most recent real checkpoint. New
+  `_restore_recovery_checkpoint_clicked()`, the on-demand command's panel
+  entry point, delegating to `offer_recovery_restore(...,
+  interactive_when_unavailable=True)`.
+- **`commands.py` + `InitGui.py`:** new `GitPDM_RestoreRecoveryCheckpoint`
+  command ("Restore Recovery Checkpoint…"), added to the "Git PDM" menu
+  right next to the existing "Clear Recovery Checkpoint" — same
+  find-or-create-dock-then-delegate pattern as every other menu command
+  here.
+- **What this doesn't change:** the underlying checkpoint mechanism itself
+  (idle-debounce + max-interval backstop, `commit_recovery_checkpoint`'s
+  git plumbing, the busy-guard) is untouched — this pass is entirely about
+  making an *existing*, already-correct checkpoint easier to actually get
+  back once something interrupts the session, not about capturing more or
+  differently. `tools/architecture_baseline.json`: `ui/repo_validator.py`
+  bumped 650 → 720 for the generalized restore flow (~686 lines).
+
+---
+
+**Checkpoint `save_ok` tracking + visible feedback, as built** (`dev`
+working tree, 2026-07-19, same day, per an immediate follow-up user report
+after testing the restore flow above: edited a part, waited for a
+checkpoint, confirmed it reached `gitpdm/recovery` on GitHub, started a new
+FreeCAD session, ran the restore — and the file it opened was still the
+*pre-edit* version. Also not live-verified, same caveat as the two passes
+above):
+
+- **Root-cause analysis (code-read, not live-reproduced — the strongest of
+  several candidate explanations considered):** `run_checkpoint()` calls
+  `save_if_dirty()` (FreeCAD's real `doc.save()`) and then unconditionally
+  commits whatever is on disk to `gitpdm/recovery`, regardless of whether
+  that save actually succeeded — `_save_active_document_if_dirty()`
+  swallowed any `doc.save()` exception in a bare `except Exception: log.
+  debug(...)`. If the save silently failed for any reason, the commit that
+  followed would still succeed as pure git plumbing (`write-tree`/
+  `commit-tree`/`update-ref` don't care whether the file changed), just
+  re-snapshotting the same stale, pre-edit content already on disk. From
+  the outside — and from GitHub — that's indistinguishable from a real,
+  edit-capturing checkpoint: both are just "a new commit landed on
+  `gitpdm/recovery`." A restore of that commit would then correctly write
+  back exactly the content that was already there, which is precisely the
+  "restored file is pre-edit" symptom reported, with zero bug needed in the
+  restore path itself (verified separately: `_get_all_open_fcstd_documents()`
+  checks *all* open FreeCAD documents process-wide before the restore-then-
+  reopen sequence runs, so a stale in-memory document being silently reused
+  by `FreeCADGui.openDocument()` instead of re-read from disk was ruled out).
+- **`core/checkpoint.py`:** `save_if_dirty`'s type changed from
+  `Callable[[], None]` to `Callable[[], bool]` — callers must now report
+  whether the save genuinely happened (or there was nothing to do) versus
+  attempted-and-failed. New `CheckpointResult.save_ok: bool = True`,
+  populated from that return value and surfaced regardless of whether the
+  commit landed (`ok=True` and `save_ok=False` is now a valid, meaningful
+  combination, not previously representable). `run_checkpoint()`'s and
+  `CheckpointResult`'s docstrings both spell out why this distinction
+  matters. New tests: `test_save_failure_still_commits_but_flags_save_ok_
+  false` plus updated fakes across `TestRunCheckpoint` (now explicit
+  `lambda: True` / a `fake_save()` returning `True` instead of implicitly
+  returning `None`, so the new field's semantics are exercised rather than
+  incidentally defaulted).
+- **`ui/panel.py`:** `_save_active_document_if_dirty()` now returns `True`
+  for both no-op cases (nothing to save) and a successful save, `False`
+  only when `doc.save()` raises — and logs that failure at `warning`
+  instead of `debug`, so it shows up in Report View by default rather than
+  requiring debug logging to be turned on. `_on_checkpoint_timer_tick()`
+  branches on `result.save_ok`: a genuine checkpoint logs at debug as
+  before *and* now shows "Checkpoint saved HH:MM:SS" (green) in the
+  operation-status chip next to the repo name; a commit whose underlying
+  save failed logs a `warning` and shows "Checkpoint save issue — see
+  Report View" (red) instead of looking identical to a normal success. New
+  `_show_checkpoint_feedback()` helper, self-clearing back to "Ready" after
+  4s via the existing `_set_ready_later()` mechanism other transient
+  operations already use. This closes the gap the user's report actually
+  named: *"waited for the checkpoint to fire"* previously had no visible
+  confirmation at all — a user could only infer timing from elapsed
+  seconds, with no way to tell a real checkpoint from a silently-broken one
+  short of diffing files by hand.
+- **`ui/repo_validator.py`:** `_reopen_after_recovery_restore()` now takes
+  the restored commit's SHA and includes its short form in every
+  confirmation message (both the "reopened" and "opened the folder"
+  paths), so if the working tree still doesn't look right after a restore,
+  the user has the exact commit to check (`git show <sha>:<path>` or
+  GitHub) rather than just "a restore happened, trust it."
+- **What this doesn't change:** `commit_recovery_checkpoint()`'s git
+  plumbing itself is untouched — a checkpoint still always commits
+  *something* even when the underlying save failed (a stale checkpoint
+  beats none, same philosophy as before); this pass is entirely about
+  making that distinction visible rather than changing when a commit
+  happens.
+
+---
+
+**Non-destructive recovery export + crash-safe marker, as built** (`dev`
+working tree, 2026-07-19, same day, second immediate follow-up: the user
+re-tested the restore flow above and reported three things at once — (1)
+clicking Yes on the restore prompt opened Windows Explorer with no further
+prompt, (2) it opened at the repo root rather than anywhere specific to the
+CAD folder, and (3) the actual `.FCStd` file was still the pre-checkpoint
+version. Also not live-verified, same caveat as the passes above):
+
+- **Root-cause analysis (code-read, not live-reproduced):** (1)+(2) trace
+  to `_reopen_after_recovery_restore()` falling through to its
+  open-the-repo-folder fallback, which only happens when
+  `settings.load_last_checkpoint_file()` comes back empty — and that
+  function persisted through FreeCAD's parameter store
+  (`FreeCAD.ParamGet(...).SetString(...)`), which is **not** guaranteed to
+  reach disk except on a clean shutdown. A force-quit is exactly the
+  unclean-shutdown case this whole feature exists for, so the marker this
+  pass's predecessor (the "seamless recovery" work earlier the same day)
+  added to solve "which file do I reopen" was itself not crash-safe —
+  `core/session_lock.py` already avoids the parameter store for its own
+  lock file for precisely this reason, a precedent this pass's fix should
+  have followed from the start. (3) was separately investigated and *not*
+  found to be a bug in the restore mechanism itself:
+  `TestRestoreAndPrune.test_restore_from_recovery_writes_checkpointed_content`
+  already proves `restore_from_recovery()`'s `git checkout <sha> -- .`
+  correctly overwrites working-tree content against a real repo, and
+  `_get_all_open_fcstd_documents()` (the pre-restore safety guard) checks
+  *all* FreeCAD documents process-wide, ruling out a stale in-memory
+  document being silently reused instead of re-read from disk. The most
+  likely remaining explanation for (3) is the same `save_ok=False` failure
+  mode the previous pass added visibility for — a checkpoint whose
+  underlying document save silently failed still commits *something* to
+  `gitpdm/recovery`, just a no-op re-snapshot of already-stale content —
+  which this pass doesn't re-litigate, only makes easier to tell apart from
+  a real recovery by giving the user a concrete, checkpoint-scoped artifact
+  to check against instead of trusting an in-place overwrite blindly.
+- **`git/client.py`:** new `export_recovery_snapshot(repo_root,
+  recovery_sha, dest_dir)` — the non-destructive companion to
+  `restore_from_recovery()`. Same throwaway-`GIT_INDEX_FILE` trick as
+  `commit_recovery_checkpoint()`, combined with an alternate
+  `--work-tree=dest_dir` passed straight to `git checkout`, so file writes
+  happen entirely inside git's own binary-safe internals (no Python-side
+  `git show`/stdout-capture involved, which would have corrupted binary
+  `.FCStd` content via `text=True`'s decoding — considered and rejected).
+  Four new tests in `TestExportRecoverySnapshot`, including one asserting
+  byte-for-byte-identical binary round-tripping and one asserting zero
+  effect on the real repo's HEAD/index/working tree (same `_snapshot()`
+  byte-identity helper `TestCommitRecoveryCheckpoint` already used).
+- **`core/checkpoint.py`:** `export_recovery_snapshot(git_client,
+  repo_root, recovery_sha=None)` wrapper (mirrors
+  `restore_recovery_checkpoint()`'s shape), picking the destination as
+  `.git/gitpdm-recovery/<sha8>-<timestamp>/` — inside `.git/` specifically
+  so it can never be walked by a later checkpoint's `git add -A` (no
+  `.gitignore` dependency needed; `.git/` is unconditionally excluded from
+  git's own view of the working tree, whether or not the user's
+  `.gitignore` mentions anything). New `note_last_checkpoint_file()`/
+  `load_last_checkpoint_file()` replace the settings.py versions entirely
+  (deleted, not deprecated) — a plain JSON file at
+  `.git/gitpdm-last-checkpoint.json`, written/read with ordinary
+  `open()`/`json.dump()`/`json.load()`, no FreeCAD dependency. Five new
+  tests in `TestLastCheckpointFileMarker`, including a corrupted-file
+  case (must degrade to `""`, not raise).
+- **`ui/panel.py`:** `_save_active_document_if_dirty()` now calls
+  `checkpoint.note_last_checkpoint_file(self._current_repo_root, doc.
+  FileName)` instead of the settings.py version. New
+  `_open_folder_in_explorer_selecting(file_path)` (Windows:
+  `explorer /select,<path>`, falls back to opening the parent folder on
+  other platforms or on failure) — used so landing in a recovery folder
+  highlights the specific recovered file instead of leaving the user to
+  guess among however many files it contains.
+- **`ui/repo_validator.py`:** `offer_recovery_restore()` now runs
+  `export_recovery_snapshot()` immediately after the existing in-place
+  `restore_recovery_checkpoint()` succeeds (best-effort — a failed export
+  is logged but doesn't undo the in-place restore that already happened).
+  `_reopen_after_recovery_restore()` replaced by `_finish_recovery_restore()`
+  + `_open_recovered_folder()`: if the exact file can be reopened
+  automatically (via the now-crash-safe marker), the confirmation dialog
+  names it *and* offers a one-click "Open Recovery Folder" button pointing
+  at the export (not repo root); if it can't be reopened, Explorer opens
+  directly on the export folder (selecting the specific file within it
+  when the relative path can be resolved) instead of falling back to
+  `repo_root` — the direct fix for complaint (2) above. `tools/
+  architecture_baseline.json`: `ui/repo_validator.py` bumped 720 → 800,
+  `git/client.py` bumped 2300 → 2400.
+- **What this doesn't change:** the in-place `restore_from_recovery()` /
+  `restore_recovery_checkpoint()` path is untouched and still runs first —
+  export is additive, not a replacement, since the in-place mechanism is
+  the one with direct real-git test coverage proving it works.
+
+---
+
+**Checkpoint save was silently a no-op — the actual root cause, as fixed**
+(`dev` working tree, 2026-07-19, same day, third immediate follow-up: the
+user navigated to the newly-added recovery export folder from the pass
+above — proving that part of the pipeline now works — and confirmed the
+file *inside it* still had the pre-edit content. Also not live-verified,
+same caveat as the passes above, though this one is the most confident of
+the three: it's a straightforward reading of what
+`App::Document.isTouched()` actually means in FreeCAD's own object model,
+not a guess about timing or persistence):
+
+- **Root cause:** `ui/panel.py`'s `_save_active_document_if_dirty()` — the
+  function `run_checkpoint()` calls to perform the real `doc.save()` before
+  every checkpoint commit — had this gate: `if hasattr(doc, "isTouched")
+  and not doc.isTouched(): return True`. `App::Document.isTouched()`
+  reflects whether the document's **recompute dependency graph** still has
+  anything pending — not "modified since the file on disk was last
+  written." FreeCAD settles recompute essentially immediately after an
+  edit, almost always well inside the checkpoint scheduler's 45-second
+  idle-debounce window (`DEFAULT_IDLE_SECONDS`) before a tick is even
+  allowed to fire. So by the time a checkpoint tick actually ran,
+  `isTouched()` had very often already gone back to `False`, causing this
+  function to skip the real save on the vast majority of genuine edits —
+  silently, via a clean early return, not an exception, so it was
+  indistinguishable from "nothing needed saving" by every signal this
+  session added to detect problems, including `CheckpointResult.save_ok`
+  from two passes ago (which this same function is responsible for
+  reporting — from its own point of view, it correctly had nothing to
+  save). The `gitpdm/recovery` commit that followed still succeeded as
+  pure git plumbing either way, re-snapshotting whatever was already on
+  disk (the pre-edit version) — which is exactly what both the in-place
+  restore and the non-destructive export from the pass above then
+  faithfully reproduced. **This was very likely not an intermittent bug**:
+  given the idle-debounce window is specifically tuned to be well past
+  FreeCAD's near-instant recompute settling, this gate was probably wrong
+  on close to every real checkpoint since G6 shipped, not just this user's
+  session — see the correction added to G6's original "as built" entry
+  above, which had claimed (inaccurately, and without this specific
+  behavior ever actually having been exercised) that `isTouched()` "works
+  as expected."
+- **`ui/panel.py`:** the `isTouched()` gate removed outright — 
+  `_save_active_document_if_dirty()` now calls `doc.save()` unconditionally
+  whenever there's an active document with a `FileName` already set (the
+  other early-return, for a never-saved document, is untouched and still
+  correct). Not a regression risk for "saving too often": the outer
+  scheduler (`core/checkpoint.py`'s `should_checkpoint()`) already gates
+  *whether* this function runs at all on real recent activity
+  (`CheckpointState.dirty`, set by `slotChangedObject` on any property
+  change — this part *was* genuinely live-verified) — the `isTouched()`
+  check inside this function was always redundant on top of that, and,
+  it turns out, actively wrong besides.
+- **What this doesn't change:** nothing else in the checkpoint pipeline —
+  `should_checkpoint()`'s scheduling, `commit_recovery_checkpoint()`'s git
+  plumbing, `save_ok`/`export_recovery_snapshot()`/the crash-safe marker
+  from the last two passes — needed any change; they were all working
+  correctly against whatever `_save_active_document_if_dirty()` actually
+  did, which was the one thing that was wrong.
+
+---
+
+**Recovery success path simplified — Explorer dropped from the working
+case, as built** (`dev` working tree, 2026-07-19, same day, immediate
+follow-up once the `isTouched()` fix above was confirmed working: the user
+reported the reopened document now correctly shows the recovered content
+("functionally I can get the file back open now"), and asked, reasonably,
+why a File Explorer window pointed at "just a general documents folder"
+was still part of the flow once the native reopen already works):
+
+- **Context:** the export-to-folder + Explorer-surfacing machinery (two
+  passes back) existed specifically because, at the time, an in-place
+  restore or an automatic reopen couldn't be fully trusted — the
+  `isTouched()` bug (previous entry) meant a checkpoint could silently
+  contain stale content with zero indication anything was wrong, so
+  showing the user a concrete, inspectable folder was the only way to give
+  them real proof. Now that the underlying save bug is fixed, that
+  proof-of-work burden is gone, and popping Explorer in the success case
+  is just an extra window between the user and their (correctly) reopened
+  document.
+- **`ui/repo_validator.py`:** `_finish_recovery_restore()`'s success branch
+  (the exact file reopens via `FreeCADGui.openDocument()`) no longer builds
+  a multi-button `QMessageBox` offering "Open Recovery Folder" — it's a
+  single, simple confirmation naming the file, full stop. `export_
+  recovery_snapshot()` is still called every time (see
+  `offer_recovery_restore`, unchanged) and its `.git/gitpdm-recovery/`
+  folder is untouched as a concept — it's purely the *automatic surfacing*
+  of it in the success case that's gone. The **fallback** path (reopen
+  doesn't resolve, e.g. the marker file is missing/stale) is unchanged and
+  still opens Explorer scoped to the export folder (or repo root as a last
+  resort) — Explorer remains the only way to hand the user their file when
+  the direct reopen genuinely can't.
+- **What this doesn't change:** `export_recovery_snapshot()`,
+  `note_last_checkpoint_file()`/`load_last_checkpoint_file()`, and the
+  in-place `restore_recovery_checkpoint()` call are all untouched — this
+  pass only removes UI surfacing in the one case (a successful reopen)
+  where that surfacing had stopped earning its keep.
+
+---
+
+**Checkpoint history browsing, as built** (`dev` working tree, 2026-07-19,
+same day, immediate follow-up: the user ran a fresh end-to-end test and
+reported the CAD-folder file and the exported recovery-folder file were
+identical, calling the restore prompt "virtually meaningless" as a result,
+and described a mental model where the CAD folder should only change on an
+explicit save while `gitpdm-recovery` builds a continuous backup history
+independently. That mental model doesn't match this feature's actual,
+originally-documented design — `GITPDM_REQUIREMENTS.md` R2.5 explicitly
+specifies "save the document, commit to a dedicated `gitpdm/recovery`
+branch" as the mechanism for the "walk away anytime, lose at most ~a
+minute" guarantee, so the real file being auto-saved every checkpoint is
+intentional, not a bug, and the CAD-folder/recovery-folder match the user
+observed is exactly what a *working* checkpoint should produce. But the
+user's underlying complaint was still valid: the branch's full checkpoint
+history already exists (git never overwrites a commit; every checkpoint
+this session made is still there), and nothing surfaced it — "restore" only
+ever meant "restore the latest tip," which is a likely no-op once
+checkpoints correctly auto-save. Asked the user to choose between (a)
+keeping auto-save and adding history browsing, or (b) making checkpoints
+stop touching the real file entirely (a much bigger behavior change,
+removing the walk-away guarantee); the user chose (a)):
+
+- **`git/client.py`:** new `RecoveryCheckpointEntry` dataclass (`sha`,
+  `at` — ISO 8601 commit timestamp) and `list_recovery_checkpoints(
+  repo_root, branch_ref=RECOVERY_REF, limit=50)`, using `git log
+  <branch_ref> --not HEAD --format=%H%x1f%cI`. The `--not HEAD` is load-
+  bearing, not decorative: without it, the log walk includes whatever
+  commit the recovery branch originally forked from (see
+  `commit_recovery_checkpoint()`'s `parent_sha` — either the prior
+  checkpoint's tip or `HEAD` at the time), so a repo with 2 checkpoints
+  would report 3 entries (the extra one being the shared "Initial commit"
+  ancestor) — caught immediately by
+  `TestListRecoveryCheckpoints.test_older_checkpoints_are_individually_
+  extractable` asserting `len(entries) == 2`, which failed before the fix.
+  Four new real-git tests, including one proving an *older* checkpoint
+  (not just the latest) is independently restorable/exportable via its own
+  SHA — the actual capability being added.
+- **`core/checkpoint.py`:** `list_recovery_checkpoints(git_client,
+  repo_root, limit=50)` thin wrapper, same pattern as
+  `restore_recovery_checkpoint()`/`export_recovery_snapshot()`.
+- **`ui/dialogs.py`:** new `RecoveryHistoryDialog` — a `QListWidget` of
+  "`YYYY-MM-DD HH:MM:SS   (sha8)`" entries (newest first, newest
+  pre-selected), "Restore Selected"/"Cancel" buttons, double-click as a
+  shortcut for "Restore Selected". Exposes `.selected_sha` after `accept()`,
+  same result-attribute convention `NewBranchDialog` already uses.
+- **`ui/repo_validator.py`:** `offer_recovery_restore()` now branches on
+  `interactive_when_unavailable` at the point where it used to always show
+  a plain Yes/No: the on-demand "Restore Recovery Checkpoint" command
+  (`interactive_when_unavailable=True`) calls new
+  `_pick_recovery_checkpoint()`, which lists history and shows
+  `RecoveryHistoryDialog`, falling back to the latest SHA if listing comes
+  back empty (shouldn't normally happen, given `recovery_branch_status()`
+  already confirmed availability) or the dialog has nothing to show. The
+  automatic restore-on-start offer (`interactive_when_unavailable=False`)
+  is completely unchanged — still the original fast Yes/No on
+  `status.recovery_sha` (the latest tip), deliberately: browsing history
+  isn't the right friction to add to the "I just crashed, get my work
+  back" moment, which is the automatic offer's whole job. Whichever SHA
+  gets chosen (`selected_sha`) now flows through `restore_recovery_
+  checkpoint()`, `export_recovery_snapshot()`, and `_finish_recovery_
+  restore()` uniformly — none of those three needed to change, they just
+  stopped being hardcoded to always receive the latest tip.
+  `tools/architecture_baseline.json`: `ui/repo_validator.py` bumped
+  800 → 850.
+- **What this doesn't change:** the underlying "walk away anytime" design
+  (checkpoints still auto-save the real file, every ~45s-3min while dirty)
+  is untouched, per the user's explicit choice — this pass adds a way to
+  reach *past* checkpoints, it doesn't change what a checkpoint itself
+  does or how often one happens.
+
+---
+
+**Automatic self-populating recovery-export folder, as built** (`dev`
+working tree, 2026-07-19, same day, immediate follow-up: the checkpoint
+history browser above worked, but the user pointed out it only ever
+materialized one export when explicitly triggered through GitPDM's UI —
+what they actually wanted was `.git/gitpdm-recovery/` building up
+automatically as checkpoints happen, browsable directly in Explorer with
+no GitPDM interaction at all, and specifically flagged that export folders
+were named after when they were *exported* rather than when the checkpoint
+was actually *made*, breaking chronological tracking):
+
+- **`git/client.py`:** new `commit_timestamp(repo_root, sha)` — `git log -1
+  --format=%cI <sha>` for a single commit's real committer date. Read-only,
+  same pattern as `rev_parse()`.
+- **`core/checkpoint.py`:** `export_recovery_snapshot()`'s folder naming
+  flipped from `<sha8>-<timestamp>` to `<timestamp>-<sha8>` (plain
+  alphabetical/Explorer-default sort is now chronological order for free),
+  and the timestamp itself now comes from `commit_timestamp()` — the
+  checkpoint's own commit time — instead of `datetime.now()` at export
+  time. New `test_folder_name_uses_the_commits_own_time_not_export_time`
+  proves the distinction for real (sleeps past a full second between
+  committing and exporting, then asserts the folder name matches the
+  commit's timestamp, not a later "now"). New `MAX_RETAINED_RECOVERY_
+  EXPORTS = 30` and `_prune_old_recovery_exports()`: every successful
+  export now prunes down to the N most recent by name (safe given the
+  naming above) — added because automatic per-checkpoint export means
+  unbounded folder growth over a long session is now a real risk (each
+  export is a full checked-out copy of the tracked files, not a diff, so a
+  large FCStd file times many checkpoints adds up fast). `prune_recovery_
+  branch()` (already called after every real commit and from "Clear
+  Recovery Checkpoint") now also `shutil.rmtree()`s the whole export
+  folder tree, not just the git branch — same rationale as always applied
+  to the branch: a real commit supersedes every earlier checkpoint. Four
+  new tests (`TestCheckpointExportWrapperAndPruning`) covering the naming
+  order, the commit-time-not-export-time behavior, the retention cap (via
+  `monkeypatch.setattr(checkpoint, "MAX_RETAINED_RECOVERY_EXPORTS", 2)`),
+  and branch-prune clearing the folder.
+- **`ui/panel.py`:** `_on_checkpoint_timer_tick()` now calls
+  `checkpoint.export_recovery_snapshot()` immediately after every
+  successful checkpoint commit (silent/best-effort, `log.debug` on
+  failure only — a convenience layered on an already-successful
+  checkpoint shouldn't surface its own error UI on every tick). This is
+  the actual behavior change the user asked for: the folder now populates
+  itself continuously as you work, not only when a restore is explicitly
+  requested.
+- **What this doesn't change:** the explicit export call inside
+  `ui/repo_validator.py`'s `offer_recovery_restore()` (added two passes
+  ago) stays — not redundant, since it's what makes an *older*, possibly
+  already-pruned checkpoint from the history browser exportable on demand
+  even if its automatic export from earlier in the session didn't survive
+  the retention cap.
+- **Known trade-off, not addressed this pass:** `R2.5`'s original
+  requirement text says checkpoint commit+push should run "asynchronously
+  (subprocess); only the save itself touches the main thread" — in the
+  actual implementation, `_on_checkpoint_timer_tick()` has always run the
+  whole `run_checkpoint()` call (save, git commit, git push) synchronously
+  on the Qt main thread; this was true before this pass and isn't
+  something this session introduced. Adding the export step extends that
+  same pre-existing blocking window a bit further (another `git checkout`
+  subprocess) rather than fixing it — flagged here rather than silently
+  compounding an unaddressed gap. A real fix would thread the whole
+  checkpoint tick through `core/jobs.py`'s job runner, same as other
+  git operations already do; out of scope for this pass.
+
+---
+
 ## How to use this document (instructions to the implementing agent)
 
 1. **Explore before editing.** Module names below (`freecad_gitpdm/`, `github/`, `git/`, `ui/`, `core/`, `export/`) come from the README's architecture section and may not match reality exactly. Map the actual layout first; adapt paths, preserve intent.
@@ -767,13 +1293,22 @@ multi-provider hosts work above which it follows directly):
   `Document.HasPendingTransaction` and `FreeCADGui.Control.activeDialog()`)
   fails **closed** (treats an unreadable state as busy) rather than open,
   since a wrongly-skipped checkpoint just runs late, while a mid-edit save
-  risks real corruption. `_save_active_document_if_dirty()` uses
+  risks real corruption. `_save_active_document_if_dirty()` originally used
   `Document.isTouched()` to skip the blocking whole-file save when there's
   nothing new to capture.
   **Live-verified 2026-07-19** (user session, real FreeCAD): `slotChangedObject`
   fires correctly (`CheckpointState.dirty` confirmed `True` right after an
-  edit) and `Document.isTouched()` works as expected. **Found and fixed a
-  real bug** in the same session: `FreeCADGui.Control.activeDialog()`
+  edit). **`Document.isTouched()` was claimed "works as expected" in this
+  same note originally, but that was never actually exercised by the
+  session described below** (which only walked through `_checkpoint_state.
+  dirty` and `_is_freecad_busy()`/`activeDialog()`, not `isTouched()`
+  itself) **and turned out to be false — see the 2026-07-19 correction
+  under the seamless-recovery follow-ups near the end of this document**:
+  `isTouched()` tracks the recompute dependency graph, not "unsaved
+  relative to disk," and was removed from this function entirely once a
+  later real-world test proved it was silently skipping the save on
+  essentially every checkpoint. **Found and fixed a
+  real bug** in the same 2026-07-19 session: `FreeCADGui.Control.activeDialog()`
   returns a **bool** (`True` when a task dialog/panel is active), not the
   dialog object or `None` — the original code checked
   `... is not None`, and `False is not None` is `True` in Python, so
