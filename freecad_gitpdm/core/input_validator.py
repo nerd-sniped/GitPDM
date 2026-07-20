@@ -250,6 +250,47 @@ def validate_github_url(url: str) -> Tuple[bool, str]:
     return True, ""
 
 
+def validate_self_hosted_url(url: str) -> Tuple[bool, str]:
+    """
+    Validate a user-supplied self-hosted Git host URL (e.g. a Gitea/Forgejo
+    instance entered via the PAT-paste connect flow).
+
+    Unlike validate_github_url, there's no fixed domain to check against --
+    the whole point of `requires_host_url` providers is to accept an
+    arbitrary self-hosted instance. HTTPS is still required: without this
+    check, a user pasting a PAT against a plain-HTTP host would send it in
+    cleartext with no local warning (GitHub's own connect path is hardcoded
+    to HTTPS and never had this gap).
+
+    Args:
+        url: user-entered host URL
+
+    Returns:
+        (is_valid, error_message) tuple
+    """
+    if not url:
+        return False, "URL cannot be empty"
+
+    # Check for null bytes and control chars
+    if "\0" in url or UNSAFE_COMMIT_CHARS.search(url):
+        return False, "URL contains invalid characters"
+
+    # Basic length check
+    if len(url) > 2000:
+        return False, "URL too long"
+
+    if url.startswith("http://"):
+        return (
+            False,
+            "URL must use HTTPS, not HTTP -- HTTP would send your token in cleartext",
+        )
+
+    if not url.startswith("https://"):
+        return False, "URL must start with https://"
+
+    return True, ""
+
+
 def sanitize_for_shell_display(text: str, max_length: int = 200) -> str:
     """
     Sanitize text for safe display in shell/log output.

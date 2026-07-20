@@ -47,12 +47,15 @@ All user-controlled inputs are validated before use:
 - **Commit messages**: Control characters stripped; max 50KB
 - **File paths**: Path traversal protection (no `..`); validated against repo root
 - **GitHub URLs**: HTTPS only; github.com domain validated
-- **Other host URLs** (GitLab/Bitbucket/Gitea-Forgejo/SourceHut self-hosted
-  instances): the user-supplied host is trusted as entered, since these are
-  meant to point at arbitrary self-hosted instances rather than a single
-  fixed domain -- **HTTPS is not currently enforced** for this path (a
-  pasted `http://` host URL is accepted); see the Known Limitations note
-  below
+- **GitLab/Bitbucket/SourceHut**: no user-supplied host at all -- these
+  connect through fixed, hardcoded HTTPS endpoints (`gitlab.com`,
+  `api.bitbucket.org`, `git.sr.ht`), so there's no host URL to validate
+- **Gitea/Forgejo host URL** (the one provider designed for arbitrary
+  self-hosted instances, so it has no fixed domain to check against):
+  `validate_self_hosted_url()` requires an explicit `https://` prefix and
+  rejects a pasted `http://` URL before it ever reaches the API client,
+  closing a gap found during the pre-submission security audit (see
+  Security Roadmap below)
 
 ### Permissions & Least Privilege
 
@@ -72,23 +75,12 @@ All user-controlled inputs are validated before use:
 
 ### Network Security
 
-- **HTTPS only for GitHub**: All GitHub communication uses TLS 1.2+
-- **Other providers**: the pasted PAT is only ever sent to whatever scheme
-  the user-supplied host URL specifies -- see the Input Validation and
-  Known Limitations notes above/below
+- **HTTPS only, every provider**: GitHub, GitLab, Bitbucket, and SourceHut
+  are hardcoded to HTTPS endpoints; Gitea/Forgejo's user-supplied host URL
+  is validated to require an explicit `https://` prefix at connect time
 - **Certificate validation**: Full certificate chain validation (no insecure flags)
 - **No credential logging**: Authorization headers never logged
 - **Timeout enforcement**: All network calls have strict timeouts (10-180s)
-
-### Known Limitations
-
-- **No HTTPS enforcement for self-hosted providers**: unlike the GitHub
-  path (hardcoded to `github.com` over HTTPS), the GitLab/Bitbucket/
-  Gitea-Forgejo/SourceHut connect flow accepts whatever scheme the user
-  types into the host-URL field, including `http://`. A user who pastes
-  (or is tricked into pasting) a plain-HTTP self-hosted URL sends their
-  PAT over an unencrypted connection with no local warning. Tracked as a
-  real gap, not yet fixed.
 
 ## Attack Vectors & Mitigations
 
@@ -323,6 +315,7 @@ Whichever provider you connect handles your account data under its own privacy p
 - ✅ OAuth hardening (timeouts, jitter, correlation IDs)
 - ✅ Input sanitization
 - ✅ Pasted-PAT auth path for GitLab/Bitbucket/Gitea-Forgejo/SourceHut, verified before storage, alongside GitHub's OAuth device flow
+- ✅ HTTPS enforcement on the Gitea/Forgejo self-hosted host-URL field (2026-07-20 -- found during the pre-submission security audit, fixed same day via `input_validator.validate_self_hosted_url()`)
 
 ### Planned
 - 🔲 Webhook signature verification (if webhook support added)

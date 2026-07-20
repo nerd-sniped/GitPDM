@@ -16,7 +16,7 @@ store it.
 # code doesn't need updating on the next Qt major-version bump.
 from PySide import QtWidgets
 
-from freecad_gitpdm.core import log, settings
+from freecad_gitpdm.core import input_validator, log, settings
 from freecad_gitpdm.core.log import _redact_sensitive
 from freecad_gitpdm.providers import get_provider
 
@@ -48,13 +48,24 @@ class PatAuthHandler:
             )
             return
 
-        if provider.capabilities.requires_host_url and not (host_url or "").strip():
-            QtWidgets.QMessageBox.warning(
-                self.panel,
-                "Connect",
-                f"Enter the {provider.display_name} server URL first.",
-            )
-            return
+        if provider.capabilities.requires_host_url:
+            host_url = (host_url or "").strip()
+            if not host_url:
+                QtWidgets.QMessageBox.warning(
+                    self.panel,
+                    "Connect",
+                    f"Enter the {provider.display_name} server URL first.",
+                )
+                return
+
+            is_valid, error = input_validator.validate_self_hosted_url(host_url)
+            if not is_valid:
+                QtWidgets.QMessageBox.warning(
+                    self.panel,
+                    "Connect",
+                    f"{provider.display_name} server URL: {error}",
+                )
+                return
 
         client = provider.build_api_client(pat, "GitPDM/1.0", host=host_url or None)
         if client is None:
