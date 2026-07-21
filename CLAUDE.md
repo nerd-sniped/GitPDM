@@ -11,7 +11,7 @@ leaving FreeCAD. Full user-facing documentation (tutorials, how-tos, reference)
 lives in `docs/README.md` — read that for feature behavior; this file is about
 working on the code.
 
-Current version: 0.6.2 (kept in sync across `docs/README.md`,
+Current version: 0.6.3 (kept in sync across `docs/README.md`,
 `pyproject.toml`, `freecad_gitpdm/__init__.py`, `Init.py`, and `package.xml`
 — bump all five together when releasing). `v0.4.0` was tagged from
 pre-credential-engine `main`; `v0.5.0` carried G1 (credential engine) + G2
@@ -53,6 +53,29 @@ failure. Package-Addition requests for both were drafted for the
 maintainer to file against `FreeCAD/Addons` (identity-bound, external,
 not something done from here) — not yet confirmed filed or accepted as
 of this writing.
+`v0.6.3` closes two real gaps a live audit (real container runs, not
+just code review) found against an external Outpost-readiness checklist
+for G1/G2/G4 — see `docs/GITPDM_AUDIT_FIXES.md` for the full punch list.
+(1) `TokenResponse` (`auth/oauth_device_flow.py`) had no `expires_at`
+field or shared serializer — each of the four token stores hand-rolled
+its own field-by-field JSON dict, and read `expires_in`/`obtained_at_utc`
+raw. Added `expires_at: Optional[float]` (absolute epoch, computed once
+at issuance/refresh) plus `to_dict()`/`from_dict()`, now the single thing
+every store calls; `token_refresh.py` prefers `expires_at` when present,
+falling back to the original `obtained_at_utc + expires_in` computation
+for tokens persisted before the field existed. Confirmed a shape fix,
+not a live bug — the old computation was already correct on every read.
+(2) `ui/connections_dialog.py`'s "Other Git Hosts" list was filtered by
+a hardcoded `pid not in ("github", "generic")` rather than a capability
+flag; now filters on `capabilities.requires_manual_token`, so a future
+PAT-paste provider is picked up automatically. `credential_chain.
+resolve_credential()` also gained an optional `interactive_resolver`
+callable, invoked only once file/env/keyring all miss — an injected
+extension point (same pattern as `core/checkpoint.py`'s `is_busy`/
+`save_if_dirty`) for the UI layer's device-flow/PAT-prompt path, not a
+behavior change for existing callers, and nothing wires a real resolver
+through it yet — that's a separate, larger follow-up. Tagged and pushed
+2026-07-21 once `dev`'s CI ran clean.
 
 Note for future releases: pushing any change under `.github/workflows/` can
 fail with `refusing to allow an OAuth App to create or update workflow ...

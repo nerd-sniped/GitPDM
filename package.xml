@@ -40,8 +40,8 @@
 
     <name>GitPDM</name>
     <description>Git version control and multi-host (GitHub/GitLab/Bitbucket/Gitea-Forgejo/SourceHut) collaboration for FreeCAD documents, with file-open presence indicators, previews, and continuous checkpointing.</description>
-    <version>0.6.2</version>
-    <date>2026-07-20</date>
+    <version>0.6.3</version>
+    <date>2026-07-21</date>
 
     <freecadmin>1.0</freecadmin>
     <pythonmin>3.11</pythonmin>
