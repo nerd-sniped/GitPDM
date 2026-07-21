@@ -79,7 +79,14 @@ class TokenResponse:
         token_type: str - Type of token (typically "bearer")
         scope: str - Granted scopes (space-separated)
         refresh_token: str | None - Token to refresh access_token if expired
-        expires_in: int | None - Seconds until token expires
+        expires_in: int | None - Seconds until token expires (as reported
+                        by the host at issuance/refresh time)
+        expires_at: float | None - Absolute epoch timestamp the token
+                        expires at, computed once at issuance/refresh time
+                        (`time.time() + expires_in`). Optional: tokens
+                        persisted before this field existed have it as
+                        None, and `token_refresh.py` falls back to
+                        `obtained_at_utc + expires_in` for those.
         refresh_token_expires_in: int | None - Seconds until refresh_token expires
         obtained_at_utc: str - ISO 8601 UTC timestamp when token was obtained
         provider: str - Git host provider this token belongs to
@@ -93,9 +100,43 @@ class TokenResponse:
     scope: str
     refresh_token: Optional[str] = None
     expires_in: Optional[int] = None
+    expires_at: Optional[float] = None
     refresh_token_expires_in: Optional[int] = None
     obtained_at_utc: str = ""
     provider: str = "github"
+
+    def to_dict(self) -> dict:
+        """Serialize to the plain dict every token store persists (JSON
+        file, OS keyrings). The single source of truth for that shape, so
+        stores can't drift from each other field-by-field."""
+        return {
+            "access_token": self.access_token,
+            "token_type": self.token_type,
+            "scope": self.scope,
+            "refresh_token": self.refresh_token,
+            "expires_in": self.expires_in,
+            "expires_at": self.expires_at,
+            "refresh_token_expires_in": self.refresh_token_expires_in,
+            "obtained_at_utc": self.obtained_at_utc,
+            "provider": self.provider,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "TokenResponse":
+        """Deserialize `to_dict()`'s shape. `.get()` with defaults
+        throughout so tokens persisted before a field existed (`provider`,
+        `expires_at`) still load unchanged."""
+        return cls(
+            access_token=data.get("access_token", ""),
+            token_type=data.get("token_type", "bearer"),
+            scope=data.get("scope", ""),
+            refresh_token=data.get("refresh_token"),
+            expires_in=data.get("expires_in"),
+            expires_at=data.get("expires_at"),
+            refresh_token_expires_in=data.get("refresh_token_expires_in"),
+            obtained_at_utc=data.get("obtained_at_utc", ""),
+            provider=data.get("provider", "github"),
+        )
 
 
 def request_device_code(
@@ -379,6 +420,7 @@ def poll_for_token(
             raise DeviceFlowError("invalid_response", "Missing access_token")
 
         obtained_at = datetime.now(timezone.utc).isoformat()
+        expires_at = time.time() + expires_in_response if expires_in_response else None
 
         # DEBUG: Log received scopes to help diagnose multi-computer issues
         log.info(
@@ -392,6 +434,7 @@ def poll_for_token(
             scope=scope,
             refresh_token=refresh_token,
             expires_in=expires_in_response,
+            expires_at=expires_at,
             refresh_token_expires_in=refresh_token_expires_in,
             obtained_at_utc=obtained_at,
         )

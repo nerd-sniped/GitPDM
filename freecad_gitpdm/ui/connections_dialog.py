@@ -157,7 +157,9 @@ class ConnectionsDialog(QtWidgets.QDialog):
         from freecad_gitpdm.providers import list_provider_ids, get_provider_class
 
         self._other_host_ids = sorted(
-            pid for pid in list_provider_ids() if pid not in ("github", "generic")
+            pid
+            for pid in list_provider_ids()
+            if get_provider_class(pid).capabilities.requires_manual_token
         )
 
         picker_row = QtWidgets.QHBoxLayout()

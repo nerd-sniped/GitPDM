@@ -101,16 +101,7 @@ class FileTokenStore(TokenStore):
 
         target_name = credential_target_name(host, account)
         data = self._read_all()
-        data[target_name] = {
-            "access_token": token.access_token,
-            "token_type": token.token_type,
-            "scope": token.scope,
-            "refresh_token": token.refresh_token,
-            "expires_in": token.expires_in,
-            "refresh_token_expires_in": token.refresh_token_expires_in,
-            "obtained_at_utc": token.obtained_at_utc,
-            "provider": token.provider,
-        }
+        data[target_name] = token.to_dict()
         self._write_all(data)
         log.debug(f"Token stored for {target_name} in credentials file")
 
@@ -132,16 +123,7 @@ class FileTokenStore(TokenStore):
             if token_data is None:
                 continue
             log.debug(f"Token loaded for {target_name} from credentials file")
-            return TokenResponse(
-                access_token=token_data.get("access_token", ""),
-                token_type=token_data.get("token_type", "bearer"),
-                scope=token_data.get("scope", ""),
-                refresh_token=token_data.get("refresh_token"),
-                expires_in=token_data.get("expires_in"),
-                refresh_token_expires_in=token_data.get("refresh_token_expires_in"),
-                obtained_at_utc=token_data.get("obtained_at_utc", ""),
-                provider=token_data.get("provider", "github"),
-            )
+            return TokenResponse.from_dict(token_data)
         return None
 
     def delete(self, host: str, account: str | None) -> None:

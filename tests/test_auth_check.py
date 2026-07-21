@@ -8,6 +8,7 @@ token (G1 acceptance criterion).
 
 import io
 import json
+import time
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
@@ -112,6 +113,47 @@ class TestRefreshPathWithFakeExpiringToken:
     def test_env_pat_never_expires(self):
         pat = TokenResponse(access_token="ghp_pat", token_type="bearer", scope="")
         assert token_refresh.is_token_expired(pat) is False
+
+    def test_past_expires_at_triggers_refresh(self):
+        """Audit fix P0.1 acceptance: a credential with a past `expires_at`
+        (the field itself, not the legacy obtained_at_utc+expires_in path)
+        is detected as expired."""
+        token = TokenResponse(
+            access_token="ghp_expired",
+            token_type="bearer",
+            scope="repo",
+            refresh_token="ghr_refresh",
+            expires_at=time.time() - 60,
+        )
+        assert token_refresh.is_token_expired(token) is True
+
+    def test_future_expires_at_outside_window_skips_refresh(self):
+        """Audit fix P0.1 acceptance: a future `expires_at` well outside the
+        5-minute refresh buffer is treated as still valid."""
+        token = TokenResponse(
+            access_token="ghp_fresh",
+            token_type="bearer",
+            scope="repo",
+            expires_at=time.time() + 3600,
+        )
+        assert token_refresh.is_token_expired(token) is False
+
+    def test_ensure_fresh_token_skips_refresh_for_future_expires_at(self):
+        token = TokenResponse(
+            access_token="ghp_fresh",
+            token_type="bearer",
+            scope="repo",
+            refresh_token="ghr_refresh",
+            expires_at=time.time() + 3600,
+        )
+        with patch.object(token_refresh.urllib.request, "urlopen") as mock_urlopen:
+            ok, returned, msg = token_refresh.ensure_fresh_token(
+                token, client_id="client123"
+            )
+
+        mock_urlopen.assert_not_called()
+        assert ok is True
+        assert returned is token
 
     def test_ensure_fresh_token_refreshes(self):
         refreshed_payload = {

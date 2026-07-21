@@ -4,15 +4,24 @@
 GitPDM Credential Resolution Chain
 Phase G1: Headless-capable credential resolution (R2.1).
 
-Resolution precedence (non-interactive rungs, tried in order):
+Resolution precedence (tried in order):
 
-    GITPDM_TOKEN_FILE  >  GITPDM_TOKEN  >  keyring
+    GITPDM_TOKEN_FILE  >  GITPDM_TOKEN  >  keyring  >  interactive_resolver
 
-Each rung either *yields* a credential, is *missing* (silent
-fall-through), or *errors* (logged warning, fall-through — never a
-crash). If every rung misses, resolution returns None and the caller
-(UI layer) proceeds to the interactive rungs: device flow, then PAT
-prompt.
+Each of the first three rungs either *yields* a credential, is *missing*
+(silent fall-through), or *errors* (logged warning, fall-through — never
+a crash). If all three miss, `resolve_credential()` calls the caller-
+supplied `interactive_resolver` callable, if one was given, as the final
+rung (device flow / PAT prompt in practice). This is an injected
+callable rather than an import of `ui/github_auth.py`/`ui/pat_auth.py`
+directly for the same reason `core/checkpoint.py` takes `is_busy`/
+`save_if_dirty` as callables: those flows are async, Qt-dialog-driven,
+and can take up to 15 minutes (device flow's polling window) — nothing
+this module can run synchronously itself, and importing them here would
+pull PySide/FreeCAD into a module that must import and run with no
+FreeCAD installed (`auth/check.py`'s container smoke test). Callers that
+omit `interactive_resolver` (the CLI check, existing tests) get exactly
+the prior three-rung behavior — returns None on a full miss, unchanged.
 
 SECURITY: token values must never appear in log output. Log sources and
 paths, never contents.
@@ -22,7 +31,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 from freecad_gitpdm.auth.oauth_device_flow import TokenResponse
 
@@ -34,6 +43,7 @@ ENV_PROVIDER = "GITPDM_PROVIDER"
 SOURCE_ENV_FILE = "env-file"
 SOURCE_ENV = "env"
 SOURCE_KEYRING = "keyring"
+SOURCE_INTERACTIVE = "interactive"
 
 
 @dataclass
@@ -109,9 +119,10 @@ def resolve_credential(
     account: str | None = None,
     environ=None,
     store_factory=None,
+    interactive_resolver: Optional[Callable[[], Optional[ResolvedCredential]]] = None,
 ) -> Optional[ResolvedCredential]:
     """
-    Resolve a credential through the full non-interactive chain.
+    Resolve a credential through the full chain.
 
     Args:
         host: Git host the credential is for (keyring lookup key).
@@ -119,10 +130,16 @@ def resolve_credential(
         environ: Override environment mapping (tests).
         store_factory: Callable returning a TokenStore (tests / services);
                        defaults to the platform factory.
+        interactive_resolver: Optional callable invoked only if
+                       file/env/keyring all miss — the UI layer's device-
+                       flow-or-PAT-prompt entry point. Must return a
+                       ResolvedCredential (any `source`) or None. Omit
+                       (the default) for headless/CLI callers, which get
+                       the prior three-rung-only behavior unchanged.
 
     Returns:
-        ResolvedCredential, or None if every rung missed (caller should
-        proceed to device flow / PAT prompt).
+        ResolvedCredential, or None if every rung missed (including
+        `interactive_resolver`, if given).
     """
     from freecad_gitpdm.core import log
 
@@ -142,10 +159,14 @@ def resolve_credential(
         log.warning(
             f"Token store unavailable ({e.__class__.__name__}); falling through"
         )
+        token = None
+    else:
+        if token is not None and token.access_token:
+            log.debug("Credential resolved from token store")
+            return ResolvedCredential(token, SOURCE_KEYRING)
+
+    if interactive_resolver is None:
         return None
 
-    if token is not None and token.access_token:
-        log.debug("Credential resolved from token store")
-        return ResolvedCredential(token, SOURCE_KEYRING)
-
-    return None
+    log.debug("Non-interactive rungs missed; invoking interactive resolver")
+    return interactive_resolver()

@@ -144,6 +144,68 @@ class TestRungErrorSemantics:
         assert resolved is None
 
 
+class TestInteractiveResolver:
+    """Audit fix P1.3: resolve_credential() itself becomes the single
+    entry point for the interactive rungs (device flow / PAT prompt),
+    via an injected callable, when the first three rungs all miss."""
+
+    def test_interactive_resolver_invoked_when_all_rungs_miss(self, captured_logs):
+        store = _keyring_store_with(None)
+        sentinel = credential_chain.ResolvedCredential(
+            token=TokenResponse(
+                access_token="ghp_from_device_flow", token_type="bearer", scope=""
+            ),
+            source=credential_chain.SOURCE_INTERACTIVE,
+        )
+        interactive = MagicMock(return_value=sentinel)
+
+        resolved = resolve_credential(
+            environ={},
+            store_factory=lambda: store,
+            interactive_resolver=interactive,
+        )
+
+        interactive.assert_called_once()
+        assert resolved is sentinel
+
+    def test_interactive_resolver_not_invoked_when_env_yields(self, captured_logs):
+        interactive = MagicMock()
+
+        resolved = resolve_credential(
+            environ={"GITPDM_TOKEN": SECRET_ENV_TOKEN},
+            store_factory=MagicMock,
+            interactive_resolver=interactive,
+        )
+
+        interactive.assert_not_called()
+        assert resolved.source == SOURCE_ENV
+
+    def test_interactive_resolver_invoked_after_keyring_error(self, captured_logs):
+        def broken_factory():
+            raise OSError("no secret service daemon")
+
+        interactive = MagicMock(return_value=None)
+
+        resolved = resolve_credential(
+            environ={},
+            store_factory=broken_factory,
+            interactive_resolver=interactive,
+        )
+
+        interactive.assert_called_once()
+        assert resolved is None
+
+    def test_omitting_interactive_resolver_preserves_prior_behavior(
+        self, captured_logs
+    ):
+        """Headless callers (auth/check.py) that don't pass
+        interactive_resolver must see exactly the old three-rung-only
+        result: None on a full miss."""
+        store = _keyring_store_with(None)
+        resolved = resolve_credential(environ={}, store_factory=lambda: store)
+        assert resolved is None
+
+
 class TestNoTokensInLogs:
     """SECURITY invariant: no rung may log a token value."""
 

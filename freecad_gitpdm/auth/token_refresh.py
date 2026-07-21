@@ -16,6 +16,7 @@ credentials without requiring manual re-authentication.
 from __future__ import annotations
 
 import json
+import time
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone, timedelta
@@ -41,6 +42,9 @@ def is_token_expired(
     Returns:
         True if token is expired or expiring soon, False if still valid
     """
+    if token.expires_at is not None:
+        return (token.expires_at - time.time()) <= buffer_s
+
     if not token.expires_in or not token.obtained_at_utc:
         # No expiry info; assume token is long-lived (GitHub PATs)
         return False
@@ -151,6 +155,7 @@ def refresh_token(
     refresh_token_expires_in = response_data.get("refresh_token_expires_in")
 
     obtained_at = datetime.now(timezone.utc).isoformat()
+    expires_at = time.time() + expires_in if expires_in else None
 
     new_token = TokenResponse(
         access_token=access_token,
@@ -158,6 +163,7 @@ def refresh_token(
         scope=scope,
         refresh_token=new_refresh_token,
         expires_in=expires_in,
+        expires_at=expires_at,
         refresh_token_expires_in=refresh_token_expires_in,
         obtained_at_utc=obtained_at,
     )
@@ -215,6 +221,9 @@ def get_token_ttl_seconds(token: TokenResponse) -> Optional[int]:
     Returns:
         Seconds until expiry, or None if no expiry info available
     """
+    if token.expires_at is not None:
+        return max(0, int(token.expires_at - time.time()))
+
     if not token.expires_in or not token.obtained_at_utc:
         return None
 

@@ -69,6 +69,34 @@ class TestTokenResponse:
         assert response.scope == "repo read:user"
         assert response.refresh_token == "refresh123"
         assert response.expires_in == 28800
+        assert response.expires_at is None
+
+    def test_to_dict_round_trips_through_from_dict(self):
+        """The shared serializer every token store uses instead of a
+        hand-rolled field list (audit fix P0.1)."""
+        original = TokenResponse(
+            access_token="ghp_test123",
+            token_type="bearer",
+            scope="repo read:user",
+            refresh_token="refresh123",
+            expires_in=28800,
+            expires_at=1234567890.5,
+            refresh_token_expires_in=99999,
+            obtained_at_utc="2025-12-31T12:00:00Z",
+            provider="gitlab",
+        )
+        restored = TokenResponse.from_dict(original.to_dict())
+        assert restored == original
+
+    def test_from_dict_defaults_missing_fields(self):
+        """Tokens persisted before `expires_at`/`provider` existed must
+        still load (they simply lack those keys in the stored JSON)."""
+        restored = TokenResponse.from_dict(
+            {"access_token": "ghp_old", "token_type": "bearer", "scope": ""}
+        )
+        assert restored.access_token == "ghp_old"
+        assert restored.expires_at is None
+        assert restored.provider == "github"
 
 
 class TestRequestDeviceCode:
@@ -175,6 +203,37 @@ class TestPollForToken:
         assert result.access_token == "ghp_test_access_token"
         assert result.token_type == "bearer"
         assert result.scope == "repo,read:user"
+        assert result.expires_at is None
+
+    @patch("urllib.request.urlopen")
+    @patch("time.time")
+    def test_computes_expires_at_from_expires_in(self, mock_time, mock_urlopen):
+        """Audit fix P0.1: expires_at is derived once at issuance time,
+        not left for every reader to recompute from obtained_at_utc."""
+        mock_time.return_value = 1000000
+
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(
+            {
+                "access_token": "ghp_test_access_token",
+                "token_type": "bearer",
+                "scope": "repo",
+                "expires_in": 28800,
+            }
+        ).encode("utf-8")
+        mock_response.__enter__ = Mock(return_value=mock_response)
+        mock_response.__exit__ = Mock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        result = poll_for_token(
+            client_id="test_client_id",
+            device_code="test_device_code",
+            interval=5,
+            expires_in=900,
+        )
+
+        assert result.expires_in == 28800
+        assert result.expires_at == 1000000 + 28800
 
     @patch("urllib.request.urlopen")
     @patch("time.time")
