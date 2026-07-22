@@ -11,7 +11,7 @@ leaving FreeCAD. Full user-facing documentation (tutorials, how-tos, reference)
 lives in `docs/README.md` — read that for feature behavior; this file is about
 working on the code.
 
-Current version: 0.6.3 (kept in sync across `docs/README.md`,
+Current version: 0.6.4 (kept in sync across `docs/README.md`,
 `pyproject.toml`, `freecad_gitpdm/__init__.py`, `Init.py`, and `package.xml`
 — bump all five together when releasing). `v0.4.0` was tagged from
 pre-credential-engine `main`; `v0.5.0` carried G1 (credential engine) + G2
@@ -76,6 +76,39 @@ extension point (same pattern as `core/checkpoint.py`'s `is_busy`/
 behavior change for existing callers, and nothing wires a real resolver
 through it yet — that's a separate, larger follow-up. Tagged and pushed
 2026-07-21 once `dev`'s CI ran clean.
+`v0.6.4` is a same-day patch fixing a bug reported from a downstream
+integration project (Outpost, which bakes a pinned GitPDM tag): the
+panel's **Open/Clone repo** first-run flow was dead on both `v0.6.3` and
+`main` — clicking it raised `AttributeError: 'GitPDMDockWidget' object
+has no attribute '_on_github_connect_clicked'`, swallowed by the flow's
+own try/except and surfaced only as a logged error. Root cause: the
+bottom-dock-UI pass that moved GitHub connect/disconnect/verify handling
+out of the dock widget and into `ConnectionsDialog` missed one call
+site — `panel.py`'s `_on_open_clone_repo_clicked()` still wired
+`RepoPickerDialog`'s `on_connect_requested` callback to the
+now-nonexistent `self._on_github_connect_clicked`. Fixed by adding a
+public `ConnectionsDialog.request_github_connect()` entry point next to
+the existing private handler, and re-pointing `panel.py` at
+`self._connections_dialog.request_github_connect` (the dock widget's
+already-eagerly-constructed dialog instance), preserving the original
+pre-refactor UX where Connect kicks off the GitHub device flow directly
+rather than popping the full Connections dialog. Both of
+`repo_picker.py`'s call sites for this callback (`Connect` and
+`Reconnect`, `:240` and `:733`) are the same "user asked to connect"
+trigger, so one handler is correct for both; the `Reconnect` path
+already re-queries the repo list afterward via
+`QTimer.singleShot(500, self._refresh_repos)`, so no additional
+refresh plumbing was needed. Added `tests/
+test_open_clone_connect_callback.py` as a regression guard — it can't
+instantiate `GitPDMDockWidget`/`ConnectionsDialog` directly the way a
+normal test would, since both subclass real Qt base classes
+(`QDockWidget`/`QDialog`) and this repo's test suite mocks the `PySide`
+modules with plain `MagicMock()`, under which a `class X(mock.Y):`
+statement silently produces a mock object instead of a real class
+(confirmed by hand) — so instead it parses `panel.py`/
+`connections_dialog.py` with `ast` and asserts the callback's attribute
+chain isn't the removed method and does resolve to a real method that
+actually exists on `ConnectionsDialog`.
 
 Note for future releases: pushing any change under `.github/workflows/` can
 fail with `refusing to allow an OAuth App to create or update workflow ...

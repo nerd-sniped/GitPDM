@@ -132,6 +132,10 @@ class ConnectionsDialog(QtWidgets.QDialog):
     def _on_github_connect_clicked(self):
         self._github_auth.connect_clicked()
 
+    def request_github_connect(self):
+        """Public entry point for triggering GitHub connect from outside this dialog (e.g. the repo picker's 'Connect' button)."""
+        self._github_auth.connect_clicked()
+
     def _on_github_disconnect_clicked(self):
         self._github_auth.disconnect_clicked()
 

@@ -1602,7 +1602,7 @@ class GitPDMDockWidget(QtWidgets.QDockWidget):
                 job_runner=self._job_runner,
                 git_client=self._git_client,
                 client_factory=self._create_github_client,
-                on_connect_requested=self._on_github_connect_clicked,
+                on_connect_requested=self._connections_dialog.request_github_connect,
                 default_clone_dir=settings.load_default_clone_dir(),
             )
 
