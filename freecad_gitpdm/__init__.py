@@ -5,7 +5,7 @@ GitPDM package root
 Sprint 1: Package initialization
 """
 
-__version__ = "0.6.5"
+__version__ = "0.6.6"
 __title__ = "GitPDM"
 
 # Import core modules to ensure they're available

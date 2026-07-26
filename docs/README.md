@@ -451,6 +451,7 @@ storage fails, with a clear error rather than a crash.
    you don't see it), then run:
    ```python
    import sys
+
    print(sys.executable)
    ```
    Note the path it prints.
@@ -461,7 +462,10 @@ storage fails, with a clear error rather than a crash.
    Python console:
    ```python
    import subprocess, sys
-   subprocess.check_call([sys.executable, "-m", "pip", "install", "--user", "secretstorage"])
+
+   subprocess.check_call(
+       [sys.executable, "-m", "pip", "install", "--user", "secretstorage"]
+   )
    ```
 
    If FreeCAD came from your distro's package manager and really does
@@ -517,6 +521,7 @@ storage fails, with a clear error rather than a crash.
    it if you don't see it), then run:
    ```python
    import sys
+
    print(sys.executable)
    ```
 
@@ -526,6 +531,7 @@ storage fails, with a clear error rather than a crash.
    interpreter from step 1:
    ```python
    import subprocess, sys
+
    subprocess.check_call([sys.executable, "-m", "pip", "install", "--user", "keyring"])
    ```
 

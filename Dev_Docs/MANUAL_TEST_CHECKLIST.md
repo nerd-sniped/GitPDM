@@ -98,6 +98,7 @@ Simulates a crash mid-save that leaves the compression override "stuck".
 flag and a fake prior value, then restart FreeCAD:
 ```python
 import FreeCAD
+
 pg = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Mod/GitPDM")
 pg.SetBool("CompressionScopeActive", True)
 pg.SetString("PriorCompressionLevelBeforeGitPDM", "3")
