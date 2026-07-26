@@ -11,7 +11,7 @@ leaving FreeCAD. Full user-facing documentation (tutorials, how-tos, reference)
 lives in `docs/README.md` — read that for feature behavior; this file is about
 working on the code.
 
-Current version: 0.6.4 (kept in sync across `docs/README.md`,
+Current version: 0.6.5 (kept in sync across `docs/README.md`,
 `pyproject.toml`, `freecad_gitpdm/__init__.py`, `Init.py`, and `package.xml`
 — bump all five together when releasing). `v0.4.0` was tagged from
 pre-credential-engine `main`; `v0.5.0` carried G1 (credential engine) + G2
@@ -109,6 +109,23 @@ statement silently produces a mock object instead of a real class
 `connections_dialog.py` with `ast` and asserts the callback's attribute
 chain isn't the removed method and does resolve to a real method that
 actually exists on `ConnectionsDialog`.
+
+`v0.6.5` is a same-day patch bundling a docs addition with a real headless-auth
+bug fix. (1) `docs/README.md` gained Tutorial 3 ("Sync Your Work Across Two
+Computers"), a mentor-toned walkthrough of the Fetch/Pull loop across two
+machines (push from one, clone/fetch/pull on the other), answering a recurring
+"how do I pull changes made elsewhere" question that Tutorial 2 (connect +
+push only) never covered. (2) `ui/github_auth.py`'s `_check_credentials()` and
+`_check_should_verify()` background jobs read the token store directly and
+never consulted `auth/credential_chain.py`'s `resolve_env_credential()` —
+so a headless deployment supplying credentials via `GITPDM_TOKEN_FILE`/
+`GITPDM_TOKEN` (e.g. Outpost's gatekeeper handoff) showed as disconnected in
+these two status checks even though `github_api_client()` (via
+`core/services.api_client_for()`) already honored that same env-var
+precedence for actual API calls — a split-brain between "is connected" and
+"can make authenticated calls." Both now check `resolve_env_credential()`
+first, matching `github_api_client()`'s precedence, before falling back to
+the token store.
 
 Note for future releases: pushing any change under `.github/workflows/` can
 fail with `refusing to allow an OAuth App to create or update workflow ...

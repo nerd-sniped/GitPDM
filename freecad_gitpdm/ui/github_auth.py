@@ -61,6 +61,18 @@ class GitHubAuthHandler:
         def _check_credentials():
             """Background job to check GitHub credentials."""
             try:
+                # Headless rungs (GITPDM_TOKEN_FILE / GITPDM_TOKEN, e.g. Outpost's
+                # gatekeeper handoff) take precedence, matching github_api_client()'s
+                # own precedence (services.api_client_for). Without this check, a
+                # container-supplied token was invisible here even though Verify/
+                # Refresh (which goes through github_api_client()) already saw it —
+                # the account/login isn't known yet at this point, so leave it None
+                # and let identity verification fill it in.
+                from freecad_gitpdm.auth.credential_chain import resolve_env_credential
+
+                if resolve_env_credential() is not None:
+                    return {"connected": True, "login": settings.load_github_login()}
+
                 store = self.services.token_store()
                 host = settings.load_github_host()
                 account = settings.load_github_login()
@@ -253,12 +265,21 @@ class GitHubAuthHandler:
         def _check_should_verify():
             """Background job to check if verification is needed."""
             try:
-                store = self.services.token_store()
-                host = settings.load_github_host()
-                account = settings.load_github_login()
-                token = store.load(host, account)
+                # Same headless-rung precedence as _check_credentials() above: a
+                # GITPDM_TOKEN_FILE/GITPDM_TOKEN credential (Outpost's gatekeeper
+                # handoff) must count as "has a token" here too, or auto-verify
+                # never fires in a headless deployment and the user is stuck
+                # needing a manual Verify/Refresh click every session.
+                from freecad_gitpdm.auth.credential_chain import resolve_env_credential
 
-                if not token:
+                has_token = resolve_env_credential() is not None
+                if not has_token:
+                    store = self.services.token_store()
+                    host = settings.load_github_host()
+                    account = settings.load_github_login()
+                    has_token = store.load(host, account) is not None
+
+                if not has_token:
                     return {"should_verify": False, "reason": "no_token"}
 
                 last_verified = settings.load_last_verified_at() or ""

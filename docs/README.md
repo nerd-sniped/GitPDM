@@ -7,7 +7,7 @@
 
 GitPDM is a FreeCAD workbench addon that brings Git version control and GitHub collaboration directly into FreeCAD. Think of it as “version history” for CAD projects, designed around FreeCAD documents, previews, and publishing.
 
-**Current Version:** 0.6.4 
+**Current Version:** 0.6.5
 
 ---
 
@@ -144,6 +144,103 @@ Tutorial 1 created a local-only repository, so it has no remote yet:
 2. Click **Push**.
 3. After success, verify your repo on GitHub at:
    - `https://github.com/YOUR_USERNAME/YOUR_REPO_NAME`
+
+---
+
+## Tutorial 3: Sync Your Work Across Two Computers
+
+**Goal:** Make an edit on one computer, push it, then grab that same edit on
+a second computer — the everyday "keep everything in sync" loop you'll lean
+on constantly once more than one machine (or more than one person) touches a
+repository.
+
+**Prerequisites:**
+- Completed Tutorial 2 (your repo is connected to a remote and you've pushed
+  at least once)
+- A second computer with GitPDM installed — or just read along mentally, the
+  steps are identical no matter how many machines are involved
+
+Here's the mental model before we dive in: think of your GitHub/GitLab/etc.
+remote as the meeting point. It doesn't matter which machine you're sitting
+at — the loop is always the same three moves: **grab what's new, do your
+work, send it back up.** Let's walk through it end to end so it clicks.
+
+### 1) On Computer A: make a change and push it
+
+Nothing new here — this is Tutorial 2's flow again:
+
+1. Open your project, make an edit (say, bump that box from 15mm to 20mm),
+   and save.
+2. Switch to **Git PDM**, write a commit message, and commit.
+3. Push (**▼ → Share Only**, or **Save & Share** if you skipped a separate
+   commit step).
+
+That edit now lives on the remote, not just on Computer A. That's the part
+that trips people up when they're new to this: your local commit isn't
+"backed up" or visible to anyone else until you push it. Commit saves your
+work *to your own history*; push is what actually sends it somewhere else.
+
+### 2) On Computer B: get your own copy of the repo (first time only)
+
+If Computer B has never touched this project before, it needs its own local
+clone:
+
+1. Open the GitPDM panel and, from the Connections dialog (or the panel's
+   repo picker), click **Join Team…** for GitHub or **Browse Repos…** for
+   another connected host.
+2. Find your repository in the list and clone it to a folder on Computer B.
+3. Once cloning finishes, you've got the exact same files and commit history
+   Computer A has — including that edit you just pushed.
+
+If Computer B already has a clone from an earlier session, skip straight to
+step 3 below — cloning is only for a brand-new machine.
+
+### 3) On Computer B: pull down the latest
+
+This is the step people new to Git either forget about or get nervous
+around. Don't overthink it — GitPDM hands you two buttons for exactly this:
+
+1. **Fetch** — click this first. It asks the remote "what's new since I last
+   checked?" and downloads any commits you're missing, but it doesn't touch
+   your working files at all. It's completely safe to click any time, even
+   mid-edit — think of it as refreshing your view of what exists out there.
+   Watch the ahead/behind indicator update once it finishes.
+2. **Pull** — this is the one that actually brings those new commits into
+   your working files. Click it and GitPDM runs fetch-then-merge for you in
+   one sequence.
+
+One quick heads-up, and it's a *good* kind of stubbornness: if you have a
+`.FCStd` document open in FreeCAD when you click Pull, GitPDM will stop you
+and ask you to close it first, rather than silently proceeding.
+`.FCStd` files are ZIP archives under the hood, and if the file on disk
+changes while FreeCAD still has it open, you risk corrupting it. Close the
+document, click Pull again, and you're through.
+
+After Pull finishes, reopen the document — the 20mm change from Computer A
+is sitting right there, no manual file-copying required.
+
+### 4) Make it a habit, not a special occasion
+
+The rhythm worth building: **Fetch/Pull before you start working, push when
+you're done.** That's really the whole multi-computer workflow. A few notes
+to make it painless:
+
+- You don't have to remember this perfectly every time — GitPDM's continuous
+  checkpointing (see [Continuous Checkpointing](#continuous-checkpointing))
+  is already quietly backing up your in-progress work in the background, so
+  forgetting to push before you walk away from a machine isn't the disaster
+  it would be with plain Git.
+- If you ever push from Computer B and it gets rejected because Computer A
+  pushed something in the meantime, that's not a mistake on your part — it's
+  Git protecting you from silently overwriting someone else's (or your own
+  past self's) work. See [How to Fix Push Rejected](#how-to-fix-push-rejected)
+  — it's a two-click fix: Fetch, then Pull, then push again.
+- Working with a collaborator instead of just yourself on two machines? Same
+  exact loop applies — "Computer B" above is just as easily "your
+  teammate's laptop."
+
+That's the core loop. Once it's muscle memory, everything else GitPDM
+offers — previews, publishing, the Part Glossary — just builds on top of it.
 
 ---
 
